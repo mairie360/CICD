@@ -7,9 +7,6 @@ on:
         required: true
         type: string
         description: 'Back or frontend deployment type'
-    secrets:
-      MY_SECRET:
-        required: true
 
 jobs:
   run-back:
