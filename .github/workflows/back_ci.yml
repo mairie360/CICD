@@ -1,8 +1,7 @@
 name: Rust
 
 on:
-  repository_dispatch:
-    types: [custom-trigger]
+  workflow_call:
 
 jobs:
   check_dependencies:
