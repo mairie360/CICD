@@ -14,9 +14,9 @@ on:
 jobs:
   run-back:
     if: ${{ inputs.type == 'back' }}
-    uses: ./.github/workflows/back/ci.yml
+    uses: ./.github/workflows/back_ci.yml
 
   run-front:
     if: ${{ inputs.type == 'front' }}
-    uses: ./.github/workflows/front/ci.yml
+    uses: ./.github/workflows/front_ci.yml
 
