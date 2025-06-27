@@ -1,23 +1,22 @@
-name: Deploy Workflow
+name: Test Workflow
 
 on:
   workflow_call:
     inputs:
-      target:
+      type:
         required: true
         type: string
+        description: 'Back or frontend deployment type'
     secrets:
       MY_SECRET:
         required: true
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout target repo
-        uses: actions/checkout@v4
+  run-back:
+    if: ${{ inputs.type == 'back' }}
+    uses: ./.github/workflows/back/ci.yml
 
-      - name: Deploy to environment
-        run: |
-          echo "Deploying to ${{ inputs.target }}"
-          echo "Secret is ${{ secrets.MY_SECRET }}"
+  run-front:
+    if: ${{ inputs.type == 'front' }}
+    uses: ./.github/workflows/front/ci.yml
+
