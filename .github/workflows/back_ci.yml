@@ -1,4 +1,4 @@
-name: Rust
+name: Back CI
 
 on:
   workflow_call:
