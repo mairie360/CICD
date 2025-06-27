@@ -1,5 +1,9 @@
 name: Rust
 
+on:
+  repository_dispatch:
+    types: [custom-trigger]
+
 jobs:
   check_dependencies:
     name: Check Dependencies

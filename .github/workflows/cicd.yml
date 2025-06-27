@@ -1,0 +1,23 @@
+name: Deploy Workflow
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+    secrets:
+      MY_SECRET:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+
+      - name: Deploy to environment
+        run: |
+          echo "Deploying to ${{ inputs.target }}"
+          echo "Secret is ${{ secrets.MY_SECRET }}"
