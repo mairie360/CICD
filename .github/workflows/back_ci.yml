@@ -128,7 +128,8 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: print postman collection
-        run: echo ${{ inputs.postman_collection }}
+        run: |
+          echo "Postman Collection ID: ${{ inputs.postman_collection }}"
 
 #       - name: Build and start services
 #         run: docker-compose up -d --build
