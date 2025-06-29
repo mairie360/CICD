@@ -7,6 +7,10 @@ on:
         required: true
         type: string
         description: 'Back or frontend deployment type'
+      postman_collection:
+        required: false
+        type: string
+        description: 'Collection id for postman tests'
 
 jobs:
   run-back:
