@@ -113,7 +113,7 @@ jobs:
         with:
           command: test
 
-  integration-test:
+  integration_tests:
     name: Postman Tests
     # needs: unit_test
     runs-on: ubuntu-latest
@@ -135,28 +135,28 @@ jobs:
         run: |
           echo "Postman Collection ID: ${{ inputs.postman_collection }}"
 
-#       - name: Build and start services
-#         run: docker-compose up -d --build
+      - name: Build and start services
+        run: docker-compose up -d --build
 
-#       - name: Install Node.js
-#         uses: actions/setup-node@v2
-#         with:
-#           node-version: '18'
+      - name: Install Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
 
-#       - name: Install Newman
-#         run: npm install -g newman
+      - name: Install Newman
+        run: npm install -g newman
 
-#       - name: Download Postman collection
-#         env:
-#             POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
-#             POSTMAN_CORE_API_COLLECTION_ID: ${{ vars.POSTMAN_CORE_API_COLLECTION_ID }}
-#         run: |
-#           curl -o collection.json "https://api.getpostman.com/collections/${POSTMAN_CORE_API_COLLECTION_ID}?apikey=${POSTMAN_API_KEY}"
+      - name: Download Postman collection
+        env:
+            POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+            POSTMAN_CORE_API_COLLECTION_ID: ${{ vars.POSTMAN_CORE_API_COLLECTION_ID }}
+        run: |
+          curl -o collection.json "https://api.getpostman.com/collections/${POSTMAN_CORE_API_COLLECTION_ID}?apikey=${POSTMAN_API_KEY}"
 
-#       - name: Run Postman tests with Newman
-#         run: |
-#           newman run collection.json --bail
+      - name: Run Postman tests with Newman
+        run: |
+          newman run collection.json --bail
 
-#       - name: Tear down
-#         if: always()
-#         run: docker-compose down
+      - name: Tear down
+        if: always()
+        run: docker-compose down
