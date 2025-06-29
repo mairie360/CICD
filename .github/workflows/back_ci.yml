@@ -149,12 +149,14 @@ jobs:
       - name: Download Postman collection
         env:
             POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
-            POSTMAN_CORE_API_COLLECTION_ID: ${{ vars.POSTMAN_CORE_API_COLLECTION_ID }}
+            POSTMAN_COLLECTION_ID: ${{ inputs.postman_collection }}
         run: |
-          curl -o collection.json "https://api.getpostman.com/collections/${POSTMAN_CORE_API_COLLECTION_ID}?apikey=${POSTMAN_API_KEY}"
+          echo "Postman Collection ID: ${POSTMAN_COLLECTION_ID}"
+          curl -o collection.json "https://api.getpostman.com/collections/${POSTMAN_COLLECTION_ID}?apikey=${POSTMAN_API_KEY}"
 
       - name: Run Postman tests with Newman
         run: |
+          cat collection.json
           newman run collection.json --bail
 
       - name: Tear down
