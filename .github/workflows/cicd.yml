@@ -20,9 +20,12 @@ jobs:
       - name: Print Postman Collection
         run: |
           echo "Postman Collection ID: ${{ inputs.postman_collection }}"
+
   run-back:
     if: ${{ inputs.type == 'back' }}
     uses: ./.github/workflows/back_ci.yml
+    with:
+      postman_collection: ${{ inputs.postman_collection }}
 
   run-front:
     if: ${{ inputs.type == 'front' }}

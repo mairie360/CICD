@@ -2,6 +2,10 @@ name: Back CI
 
 on:
   workflow_call:
+    inputs:
+        postman_collection:
+          required: false
+          type: string
 
 jobs:
   dependencies:
@@ -111,7 +115,7 @@ jobs:
 
   integration-test:
     name: Postman Tests
-    needs: unit_test
+    # needs: unit_test
     runs-on: ubuntu-latest
 
     steps:
