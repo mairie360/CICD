@@ -13,6 +13,13 @@ on:
         description: 'Collection id for postman tests'
 
 jobs:
+
+  print_collection:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print Postman Collection
+        run: |
+          echo "Postman Collection ID: ${{ inputs.postman_collection }}"
   run-back:
     if: ${{ inputs.type == 'back' }}
     uses: ./.github/workflows/back_ci.yml
