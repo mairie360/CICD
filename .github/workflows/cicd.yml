@@ -11,6 +11,9 @@ on:
         required: false
         type: string
         description: 'Collection id for postman tests'
+    secrets:
+      POSTMAN_API_KEY:
+        required: true
 
 jobs:
 
