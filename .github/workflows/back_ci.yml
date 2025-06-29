@@ -4,10 +4,9 @@ on:
   workflow_call:
 
 jobs:
-  check_dependencies:
-    name: Check Dependencies
+  dependencies:
+    name: Dependencies
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4.2.2
@@ -18,15 +17,28 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Check Dependencies with Cargo
-        uses: actions-rs/cargo@v1
+      - name: Download Dependencies
+        run: cargo fetch
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v3
         with:
-          command: check
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Upload Dependency Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-dependencies
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
 
   lint:
     name: Check lint
     runs-on: ubuntu-latest
-    needs: check_dependencies
 
     steps:
       - name: Checkout Repository
@@ -49,11 +61,10 @@ jobs:
         with:
           command: lint_fix
 
-
   build:
     name: Build Project
     runs-on: ubuntu-latest
-    needs: lint
+    needs: dependencies
 
     steps:
       - name: Checkout Repository
@@ -65,11 +76,11 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Build Rust Project
-        uses: actions-rs/cargo@v1
+      - name: Download Dependency Artifacts
+        uses: actions/download-artifact@v4
         with:
-          command: build
-          args: --release
+          name: cargo-dependencies
+          path: ~/.cargo
 
   unit_test:
     name: Unit tests
@@ -96,3 +107,47 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
+
+#   integration-test:
+#     name: Postman Tests
+#     needs: unit_test
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4.2.2
+
+#       - name: Install Docker Compose
+#         run: |
+#           sudo curl -L "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+#           sudo chmod +x /usr/local/bin/docker-compose
+#           docker-compose --version
+
+#       - name: Set up Docker
+#         uses: docker/setup-buildx-action@v3
+
+#       - name: Build and start services
+#         run: docker-compose up -d --build
+
+#       - name: Install Node.js
+#         uses: actions/setup-node@v2
+#         with:
+#           node-version: '18'
+
+#       - name: Install Newman
+#         run: npm install -g newman
+
+#       - name: Download Postman collection
+#         env:
+#             POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+#             POSTMAN_CORE_API_COLLECTION_ID: ${{ vars.POSTMAN_CORE_API_COLLECTION_ID }}
+#         run: |
+#           curl -o collection.json "https://api.getpostman.com/collections/${POSTMAN_CORE_API_COLLECTION_ID}?apikey=${POSTMAN_API_KEY}"
+
+#       - name: Run Postman tests with Newman
+#         run: |
+#           newman run collection.json --bail
+
+#       - name: Tear down
+#         if: always()
+#         run: docker-compose down
