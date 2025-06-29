@@ -26,6 +26,8 @@ jobs:
     uses: ./.github/workflows/back_ci.yml
     with:
       postman_collection: ${{ inputs.postman_collection }}
+    secrets:
+      POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
 
   run-front:
     if: ${{ inputs.type == 'front' }}

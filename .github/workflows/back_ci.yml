@@ -6,6 +6,9 @@ on:
         postman_collection:
           required: false
           type: string
+    secrets:
+      POSTMAN_API_KEY:
+        required: true
 
 jobs:
   dependencies:
@@ -152,7 +155,7 @@ jobs:
             POSTMAN_COLLECTION_ID: ${{ inputs.postman_collection }}
         run: |
           echo "Postman Collection ID: ${POSTMAN_COLLECTION_ID}"
-          echo "POSTMAN_API_KEYet is: ${POSTMAN_API_KEY}"
+          echo "POSTMAN_API_KEY is: ${POSTMAN_API_KEY}"
           curl -o collection.json "https://api.getpostman.com/collections/${POSTMAN_COLLECTION_ID}?apikey=${POSTMAN_API_KEY}"
 
       - name: Run Postman tests with Newman
