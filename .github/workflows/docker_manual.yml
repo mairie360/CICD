@@ -13,7 +13,16 @@ permissions:
   packages: write
 
 jobs:
+  block-on-main:
+      if: github.ref == 'refs/heads/main'
+      runs-on: ubuntu-latest
+      steps:
+        - run: |
+            echo "This workflow cannot run on main"
+            exit 1
+
   build-temporary:
+    if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
