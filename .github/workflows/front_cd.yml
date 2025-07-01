@@ -1,0 +1,14 @@
+name: Front CD Workflow
+
+on:
+  workflow_call:
+    inputs:
+      some_input:
+        required: false
+        type: string
+
+jobs:
+  front-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Running front CD"

@@ -1,0 +1,31 @@
+name: Test Workflow
+
+on:
+  workflow_call:
+    inputs:
+      type:
+        required: true
+        type: string
+        description: 'Back or frontend deployment type'
+      postman_collection:
+        required: false
+        type: string
+        description: 'Collection id for postman tests'
+    secrets:
+      POSTMAN_API_KEY:
+        required: false
+
+jobs:
+
+  run-back:
+    if: ${{ inputs.type == 'back' }}
+    uses: ./.github/workflows/back_ci.yml
+    with:
+      postman_collection: ${{ inputs.postman_collection }}
+    secrets:
+      POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+
+  run-front:
+    if: ${{ inputs.type == 'front' }}
+    uses: ./.github/workflows/front_ci.yml
+
