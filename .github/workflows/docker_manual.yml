@@ -25,5 +25,5 @@ jobs:
       - name: Build Docker image
         run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.run_id }} .
 
-      # - name: Push Docker image
-      #   run: docker push ghcr.io/${{ github.repository_owner }}/database:${{ github.ref_name }}-${{ github.run_id }}
+      - name: Push Docker image
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.run_id }}
