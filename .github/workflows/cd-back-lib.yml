@@ -1,0 +1,37 @@
+name: Back lib CD
+
+on:
+  workflow_call:
+
+jobs:
+  check_validity:
+    uses: ./.github/workflows/ci-back-lib.yml
+
+  cargo_auth:
+    needs: check_validity
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRIES_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure Git to use GITHUB_TOKEN for private repos
+        run: |
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
+      - name: Write Cargo config with registry info
+        run: |
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml <<EOF
+          [registry]
+          default = "github"
+
+          [source.github]
+          registry = "https://github.com/mairie360"  # adapte selon ton registry
+
+          [registries.github]
+          index = "https://github.com/mairie360/cargo-index"  # adapte si tu as un index privé
+          EOF
+
+      - name: Build project
+        run: cargo build --release
