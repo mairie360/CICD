@@ -42,8 +42,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Deploy to GitHub Packages
-        run: |
-          cargo publish --token ${{ secrets.GITHUB_TOKEN }}
+        run: cargo publish --token ${{ secrets.GITHUB_TOKEN }}
         env:
           CARGO_REGISTRIES_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_HOME: ${{ github.workspace }}/.cargo
