@@ -20,11 +20,22 @@ jobs:
         run: |
           git config --global url."https://${{ secrets.GITHUB_TOKEN }}:@github.com/".insteadOf "https://github.com/"
 
-      - name: Cat cargo config
-        run: cat ~/.cargo/config
-
       - name: Build project
         run: cargo build --release
+
+      - name: Configure Cargo for private registry
+        run: |
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml <<EOF
+          [registries.github]
+          index = "https://github.com/mairie360/crate-index"
+
+          [net]
+          git-fetch-with-cli = true
+          EOF
+
+      - name: Cat cargo config
+        run: cat ~/.cargo/config
 
       - name: Publish crate
         run: cargo publish --registry github
