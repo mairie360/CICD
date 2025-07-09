@@ -29,3 +29,6 @@ jobs:
     if: ${{ inputs.type == 'front' }}
     uses: ./.github/workflows/front_ci.yml
 
+  run-api-lib:
+    if: ${{ inputs.type == 'ci-api-lib' }}
+    uses: ./.github/workflows/api_lib_cd.yml
