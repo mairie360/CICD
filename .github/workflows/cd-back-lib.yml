@@ -35,7 +35,7 @@ jobs:
           EOF
 
       - name: Cat cargo config
-        run: cat ~/.cargo/config
+        run: cat ~/.cargo/config.toml
 
       - name: Publish crate
         run: cargo publish --registry github
