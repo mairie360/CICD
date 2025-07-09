@@ -31,4 +31,4 @@ jobs:
 
   run-api-lib:
     if: ${{ inputs.type == 'ci-api-lib' }}
-    uses: ./.github/workflows/api_lib_cd.yml
+    uses: ./.github/workflows/api_lib_ci.yml
