@@ -27,20 +27,36 @@ jobs:
           default = "github"
 
           [source.github]
-          registry = "https://github.com/mairie360"  # adapte selon ton registry
+          registry = "https://github.com/mairie360"
 
           [registries.github]
-          index = "https://github.com/mairie360/cargo-index"  # adapte si tu as un index privé
+          index = "https://github.com/mairie360/cargo-index"
           EOF
 
       - name: Build project
         run: cargo build --release
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-target
+          path: target/release
 
   deploy:
     needs: cargo_auth
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-target
+          path: target/release
+
+      - name: List downloaded files
+        run: ls -R target/release
+
       - name: Deploy to GitHub Packages
         run: cargo publish --token ${{ secrets.GITHUB_TOKEN }}
         env:
