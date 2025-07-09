@@ -14,15 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure Git for auth
-        env:
-          GIT_ASKPASS: echo
-        run: |
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:@github.com/".insteadOf "https://github.com/"
-
-      - name: Build project
-        run: cargo build --release
-
       - name: Configure Cargo for private registry
         run: |
           mkdir -p ~/.cargo
@@ -34,8 +25,16 @@ jobs:
           git-fetch-with-cli = true
           EOF
 
-      - name: Cat cargo config
-        run: cat ~/.cargo/config.toml
+      - name: Configure Git for auth
+        env:
+          GIT_ASKPASS: echo
+        run: |
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
+      - name: Build project
+        run: cargo build --release
 
       - name: Publish crate
+        env:
+          GIT_ASKPASS: echo
         run: cargo publish --registry github
