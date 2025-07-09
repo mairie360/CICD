@@ -18,7 +18,7 @@ jobs:
         env:
           GIT_ASKPASS: echo
         run: |
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:@github.com/".insteadOf "https://github.com/"
 
       - name: Build project
         run: cargo build --release
