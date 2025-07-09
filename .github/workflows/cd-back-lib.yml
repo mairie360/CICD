@@ -14,8 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show Cargo config
-        run: cat .cargo/config.toml
+      - name: Configure Git for auth
+        run: |
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
 
       - name: Build project
         run: cargo build --release
