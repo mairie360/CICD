@@ -19,20 +19,6 @@ jobs:
         run: |
           git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
 
-      - name: Write Cargo config with registry info
-        run: |
-          mkdir -p ~/.cargo
-          cat > ~/.cargo/config.toml <<EOF
-          [registry]
-          default = "github"
-
-          [source.github]
-          registry = "https://github.com/mairie360"
-
-          [registries.github]
-          index = "https://github.com/mairie360/cargo-index"
-          EOF
-
       - name: Build project
         run: cargo build --release
 
@@ -58,6 +44,6 @@ jobs:
         run: ls -R target/release
 
       - name: Deploy to GitHub Packages
-        run: cargo publish --token ${{ secrets.GITHUB_TOKEN }}
+        run: cargo publish --registry github --token ${{ secrets.GITHUB_TOKEN }}
         env:
           CARGO_REGISTRIES_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
