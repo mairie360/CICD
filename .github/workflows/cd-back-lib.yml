@@ -35,3 +35,15 @@ jobs:
 
       - name: Build project
         run: cargo build --release
+
+  deploy:
+    needs: cargo_auth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to GitHub Packages
+        run: |
+          cargo publish --token ${{ secrets.GITHUB_TOKEN }}
+        env:
+          CARGO_REGISTRIES_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_HOME: ${{ github.workspace }}/.cargo
