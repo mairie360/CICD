@@ -7,7 +7,7 @@ jobs:
   check_validity:
     uses: ./.github/workflows/ci-back-lib.yml
 
-  cargo_auth:
+  deploy:
     needs: check_validity
     runs-on: ubuntu-latest
     env:
@@ -22,28 +22,5 @@ jobs:
       - name: Build project
         run: cargo build --release
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cargo-target
-          path: target/release
-
-  deploy:
-    needs: cargo_auth
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: cargo-target
-          path: target/release
-
-      - name: List downloaded files
-        run: ls -R target/release
-
-      - name: Deploy to GitHub Packages
+      - name: Publish crate to GitHub Packages
         run: cargo publish --registry github --token ${{ secrets.GITHUB_TOKEN }}
-        env:
-          CARGO_REGISTRIES_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
