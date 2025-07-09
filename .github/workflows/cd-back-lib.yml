@@ -8,19 +8,17 @@ jobs:
     uses: ./.github/workflows/ci-back-lib.yml
 
   deploy:
-    needs: check_validity
     runs-on: ubuntu-latest
     env:
       CARGO_REGISTRIES_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure Git to use GITHUB_TOKEN for private repos
-        run: |
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+      - name: Show Cargo config
+        run: cat .cargo/config.toml
 
       - name: Build project
         run: cargo build --release
 
-      - name: Publish crate to GitHub Packages
-        run: cargo publish --registry github --token ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish crate
+        run: cargo publish --registry github
