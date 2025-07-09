@@ -20,6 +20,9 @@ jobs:
         run: |
           git config --global url."https://${{ secrets.GITHUB_TOKEN }}:@github.com/".insteadOf "https://github.com/"
 
+      - name: Cat cargo config
+        run: cat ~/.cargo/config
+
       - name: Build project
         run: cargo build --release
 
