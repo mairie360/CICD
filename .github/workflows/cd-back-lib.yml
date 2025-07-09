@@ -10,7 +10,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      CARGO_REGISTRIES_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CARGO_REGISTRIES_GITHUB_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +28,7 @@ jobs:
       - name: Configure Git for auth
         env:
           GIT_ASKPASS: echo
-        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+        run: git config --global url."https://x-access-token:${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
 
       - name: Build project
