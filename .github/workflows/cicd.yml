@@ -16,6 +16,8 @@ on:
         required: false
       DEPLOY_SSH_KEY:
         required: false
+      MAIRIE_360_DEPLOY_TOKEN:
+        required: false
 
 jobs:
 
@@ -41,4 +43,3 @@ jobs:
     secrets:
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
       MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
