@@ -67,9 +67,13 @@ jobs:
 
       - name: Setup SSH key
         run: |
+          set -x
           mkdir -p ~/.ssh
+          echo "Secret key length: ${#DEPLOY_SSH_KEY}"
           printf "%s" "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+          ls -l ~/.ssh
+          head -n 5 ~/.ssh/id_rsa
           ssh-keyscan github.com >> ~/.ssh/known_hosts
           ssh-keyscan mairie360-eip.fr >> ~/.ssh/known_hosts
         env:
