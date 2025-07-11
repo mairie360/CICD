@@ -74,8 +74,8 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ls -l ~/.ssh
           head -n 5 ~/.ssh/id_rsa
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
-          ssh-keyscan mairie360-eip.fr >> ~/.ssh/known_hosts
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan mairie360-eip.fr >> ~/.ssh/known_hosts 2>/dev/null || true
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
 
