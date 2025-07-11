@@ -57,10 +57,9 @@ jobs:
   deploy_release:
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ needs.publish_release.outputs.version }}
       MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
     steps:
-      - uses: actions/checkout@v4  # checkout lib repo
+      - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq openssh-client
@@ -79,12 +78,20 @@ jobs:
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
 
-      - name: Configure Git for pushing to index
+      - name: Configure Git
         run: |
           git config --global user.email "github-actions@users.noreply.github.com"
           git config --global user.name "GitHub Actions"
 
+      - name: Get latest GitHub release version
+        id: get_release
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest | jq -r .tag_name)
+          echo "VERSION=$VERSION"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
       - name: Run publish script
-        run: ./ci-tools/scripts/publish.sh $VERSION
+        run: ./ci-tools/scripts/publish.sh "$VERSION"
         env:
           MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
+
