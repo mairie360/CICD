@@ -2,6 +2,13 @@ name: Back lib CD
 
 on:
   workflow_call:
+    secrets:
+      POSTMAN_API_KEY:
+        required: false
+      DEPLOY_SSH_KEY:
+        required: false
+      MAIRIE_360_DEPLOY_TOKEN:
+        required: false
 
 jobs:
   check_validity:
