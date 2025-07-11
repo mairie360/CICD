@@ -48,7 +48,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   deploy_release:
-    # needs: [publish_release]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.publish_release.outputs.version }}
@@ -74,3 +73,5 @@ jobs:
 
       - name: Run publish script
         run: ./ci-tools/scripts/publish.sh $VERSION
+        env:
+          MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
