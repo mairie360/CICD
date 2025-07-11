@@ -10,7 +10,6 @@ jobs:
   publish_release:
     runs-on: ubuntu-latest
     env:
-      GITHUB_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
       REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +28,7 @@ jobs:
         run: |
           TAG="v${{ steps.extract_version.outputs.version }}"
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/$REPO/releases/tags/$TAG")
           echo "exists=false" >> $GITHUB_OUTPUT
           if [ "$HTTP_STATUS" = "200" ]; then
@@ -44,4 +43,3 @@ jobs:
           release_name: "Release v${{ steps.extract_version.outputs.version }}"
           draft: false
           prerelease: false
-
