@@ -48,8 +48,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   deploy_release:
-    needs: publish_release
-    if: needs.publish_release.outputs.release_created == 'true'
+    # needs: publish_release
+    # if: needs.publish_release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.publish_release.outputs.version }}
