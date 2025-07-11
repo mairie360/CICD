@@ -37,4 +37,5 @@ jobs:
       - name: Publish crate
         env:
           GIT_ASKPASS: echo
-        run: cargo publish --registry github
+        run: cargo publish --registry mairie360
+
