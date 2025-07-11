@@ -50,18 +50,19 @@ jobs:
   fetch_cicd_repo:
     runs-on: ubuntu-latest
     outputs:
-      cicd_path: ${{ steps.checkout_cicd_repo.outputs.cicd_path }}
+      cicd_path: ${{ steps.clone_cicd_repo.outputs.cicd_path }}
     steps:
-      - name: Checkout CICD repo
-        id: checkout_cicd_repo
-        uses: actions/checkout@v4
-        with:
-          repository: mairie360/cicd
-          path: cicd
-          token: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
+      - name: Install GitHub CLI
+        run: sudo apt-get update && sudo apt-get install -y gh
 
-      - name: Set output path
-        run: echo "cicd_path=$(pwd)/cicd" >> $GITHUB_OUTPUT
+      - name: Authenticate GitHub CLI
+        run: gh auth login --with-token <<< "${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}"
+
+      - name: Clone CICD repo with gh
+        id: clone_cicd_repo
+        run: |
+          gh repo clone mairie360/cicd cicd
+          echo "cicd_path=$(pwd)/cicd" >> $GITHUB_OUTPUT
 
   deploy_release:
     needs: fetch_cicd_repo
