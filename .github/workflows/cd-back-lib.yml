@@ -120,14 +120,34 @@ jobs:
       #       "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/list" | grep "${{ steps.ip.outputs.ipv4 }}"
 
       - name: Add IP to SSH whitelist
+        id: add_ip
         run: |
           ENDPOINT='frontend/o2switch/o2switch-ssh-whitelist/index.live.php'
-          SERVER="${{ secrets.SSH_HOST }}"
-          LOGIN="${{ secrets.SSH_USER }}"
-          PASSWORD="${{ secrets.SSH_PASSWORD }}"
+          SERVER="${{ secrets.CPANEL_SERVER }}"
+          API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
 
           # Ajouter l'adresse IP à la liste blanche
-          curl -sX POST -d "whitelist[address]=${{ steps.ip.outputs.ipv4 }}" -d "whitelist[port]=22" "https://$LOGIN:$PASSWORD@$SERVER:2083/$ENDPOINT?r=add" | jq
+          RESPONSE=$(curl -sX POST -d "whitelist[address]=${{ steps.ip.outputs.ipv4 }}" -d "whitelist[port]=22" "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}")
+          echo "Response: ${RESPONSE}"
+          echo "::set-output name=response::${RESPONSE}"
+
+      - name: Verify IP in SSH whitelist
+        run: |
+          ENDPOINT='frontend/o2switch/o2switch-ssh-whitelist/index.live.php'
+          SERVER="${{ secrets.CPANEL_SERVER }}"
+          API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
+
+          # Vérifier que l'adresse IP a été ajoutée à la liste blanche
+          RESPONSE=$(curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=list&api_token=${API_TOKEN}")
+          echo "Response: ${RESPONSE}"
+          UNIQUE_IPS=$(echo "${RESPONSE}" | jq -r '.data.list[] | .address' | sort -u)
+
+          if echo "${UNIQUE_IPS}" | grep -q "${{ steps.ip.outputs.ipv4 }}"; then
+            echo "IP successfully added to whitelist"
+          else
+            echo "Failed to add IP to whitelist"
+            exit 1
+          fi
 
       # - name: Installing the SSH Key
       #   run: |
