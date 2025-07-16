@@ -103,11 +103,18 @@ jobs:
         run: |
           echo "Whitelisting runner IP: ${{ steps.ip.outputs.ipv4 }}..."
 
-          curl -sX POST \
-            -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
-            -d "whitelist[address]=${{ steps.ip.outputs.ipv4 }}" \
-            -d "whitelist[port]=22" \
-            "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add" | jq
+          RESPONSE=$(curl -sX POST \
+          -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
+          -d "whitelist[address]=64.236.134.34" \
+          -d "whitelist[port]=22" \
+          "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add")
+
+          if echo "$RESPONSE" | jq empty >/dev/null 2>&1; then
+            echo "$RESPONSE" | jq
+          else
+            echo "⚠️ La réponse n'est pas un JSON valide :"
+            echo "$RESPONSE"
+          fi
 
       # - name: Making sure the IP is whitelisted
       #   run: |
