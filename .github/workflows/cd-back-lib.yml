@@ -127,14 +127,19 @@ jobs:
           API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
           RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
 
-          echo "Adding runner IP $RUNNER_IP to SSH whitelist..."
+          echo "➡️ Adding runner IP $RUNNER_IP to SSH whitelist..."
 
           RESPONSE=$(curl -skX POST \
             -d "whitelist[address]=$RUNNER_IP" \
             -d "whitelist[port]=22" \
             "https://${SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}")
 
-          echo "Add response: $RESPONSE"
+          if [[ $? -ne 0 ]]; then
+            echo "❌ Curl failed to add IP to whitelist"
+            exit 1
+          fi
+
+          echo "📝 Add response: $RESPONSE"
           echo "response=$RESPONSE" >> $GITHUB_OUTPUT
 
       - name: Verify runner IP is in SSH whitelist
@@ -144,17 +149,22 @@ jobs:
           API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
           RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
 
-          echo "Checking if IP $RUNNER_IP is in whitelist..."
+          echo "🔍 Checking if IP $RUNNER_IP is in SSH whitelist..."
 
           RESPONSE=$(curl -skX GET \
             "https://${SERVER}:2083/${ENDPOINT}?r=list&api_token=${API_TOKEN}")
 
-          echo "List response: $RESPONSE"
+          if [[ $? -ne 0 ]]; then
+            echo "❌ Curl failed to retrieve whitelist"
+            exit 1
+          fi
+
+          echo "📝 Current whitelist: $RESPONSE"
 
           if echo "$RESPONSE" | grep -q "$RUNNER_IP"; then
-            echo "✅ IP $RUNNER_IP is whitelisted"
+            echo "✅ IP $RUNNER_IP is successfully whitelisted"
           else
-            echo "❌ Failed to whitelist IP $RUNNER_IP"
+            echo "🚨 IP $RUNNER_IP is NOT in the whitelist"
             exit 1
           fi
 
