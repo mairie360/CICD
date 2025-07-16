@@ -12,6 +12,12 @@ on:
         type: string
         description: 'Collection id for postman tests'
     secrets:
+      CPANEL_API_TOKEN:
+        required: false
+      CPANEL_SERVER:
+        required: false
+      CPANEL_USERNAME:
+        required: false
       POSTMAN_API_KEY:
         required: false
       DEPLOY_SSH_KEY:
@@ -41,5 +47,7 @@ jobs:
     if: ${{ inputs.type == 'cd-back-lib' }}
     uses: ./.github/workflows/cd-back-lib.yml
     secrets:
-      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      CPANEL_API_TOKEN: ${{ secrets.CPANEL_API_TOKEN }}
+      CPANEL_SERVER: ${{ secrets.CPANEL_SERVER }}
+      CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
       MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
