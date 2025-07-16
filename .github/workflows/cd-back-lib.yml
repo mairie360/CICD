@@ -104,68 +104,20 @@ jobs:
         id: ip
         uses: haythem/public-ip@v1.3
 
-      # - name: Removing all whitelisted IP
-      #   run: |
-      #     curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
-      #       "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/remove_all"
-
-      # - name: Whitelisting the runner IP
-      #   run: |
-      #     curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
-      #       "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/add?address=${{ steps.ip.outputs.ipv4 }}&port=22"
-
-      # - name: Making sure the IP is whitelisted
-      #   run: |
-      #     curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
-      #       "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/list" | grep "${{ steps.ip.outputs.ipv4 }}"
-
-      - name: Add runner IP to SSH whitelist
-        id: add_ip
+      - name: Removing all whitelisted IP
         run: |
-          ENDPOINT="frontend/o2switch/o2switch-ssh-whitelist/index.live.php"
-          SERVER="${{ secrets.CPANEL_SERVER }}"
-          API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
-          RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
+          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
+          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/remove_all'
 
-          echo "➡️ Ajout de l’IP $RUNNER_IP à la whitelist SSH..."
-
-          RESPONSE=$(curl -sfkX POST \
-            -d "whitelist[address]=$RUNNER_IP" \
-            -d "whitelist[port]=22" \
-            "https://${SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}")
-
-          echo "📝 Réponse ajout : $RESPONSE"
-
-          # Vérifie que le JSON contient un succès, ex : {"status":"success","message":"IP added"}
-          if echo "$RESPONSE" | jq -e '.status == "success"' >/dev/null; then
-            echo "✅ IP ajoutée avec succès."
-          else
-            echo "🚨 Échec ajout IP, réponse API inattendue."
-            exit 1
-          fi
-
-      - name: Verify runner IP is in SSH whitelist
+      - name: Whitelisting the runner IP
         run: |
-          ENDPOINT="frontend/o2switch/o2switch-ssh-whitelist/index.live.php"
-          SERVER="${{ secrets.CPANEL_SERVER }}"
-          API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
-          RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
+          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
+          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/add?address=${{ steps.ip.outputs.ipv4 }}&port=22'
 
-          echo "🔍 Vérification de la présence de l’IP $RUNNER_IP dans la whitelist..."
-
-          LIST_RESPONSE=$(curl -sfkX GET \
-            "https://${SERVER}:2083/${ENDPOINT}?r=list&api_token=${API_TOKEN}")
-
-          echo "📝 Réponse liste : $LIST_RESPONSE"
-
-          # Suppose un tableau JSON comme : {"whitelist":[{"address":"1.2.3.4","port":"22"}, ...]}
-          if echo "$LIST_RESPONSE" | jq -e --arg ip "$RUNNER_IP" \
-            '.whitelist[] | select(.address == $ip)' >/dev/null; then
-            echo "✅ IP $RUNNER_IP est bien présente dans la whitelist."
-          else
-            echo "🚨 IP $RUNNER_IP ABSENTE de la whitelist."
-            exit 1
-          fi
+      - name: Making sure the IP is whitelisted
+        run: |
+          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
+          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/list' | grep ${{ steps.ip.outputs.ipv4 }}
 
       # - name: Installing the SSH Key
       #   run: |
