@@ -127,20 +127,22 @@ jobs:
           API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
           RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
 
-          echo "➡️ Adding runner IP $RUNNER_IP to SSH whitelist..."
+          echo "➡️ Ajout de l’IP $RUNNER_IP à la whitelist SSH..."
 
-          RESPONSE=$(curl -skX POST \
+          RESPONSE=$(curl -sfkX POST \
             -d "whitelist[address]=$RUNNER_IP" \
             -d "whitelist[port]=22" \
             "https://${SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}")
 
-          if [[ $? -ne 0 ]]; then
-            echo "❌ Curl failed to add IP to whitelist"
+          echo "📝 Réponse ajout : $RESPONSE"
+
+          # Vérifie que le JSON contient un succès, ex : {"status":"success","message":"IP added"}
+          if echo "$RESPONSE" | jq -e '.status == "success"' >/dev/null; then
+            echo "✅ IP ajoutée avec succès."
+          else
+            echo "🚨 Échec ajout IP, réponse API inattendue."
             exit 1
           fi
-
-          echo "📝 Add response: $RESPONSE"
-          echo "response=$RESPONSE" >> $GITHUB_OUTPUT
 
       - name: Verify runner IP is in SSH whitelist
         run: |
@@ -149,22 +151,19 @@ jobs:
           API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
           RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
 
-          echo "🔍 Checking if IP $RUNNER_IP is in SSH whitelist..."
+          echo "🔍 Vérification de la présence de l’IP $RUNNER_IP dans la whitelist..."
 
-          RESPONSE=$(curl -skX GET \
+          LIST_RESPONSE=$(curl -sfkX GET \
             "https://${SERVER}:2083/${ENDPOINT}?r=list&api_token=${API_TOKEN}")
 
-          if [[ $? -ne 0 ]]; then
-            echo "❌ Curl failed to retrieve whitelist"
-            exit 1
-          fi
+          echo "📝 Réponse liste : $LIST_RESPONSE"
 
-          echo "📝 Current whitelist: $RESPONSE"
-
-          if echo "$RESPONSE" | grep -q "$RUNNER_IP"; then
-            echo "✅ IP $RUNNER_IP is successfully whitelisted"
+          # Suppose un tableau JSON comme : {"whitelist":[{"address":"1.2.3.4","port":"22"}, ...]}
+          if echo "$LIST_RESPONSE" | jq -e --arg ip "$RUNNER_IP" \
+            '.whitelist[] | select(.address == $ip)' >/dev/null; then
+            echo "✅ IP $RUNNER_IP est bien présente dans la whitelist."
           else
-            echo "🚨 IP $RUNNER_IP is NOT in the whitelist"
+            echo "🚨 IP $RUNNER_IP ABSENTE de la whitelist."
             exit 1
           fi
 
