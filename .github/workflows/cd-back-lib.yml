@@ -104,20 +104,30 @@ jobs:
         id: ip
         uses: haythem/public-ip@v1.3
 
-      - name: Removing all whitelisted IP
-        run: |
-          curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
-            "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/remove_all"
+      # - name: Removing all whitelisted IP
+      #   run: |
+      #     curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
+      #       "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/remove_all"
 
-      - name: Whitelisting the runner IP
-        run: |
-          curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
-            "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/add?address=${{ steps.ip.outputs.ipv4 }}&port=22"
+      # - name: Whitelisting the runner IP
+      #   run: |
+      #     curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
+      #       "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/add?address=${{ steps.ip.outputs.ipv4 }}&port=22"
 
-      - name: Making sure the IP is whitelisted
+      # - name: Making sure the IP is whitelisted
+      #   run: |
+      #     curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
+      #       "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/list" | grep "${{ steps.ip.outputs.ipv4 }}"
+
+      - name: Add IP to SSH whitelist
         run: |
-          curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
-            "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/list" | grep "${{ steps.ip.outputs.ipv4 }}"
+          ENDPOINT='frontend/o2switch/o2switch-ssh-whitelist/index.live.php'
+          SERVER="${{ secrets.SSH_HOST }}"
+          LOGIN="${{ secrets.SSH_USER }}"
+          PASSWORD="${{ secrets.SSH_PASSWORD }}"
+
+          # Ajouter l'adresse IP à la liste blanche
+          curl -sX POST -d "whitelist[address]=${{ steps.ip.outputs.ipv4 }}" -d "whitelist[port]=22" "https://$LOGIN:$PASSWORD@$SERVER:2083/$ENDPOINT?r=add" | jq
 
       # - name: Installing the SSH Key
       #   run: |
