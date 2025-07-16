@@ -96,18 +96,22 @@ jobs:
 
       - name: Whitelisting the runner IP
         env:
-          CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
-          CPANEL_API_TOKEN: ${{ secrets.CPANEL_API_TOKEN }}
-          CPANEL_SERVER: ${{ secrets.CPANEL_SERVER }}
           ENDPOINT: frontend/o2switch/o2switch-ssh-whitelist/index.live.php
+          CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
+          CPANEL_PASSWORD: ${{ secrets.CPANEL_PASSWORD }}
+          CPANEL_SERVER: ${{ secrets.CPANEL_SERVER }}
         run: |
-          echo "Whitelisting runner IP: ${{ steps.ip.outputs.ipv4 }}..."
+          echo "Encoding password via jq..."
+          CPANEL_PASSWORD_URLENCODED=$(printf "%s" "$CPANEL_PASSWORD" | jq -sRr @uri)
+
+          RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
+          echo "Whitelisting runner IP: $RUNNER_IP..."
 
           RESPONSE=$(curl -sX POST \
-          -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
-          -d "whitelist[address]=64.236.134.34" \
-          -d "whitelist[port]=22" \
-          "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add")
+            --user "${CPANEL_USERNAME}:${CPANEL_PASSWORD_URLENCODED}" \
+            -d "whitelist[address]=$RUNNER_IP" \
+            -d "whitelist[port]=22" \
+            "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add")
 
           if echo "$RESPONSE" | jq empty >/dev/null 2>&1; then
             echo "$RESPONSE" | jq
