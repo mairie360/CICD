@@ -3,10 +3,12 @@ name: Back lib CD
 on:
   workflow_call:
     secrets:
-      POSTMAN_API_KEY:
-        required: false
-      DEPLOY_SSH_KEY:
-        required: false
+      CPANEL_API_TOKEN:
+        required: true
+      CPANEL_SERVER:
+        required: true
+      CPANEL_USERNAME:
+        required: true
       MAIRIE_360_DEPLOY_TOKEN:
         required: false
 
@@ -64,19 +66,19 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq openssh-client
 
-      - name: Setup SSH key
-        run: |
-          set -x
-          mkdir -p ~/.ssh
-          echo "Secret key length: ${#DEPLOY_SSH_KEY}"
-          printf "%s" "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ls -l ~/.ssh
-          head -n 5 ~/.ssh/id_rsa
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh-keyscan mairie360-eip.fr >> ~/.ssh/known_hosts 2>/dev/null || true
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      # - name: Setup SSH key
+      #   run: |
+      #     set -x
+      #     mkdir -p ~/.ssh
+      #     echo "Secret key length: ${#DEPLOY_SSH_KEY}"
+      #     printf "%s" "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
+      #     chmod 600 ~/.ssh/id_rsa
+      #     ls -l ~/.ssh
+      #     head -n 5 ~/.ssh/id_rsa
+      #     ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+      #     ssh-keyscan mairie360-eip.fr >> ~/.ssh/known_hosts 2>/dev/null || true
+      #   env:
+      #     DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
 
       - name: Configure Git
         run: |
@@ -90,8 +92,39 @@ jobs:
           echo "VERSION=$VERSION"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Run publish script
-        run: ./ci-tools/scripts/publish.sh "$VERSION"
-        env:
-          MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
+      # - name: Run publish script
+      #   run: ./ci-tools/scripts/publish.sh "$VERSION"
+      #   env:
+      #     MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
+
+      - name: Get runner's public IP
+        id: ip
+        uses: haythem/public-ip@v1.3
+
+      - name: Removing all whitelisted IP
+        run: |
+          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
+          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/remove_all'
+
+      - name: Whitelisting the runner IP
+        run: |
+          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
+          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/add?address=${{ steps.ip.outputs.ipv4 }}&port=22'
+
+      - name: Making sure the IP is whitelisted
+        run: |
+          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
+          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/list' | grep ${{ steps.ip.outputs.ipv4 }}
+
+      - name: Installing the SSH Key
+        run: |
+           eval $(ssh-agent -s)
+           mkdir -p ~/.ssh
+           chmod 700 ~/.ssh
+           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+           chmod 0400 ~/.ssh/id_rsa
+
+      - name: Cleaning SSH keys
+        if: always()
+        run: rm -fr ~/.ssh
 
