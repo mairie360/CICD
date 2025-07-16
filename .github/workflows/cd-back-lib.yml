@@ -107,18 +107,13 @@ jobs:
           RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
           echo "Whitelisting runner IP: $RUNNER_IP..."
 
-          RESPONSE=$(curl -sX POST \
+          RESPONSE=$(curl -sX GET \
             --user "${CPANEL_USERNAME}:${CPANEL_PASSWORD_URLENCODED}" \
             -d "whitelist[address]=$RUNNER_IP" \
             -d "whitelist[port]=22" \
             "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add")
 
-          if echo "$RESPONSE" | jq empty >/dev/null 2>&1; then
-            echo "$RESPONSE" | jq
-          else
-            echo "⚠️ La réponse n'est pas un JSON valide :"
-            echo "$RESPONSE"
-          fi
+          echo "$RESPONSE" | jq
 
       # - name: Making sure the IP is whitelisted
       #   run: |
