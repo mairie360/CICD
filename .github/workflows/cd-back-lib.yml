@@ -104,28 +104,37 @@ jobs:
         id: ip
         uses: haythem/public-ip@v1.3
 
-      - name: Whitelist IP on hosting & delete old ones (o2switch)
+      - name: Whitelist IP on hosting & clean old (o2switch)
         shell: bash
+        env:
+          API_TOKEN: ${{ secrets.CPANEL_API_TOKEN }}
+          SERVER: ${{ secrets.CPANEL_SERVER }}
+          USERNAME: ${{ secrets.CPANEL_USERNAME }}
+          RUNNER_IP: ${{ steps.ip.outputs.ipv4 }}
         run: |
           ENDPOINT='frontend/o2switch/o2switch-ssh-whitelist/index.live.php'
-          API_TOKEN=${{ secrets.CPANEL_API_TOKEN }}
-          SERVER=${{ secrets.CPANEL_SERVER }}
-          USERNAME=${{ secrets.CPANEL_USERNAME }}
 
-          echo "Get actual whitelisted IPs..."
+          echo "➡️ Fetch actual whitelisted IPs..."
           RESPONSE=$(curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=list&api_token=${API_TOKEN}&username=${USERNAME}")
-          echo "Response: ${RESPONSE}"
-          UNIQUE_IPS=$(echo "${RESPONSE}" | jq -r '.data.list[] | .address' | sort -u)
+          echo "📝 Response: ${RESPONSE}"
 
-          for address in $UNIQUE_IPS; do
-            echo "Delete this GitHub IP: $address (in & out)"
-            curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=remove&address=$address&direction=in&port=22&api_token=${API_TOKEN}&username=${USERNAME}" | jq
-            sleep 3
-            curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=remove&address=$address&direction=out&port=22&api_token=${API_TOKEN}&username=${USERNAME}" | jq
-            sleep 3
-          done
-          echo "All non-whitelisted IPs deleted!"
+          UNIQUE_IPS=$(echo "${RESPONSE}" | jq -r '.data.list[]?.address' | sort -u)
 
-          echo "Attempt to whitelist IP..."
-          curl -sX POST -d "whitelist[address]=${{ steps.ip.outputs.ipv4 }}" -d "whitelist[port]=22" "https://${SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}&username=${USERNAME}" | jq
+          if [ -z "$UNIQUE_IPS" ]; then
+            echo "✅ No existing IPs in whitelist."
+          else
+            for address in ${UNIQUE_IPS}; do
+              echo "🚮 Removing IP: $address"
+              curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=remove&address=${address}&direction=in&port=22&api_token=${API_TOKEN}&username=${USERNAME}" | jq
+              sleep 2
+              curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=remove&address=${address}&direction=out&port=22&api_token=${API_TOKEN}&username=${USERNAME}" | jq
+              sleep 2
+            done
+            echo "✅ All old IPs removed."
+          fi
 
+          echo "➕ Adding current runner IP: ${RUNNER_IP}..."
+          curl -sX POST \
+            -d "whitelist[address]=${RUNNER_IP}" \
+            -d "whitelist[port]=22" \
+            "https://${SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}&username=${USERNAME}" | jq
