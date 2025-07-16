@@ -104,30 +104,28 @@ jobs:
         id: ip
         uses: haythem/public-ip@v1.3
 
-      - name: Removing all whitelisted IP
+      - name: Whitelist IP on hosting & delete old ones (o2switch)
+        shell: bash
         run: |
-          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
-          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/remove_all'
+          ENDPOINT='frontend/o2switch/o2switch-ssh-whitelist/index.live.php'
+          API_TOKEN=${{ secrets.CPANEL_API_TOKEN }}
+          SERVER=${{ secrets.CPANEL_SERVER }}
+          USERNAME=${{ secrets.CPANEL_USERNAME }}
 
-      - name: Whitelisting the runner IP
-        run: |
-          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
-          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/add?address=${{ steps.ip.outputs.ipv4 }}&port=22'
+          echo "Get actual whitelisted IPs..."
+          RESPONSE=$(curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=list&api_token=${API_TOKEN}&username=${USERNAME}")
+          echo "Response: ${RESPONSE}"
+          UNIQUE_IPS=$(echo "${RESPONSE}" | jq -r '.data.list[] | .address' | sort -u)
 
-      - name: Making sure the IP is whitelisted
-        run: |
-          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
-          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/list' | grep ${{ steps.ip.outputs.ipv4 }}
+          for address in $UNIQUE_IPS; do
+            echo "Delete this GitHub IP: $address (in & out)"
+            curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=remove&address=$address&direction=in&port=22&api_token=${API_TOKEN}&username=${USERNAME}" | jq
+            sleep 3
+            curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=remove&address=$address&direction=out&port=22&api_token=${API_TOKEN}&username=${USERNAME}" | jq
+            sleep 3
+          done
+          echo "All non-whitelisted IPs deleted!"
 
-      # - name: Installing the SSH Key
-      #   run: |
-      #      eval $(ssh-agent -s)
-      #      mkdir -p ~/.ssh
-      #      chmod 700 ~/.ssh
-      #      echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
-      #      chmod 0400 ~/.ssh/id_rsa
-
-      # - name: Cleaning SSH keys
-      #   if: always()
-      #   run: rm -fr ~/.ssh
+          echo "Attempt to whitelist IP..."
+          curl -sX POST -d "whitelist[address]=${{ steps.ip.outputs.ipv4 }}" -d "whitelist[port]=22" "https://${SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}&username=${USERNAME}" | jq
 
