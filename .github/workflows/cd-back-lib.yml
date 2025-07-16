@@ -5,6 +5,8 @@ on:
     secrets:
       CPANEL_API_TOKEN:
         required: true
+      CPANEL_PASSWORD:
+        required: true
       CPANEL_SERVER:
         required: true
       CPANEL_USERNAME:
@@ -60,6 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CPANEL_API_TOKEN: ${{ secrets.CPANEL_API_TOKEN }}
+      CPANEL_ENDPOINT: "frontend/o2switch/o2switch-ssh-whitelist/index.live.php"
+      CPANEL_PASSWORD: ${{ secrets.CPANEL_PASSWORD }}
       CPANEL_SERVER: ${{ secrets.CPANEL_SERVER }}
       CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
       MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
@@ -68,20 +72,6 @@ jobs:
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq openssh-client
-
-      # - name: Setup SSH key
-      #   run: |
-      #     set -x
-      #     mkdir -p ~/.ssh
-      #     echo "Secret key length: ${#DEPLOY_SSH_KEY}"
-      #     printf "%s" "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
-      #     chmod 600 ~/.ssh/id_rsa
-      #     ls -l ~/.ssh
-      #     head -n 5 ~/.ssh/id_rsa
-      #     ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null || true
-      #     ssh-keyscan mairie360-eip.fr >> ~/.ssh/known_hosts 2>/dev/null || true
-      #   env:
-      #     DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
 
       - name: Configure Git
         run: |
@@ -104,15 +94,20 @@ jobs:
         id: ip
         uses: haythem/public-ip@v1.3
 
-      - name: Removing all whitelisted IP
+      - name: Whitelisting the runner IP
+        env:
+          CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
+          CPANEL_API_TOKEN: ${{ secrets.CPANEL_API_TOKEN }}
+          CPANEL_SERVER: ${{ secrets.CPANEL_SERVER }}
+          ENDPOINT: frontend/o2switch/o2switch-ssh-whitelist/index.live.php
         run: |
-          curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
-          'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/remove_all'
+          echo "Whitelisting runner IP: ${{ steps.ip.outputs.ipv4 }}..."
 
-      # - name: Whitelisting the runner IP
-      #   run: |
-      #     curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
-      #     'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/add?address=${{ steps.ip.outputs.ipv4 }}&port=22'
+          curl -sX POST \
+            -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
+            -d "whitelist[address]=${{ steps.ip.outputs.ipv4 }}" \
+            -d "whitelist[port]=22" \
+            "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add" | jq
 
       # - name: Making sure the IP is whitelisted
       #   run: |
@@ -126,8 +121,3 @@ jobs:
       #      chmod 700 ~/.ssh
       #      echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
       #      chmod 0400 ~/.ssh/id_rsa
-
-      # - name: Cleaning SSH keys
-      #   if: always()
-      #   run: rm -fr ~/.ssh
-
