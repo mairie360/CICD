@@ -119,33 +119,42 @@ jobs:
       #     curl -sm 45 -H "Authorization: cpanel ${CPANEL_USERNAME}:${CPANEL_API_TOKEN}" \
       #       "https://${CPANEL_SERVER}:2083/execute/SshWhitelist/list" | grep "${{ steps.ip.outputs.ipv4 }}"
 
-      - name: Add IP to SSH whitelist
+      - name: Add runner IP to SSH whitelist
         id: add_ip
         run: |
-          ENDPOINT='frontend/o2switch/o2switch-ssh-whitelist/index.live.php'
+          ENDPOINT="frontend/o2switch/o2switch-ssh-whitelist/index.live.php"
           SERVER="${{ secrets.CPANEL_SERVER }}"
           API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
+          RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
 
-          # Ajouter l'adresse IP à la liste blanche
-          RESPONSE=$(curl -sX POST -d "whitelist[address]=${{ steps.ip.outputs.ipv4 }}" -d "whitelist[port]=22" "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}")
-          echo "Response: ${RESPONSE}"
-          echo "::set-output name=response::${RESPONSE}"
+          echo "Adding runner IP $RUNNER_IP to SSH whitelist..."
 
-      - name: Verify IP in SSH whitelist
+          RESPONSE=$(curl -skX POST \
+            -d "whitelist[address]=$RUNNER_IP" \
+            -d "whitelist[port]=22" \
+            "https://${SERVER}:2083/${ENDPOINT}?r=add&api_token=${API_TOKEN}")
+
+          echo "Add response: $RESPONSE"
+          echo "response=$RESPONSE" >> $GITHUB_OUTPUT
+
+      - name: Verify runner IP is in SSH whitelist
         run: |
-          ENDPOINT='frontend/o2switch/o2switch-ssh-whitelist/index.live.php'
+          ENDPOINT="frontend/o2switch/o2switch-ssh-whitelist/index.live.php"
           SERVER="${{ secrets.CPANEL_SERVER }}"
           API_TOKEN="${{ secrets.CPANEL_API_TOKEN }}"
+          RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
 
-          # Vérifier que l'adresse IP a été ajoutée à la liste blanche
-          RESPONSE=$(curl -sX GET "https://${SERVER}:2083/${ENDPOINT}?r=list&api_token=${API_TOKEN}")
-          echo "Response: ${RESPONSE}"
-          UNIQUE_IPS=$(echo "${RESPONSE}" | jq -r '.data.list[] | .address' | sort -u)
+          echo "Checking if IP $RUNNER_IP is in whitelist..."
 
-          if echo "${UNIQUE_IPS}" | grep -q "${{ steps.ip.outputs.ipv4 }}"; then
-            echo "IP successfully added to whitelist"
+          RESPONSE=$(curl -skX GET \
+            "https://${SERVER}:2083/${ENDPOINT}?r=list&api_token=${API_TOKEN}")
+
+          echo "List response: $RESPONSE"
+
+          if echo "$RESPONSE" | grep -q "$RUNNER_IP"; then
+            echo "✅ IP $RUNNER_IP is whitelisted"
           else
-            echo "Failed to add IP to whitelist"
+            echo "❌ Failed to whitelist IP $RUNNER_IP"
             exit 1
           fi
 
