@@ -3,16 +3,10 @@ name: Back lib CD
 on:
   workflow_call:
     secrets:
-      CPANEL_API_TOKEN:
-        required: true
-      CPANEL_PASSWORD:
-        required: true
-      CPANEL_SERVER:
-        required: true
-      CPANEL_USERNAME:
-        required: true
       MAIRIE_360_DEPLOY_TOKEN:
         required: false
+      CARGO_REGISTRY_TOKEN:
+        required: true
 
 jobs:
   check_validity:
@@ -20,8 +14,10 @@ jobs:
 
   publish_release:
     runs-on: ubuntu-latest
+    needs: check_validity
     env:
       REPO: ${{ github.repository }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,99 +27,38 @@ jobs:
       - name: Install GitHub CLI
         run: sudo apt-get install -y gh
 
+      - name: Get latest GitHub release version
+        id: get_release
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest | jq -r .tag_name)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
       - name: Extract version from Cargo.toml
         id: extract_version
         run: |
           VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Check if release exists
-        id: check_release
+      - name: Compare GitHub release and Cargo.toml version
+        id: check_version
         run: |
-          TAG="v${{ steps.extract_version.outputs.version }}"
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
-          echo "exists=false" >> $GITHUB_OUTPUT
-          if [ "$HTTP_STATUS" = "200" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+          if [ "${VERSION}" != "v${{ steps.extract_version.outputs.version }}" ]; then
+            echo "GitHub release version ($VERSION) and Cargo.toml version (v${{ steps.extract_version.outputs.version }}) do not match"
+            exit 1
           fi
 
-      - name: Create GitHub Release
-        if: steps.check_release.outputs.exists == 'false'
+      - name: Cargo publish dry run
         run: |
-          gh release create "v${{ steps.extract_version.outputs.version }}" \
-            --title "Release v${{ steps.extract_version.outputs.version }}" \
-            --notes "Automated release"
+          cargo publish --dry-run
+
+      - name: Cargo publish
+        run: |
+          cargo publish --token $CARGO_REGISTRY_TOKEN
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  deploy_release:
-    runs-on: ubuntu-latest
-    env:
-      CPANEL_API_TOKEN: ${{ secrets.CPANEL_API_TOKEN }}
-      CPANEL_ENDPOINT: "frontend/o2switch/o2switch-ssh-whitelist/index.live.php"
-      CPANEL_PASSWORD: ${{ secrets.CPANEL_PASSWORD }}
-      CPANEL_SERVER: ${{ secrets.CPANEL_SERVER }}
-      CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
-      MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq openssh-client
-
-      - name: Configure Git
-        run: |
-          git config --global user.email "github-actions@users.noreply.github.com"
-          git config --global user.name "GitHub Actions"
-
-      - name: Get latest GitHub release version
-        id: get_release
-        run: |
-          VERSION=$(curl -s https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest | jq -r .tag_name)
-          echo "VERSION=$VERSION"
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-
-      # - name: Run publish script
-      #   run: ./ci-tools/scripts/publish.sh "$VERSION"
-      #   env:
-      #     MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
-
-      - name: Get runner's public IP
-        id: ip
-        uses: haythem/public-ip@v1.3
-
-      - name: Whitelisting the runner IP
-        env:
-          ENDPOINT: frontend/o2switch/o2switch-ssh-whitelist/index.live.php
-          CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
-          CPANEL_PASSWORD: ${{ secrets.CPANEL_PASSWORD }}
-          CPANEL_SERVER: ${{ secrets.CPANEL_SERVER }}
-        run: |
-          echo "Encoding password via jq..."
-          CPANEL_PASSWORD_URLENCODED=$(printf "%s" "$CPANEL_PASSWORD" | jq -sRr @uri)
-
-          RUNNER_IP="${{ steps.ip.outputs.ipv4 }}"
-          echo "Whitelisting runner IP: $RUNNER_IP..."
-
-          RESPONSE=$(curl -sX GET \
-            --user "${CPANEL_USERNAME}:${CPANEL_PASSWORD_URLENCODED}" \
-            -d "whitelist[address]=$RUNNER_IP" \
-            -d "whitelist[port]=22" \
-            "https://${CPANEL_SERVER}:2083/${ENDPOINT}?r=add")
-
-          echo "$RESPONSE" | jq
-
-      # - name: Making sure the IP is whitelisted
-      #   run: |
-      #     curl -sm 45 -H'Authorization: cpanel ${{ secrets.CPANEL_USERNAME }}:${{ secrets.CPANEL_API_TOKEN }}' \
-      #     'https://${{ secrets.CPANEL_SERVER }}:2083/execute/SshWhitelist/list' | grep ${{ steps.ip.outputs.ipv4 }}
-
-      # - name: Installing the SSH Key
-      #   run: |
-      #      eval $(ssh-agent -s)
-      #      mkdir -p ~/.ssh
-      #      chmod 700 ~/.ssh
-      #      echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
-      #      chmod 0400 ~/.ssh/id_rsa
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
