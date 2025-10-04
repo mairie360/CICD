@@ -22,7 +22,7 @@ jobs:
             exit 1
 
   build-temporary:
-    if: github.ref != 'refs/heads/main'
+    needs: block-on-main
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
