@@ -7,6 +7,14 @@ on:
         description: 'Name of the package group'
         required: true
         type: string
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: string
+      version:
+        description: 'Version of the package'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -14,8 +22,8 @@ permissions:
 
 jobs:
 
-  build:
-    if: github.ref == 'refs/heads/main'
+  build-pre-prod-image:
+    # if: github.ref == 'refs/heads/main' && inputs.environment != 'production'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -25,7 +33,42 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
       - name: Build Docker image
-        run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.run_id }} .
+        run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.environment }}-${{ github.sha }} .
+
+      - name: Build Docker image (latest tag for environment)
+        run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.environment }}-latest .
 
       - name: Push Docker image
-        run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.run_id }}
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.environment }}-${{ github.sha }}
+
+      - name: Push Docker image (latest tag for environment)
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.environment }}-latest
+
+  build-prod-image:
+    if: github.ref == 'refs/heads/main' && inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Ensure version is specified
+        run: |
+          if [ -z "${{ inputs.version }}" ]; then
+            echo "❌ Error: 'version' input is required for production builds."
+            exit 1
+          fi
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Build Docker image (latest tag)
+        run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:latest .
+
+      - name: Build Docker image (version tag)
+        run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.version }} .
+
+      - name: Push Docker image (latest tag)
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:latest
+
+      - name: Push Docker image (version tag)
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.version }}
