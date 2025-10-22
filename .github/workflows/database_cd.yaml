@@ -1,0 +1,54 @@
+name: Back CD Workflow
+
+on:
+  workflow_call:
+    inputs:
+      job:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      version:
+        required: false
+        type: string
+
+jobs:
+  dev-release:
+    if: ${{ inputs.job == 'release' && inputs.environment == 'dev' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/workflows/docker_build.yml
+        with:
+          package_name: "database"
+          environment: "dev"
+
+  dev-deploy:
+    if: ${{ inputs.job == 'deploy' && inputs.environment == 'dev' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Running back CD"
+
+  staging-release:
+    if: ${{ inputs.job == 'release' && inputs.environment == 'staging' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Running back CD"
+
+  staging-deploy:
+    if: ${{ inputs.job == 'deploy' && inputs.environment == 'staging' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Running back CD"
+
+  prod-release:
+    if: ${{ inputs.job == 'release' && inputs.environment == 'prod' && inputs.version != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Running back CD"
+
+  prod-deploy:
+    if: ${{ inputs.job == 'deploy' && inputs.environment == 'prod' && inputs.version != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Running back CD"
