@@ -16,12 +16,10 @@ on:
 jobs:
   dev-release:
     if: ${{ inputs.job == 'release' && inputs.environment == 'dev' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: ./.github/workflows/docker_build.yml
-        with:
-          package_name: "database"
-          environment: "dev"
+    uses: ./.github/workflows/docker_build.yml
+    with:
+      package_name: "database"
+      environment: "dev"
 
   dev-deploy:
     if: ${{ inputs.job == 'deploy' && inputs.environment == 'dev' }}
