@@ -25,7 +25,7 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
       - name: Build Docker image
-        run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.run_id }} .
+        run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.sha }} .
 
       - name: Push Docker image
-        run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.run_id }}
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.sha }}
