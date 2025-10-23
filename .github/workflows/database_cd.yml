@@ -16,6 +16,7 @@ on:
 jobs:
   run:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - job: release
@@ -40,20 +41,23 @@ jobs:
             environment: prod
             require_version: true
 
-    if: |
-      matrix.job == inputs.job &&
-      matrix.environment == inputs.environment &&
-      ( !matrix.require_version || inputs.version != '' )
-
     runs-on: ubuntu-latest
 
     steps:
       - name: Debug info
+        if: >
+          matrix.job == inputs.job &&
+          matrix.environment == inputs.environment &&
+          ( !matrix.require_version || inputs.version != '' )
         run: echo "Running ${{ matrix.job }} for ${{ matrix.environment }} (version=${{ inputs.version }})"
 
       # === Release steps ===
       - name: Run docker build
-        if: ${{ matrix.uses_docker_build }}
+        if: >
+          matrix.job == inputs.job &&
+          matrix.environment == inputs.environment &&
+          ( !matrix.require_version || inputs.version != '' ) &&
+          matrix.uses_docker_build
         uses: ./.github/workflows/docker_build.yml
         with:
           package_name: "database"
@@ -61,5 +65,9 @@ jobs:
 
       # === Deploy steps ===
       - name: Run deployment
-        if: ${{ matrix.job == 'deploy' }}
+        if: >
+          matrix.job == inputs.job &&
+          matrix.environment == inputs.environment &&
+          ( !matrix.require_version || inputs.version != '' ) &&
+          matrix.job == 'deploy'
         run: echo "Running back CD for ${{ matrix.environment }}"
