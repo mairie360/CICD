@@ -22,9 +22,8 @@ jobs:
           repository: mairie360/CICD
           ref: ${{ inputs.ref }}
 
-      # Build Docker image
       - name: Build and Release Docker image
-        uses: ./.github/actions/docker/release
+        uses: mairie360/CICD/.github/actions/docker/release@${{ inputs.ref }}
         with:
           package_name: ${{ inputs.package_name }}
           environment: dev
