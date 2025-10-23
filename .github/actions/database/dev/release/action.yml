@@ -5,6 +5,9 @@ inputs:
   package_name:
     description: 'Name of the package'
     required: true
+  github_token:
+    description: 'GitHub token for authentication'
+    required: true
 
 runs:
   using: "composite"
@@ -13,7 +16,10 @@ runs:
       with:
         package_name: ${{ inputs.package_name }}
         environment: dev
+        github_token: ${{ inputs.github_token }}
+
     - uses: ./.github/actions/docker/publish
       with:
         package_name: ${{ inputs.package_name }}
         environment: dev
+        github_token: ${{ inputs.github_token }}

@@ -11,6 +11,9 @@ inputs:
   version:
     description: 'Version tag (optional)'
     required: false
+  github_token:
+    description: 'GitHub token for authentication'
+    required: true
 
 runs:
   using: "composite"
@@ -19,7 +22,7 @@ runs:
       uses: actions/checkout@v4
 
     - name: Log in to GitHub Container Registry
-      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      run: echo "${{ inputs.github_token }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
       shell: bash
 
     - name: Build Docker image (sha or version)
