@@ -16,6 +16,11 @@ on:
         type: string
         description: GitHub token for actions
 
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+        description: GitHub token for authentication
+
 jobs:
   release-dev:
     runs-on: ubuntu-latest
@@ -30,7 +35,7 @@ jobs:
         uses: ./.github/actions/database/dev/release
         with:
           package_name: ${{ inputs.package_name }}
-          github_token: ${{ inputs.github_token }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   deploy-dev:
     runs-on: ubuntu-latest
@@ -46,7 +51,7 @@ jobs:
         uses: ./.github/actions/database/dev/deploy
         with:
           package_name: ${{ inputs.package_name }}
-          github_token: ${{ inputs.github_token }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   # release-staging:
   #   runs-on: ubuntu-latest
