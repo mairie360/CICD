@@ -23,20 +23,20 @@ jobs:
           ref: ${{ inputs.ref }}
 
       # Build Docker image
-      - name: Build Docker image
-        uses: ./.github/actions/docker/build
+      - name: Build and Release Docker image
+        uses: ./.github/actions/docker/release
         with:
           package_name: ${{ inputs.package_name }}
           environment: dev
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Publish Docker image
-      - name: Publish Docker image
-        uses: ./.github/actions/docker/publish
-        with:
-          package_name: ${{ inputs.package_name }}
-          environment: dev
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # # Publish Docker image
+      # - name: Publish Docker image
+      #   uses: ./.github/actions/docker/publish
+      #   with:
+      #     package_name: ${{ inputs.package_name }}
+      #     environment: dev
+      #     github_token: ${{ secrets.GITHUB_TOKEN }}
 
   # deploy-dev:
   #   runs-on: ubuntu-latest
