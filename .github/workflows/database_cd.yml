@@ -29,9 +29,10 @@ jobs:
 
   staging-release:
     if: ${{ inputs.job == 'release' && inputs.environment == 'staging' }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Running back CD"
+    uses: ./.github/workflows/docker_build.yml
+    with:
+      package_name: "database"
+      environment: "staging"
 
   staging-deploy:
     if: ${{ inputs.job == 'deploy' && inputs.environment == 'staging' }}
