@@ -12,12 +12,18 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # Checkout the repository so local actions are available
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # Build Docker image
     - uses: ./.github/actions/docker/build
       with:
         package_name: ${{ inputs.package_name }}
         environment: dev
         github_token: ${{ inputs.github_token }}
 
+    # Publish Docker image
     - uses: ./.github/actions/docker/publish
       with:
         package_name: ${{ inputs.package_name }}
