@@ -14,40 +14,52 @@ on:
         type: string
 
 jobs:
-  dev-release:
-    if: ${{ inputs.job == 'release' && inputs.environment == 'dev' }}
-    uses: ./.github/workflows/docker_build.yml
-    with:
-      package_name: "database"
-      environment: "dev"
+  run:
+    strategy:
+      matrix:
+        include:
+          - job: release
+            environment: dev
+            uses_docker_build: true
 
-  dev-deploy:
-    if: ${{ inputs.job == 'deploy' && inputs.environment == 'dev' }}
+          - job: deploy
+            environment: dev
+
+          - job: release
+            environment: staging
+            uses_docker_build: true
+
+          - job: deploy
+            environment: staging
+
+          - job: release
+            environment: prod
+            require_version: true
+
+          - job: deploy
+            environment: prod
+            require_version: true
+
+    if: |
+      matrix.job == inputs.job &&
+      matrix.environment == inputs.environment &&
+      ( !matrix.require_version || inputs.version != '' )
+
     runs-on: ubuntu-latest
-    steps:
-      - run: echo "Running back CD"
 
-  staging-release:
-    if: ${{ inputs.job == 'release' && inputs.environment == 'staging' }}
-    uses: ./.github/workflows/docker_build.yml
-    with:
-      package_name: "database"
-      environment: "staging"
-
-  staging-deploy:
-    if: ${{ inputs.job == 'deploy' && inputs.environment == 'staging' }}
-    runs-on: ubuntu-latest
     steps:
-      - run: echo "Running back CD"
+      - name: Debug info
+        run: echo "Running ${{ matrix.job }} for ${{ matrix.environment }} (version=${{ inputs.version }})"
 
-  prod-release:
-    if: ${{ inputs.job == 'release' && inputs.environment == 'prod' && inputs.version != '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Running back CD"
+      # === Release steps ===
+      - name: Run docker build
+        if: ${{ matrix.uses_docker_build }}
+        uses: ./.github/workflows/docker_build.yml
+        with:
+          package_name: "database"
+          environment: ${{ matrix.environment }}
 
-  prod-deploy:
-    if: ${{ inputs.job == 'deploy' && inputs.environment == 'prod' && inputs.version != '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Running back CD"
+      # === Deploy steps ===
+      - name: Run deployment
+        if: ${{ matrix.job == 'deploy' }}
+        run: echo "Running back CD for ${{ matrix.environment }}"
