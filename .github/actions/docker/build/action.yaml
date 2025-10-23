@@ -1,0 +1,31 @@
+name: Docker Build
+description: Build Docker images
+
+inputs:
+  package_name:
+    description: 'Name of the package'
+    required: true
+  environment:
+    description: 'Deployment environment'
+    required: true
+  version:
+    description: 'Version tag (optional)'
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Log in to GitHub Container Registry
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+    - name: Build Docker image (sha or version)
+      run: |
+        TAG=${{ inputs.version || github.sha }}
+        docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.environment }}-$TAG .
+
+
+    - name: Build Docker image (latest tag for environment)
+      run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.environment }}-latest .
