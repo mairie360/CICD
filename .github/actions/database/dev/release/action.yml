@@ -8,23 +8,31 @@ inputs:
   github_token:
     description: 'GitHub token for authentication'
     required: true
+  ref:
+    description: 'Branch or tag of the CICD repository to checkout'
+    required: true
 
 runs:
   using: "composite"
   steps:
-    # Checkout the repository so local actions are available
-    - name: Checkout repository
+    # Checkout CICD repo so local docker actions exist
+    - name: Checkout CICD repository
       uses: actions/checkout@v4
+      with:
+        repository: mairie360/CICD
+        ref: ${{ inputs.ref }}
 
     # Build Docker image
-    - uses: ./.github/actions/docker/build
+    - name: Build Docker image
+      uses: ${{ github.workspace }}/.github/actions/docker/build
       with:
         package_name: ${{ inputs.package_name }}
         environment: dev
         github_token: ${{ inputs.github_token }}
 
     # Publish Docker image
-    - uses: ./.github/actions/docker/publish
+    - name: Publish Docker image
+      uses: ${{ github.workspace }}/.github/actions/docker/publish
       with:
         package_name: ${{ inputs.package_name }}
         environment: dev
