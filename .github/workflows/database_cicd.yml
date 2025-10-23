@@ -7,100 +7,42 @@ on:
         required: true
         type: string
         description: The name of the package to release
-      ref:
-        required: true
-        type: string
-        description: Branch or tag of the CICD repository to checkout
 
 jobs:
   release-dev:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout CICD repository
-        uses: actions/checkout@v4.2.2
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.ref }}
+      # Checkout repository à la bonne branche/tag
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Build and Release Docker image
-        uses: mairie360/CICD/.github/actions/docker/release@${{ inputs.ref }}
-        with:
-          package_name: ${{ inputs.package_name }}
-          environment: dev
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Connexion à GHCR
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+        shell: bash
 
-      # # Publish Docker image
-      # - name: Publish Docker image
-      #   uses: ./.github/actions/docker/publish
-      #   with:
-      #     package_name: ${{ inputs.package_name }}
-      #     environment: dev
-      #     github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Build Docker image avec SHA ou version
+      - name: Build Docker image (sha)
+        run: |
+          TAG=${GITHUB_SHA}
+          docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-$TAG .
+        shell: bash
 
-  # deploy-dev:
-  #   runs-on: ubuntu-latest
-  #   needs: release-dev
-  #   steps:
-  #     - name: Checkout CICD repository
-  #       uses: actions/checkout@v4.2.2
-  #       with:
-  #         repository: mairie360/CICD
-  #         ref: ${{ inputs.ref }}
+      # Build Docker image latest pour l'environnement
+      - name: Build Docker image (latest)
+        run: |
+          docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-latest .
+        shell: bash
 
-  #     - name: Run Dev Deploy Action
-  #       uses: ./.github/actions/database/dev/deploy
-  #       with:
-  #         package_name: ${{ inputs.package_name }}
-  #         github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Push Docker image avec SHA
+      - name: Push Docker image (sha)
+        run: |
+          TAG=${GITHUB_SHA}
+          docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-$TAG
+        shell: bash
 
-  # release-staging:
-  #   runs-on: ubuntu-latest
-  #   needs: deploy-dev
-  #   steps:
-  #     - name: Checkout CICD repository
-  #       uses: actions/checkout@v4.2.2
-  #       with:
-  #         repository: mairie360/CICD
-  #         ref: ${{ inputs.ref }}
-  #     - uses: ./.github/actions/database/staging/release
-  #       with:
-  #         package_name: ${{ inputs.package_name }}
-
-  # deploy-staging:
-  #   runs-on: ubuntu-latest
-  #   needs: release-staging
-  #   steps:
-  #     - name: Checkout CICD repository
-  #       uses: actions/checkout@v4.2.2
-  #       with:
-  #         repository: mairie360/CICD
-  #         ref: ${{ inputs.ref }}
-  #     - uses: ./.github/actions/database/staging/deploy
-  #       with:
-  #         package_name: ${{ inputs.package_name }}
-
-  # release-prod:
-  #   runs-on: ubuntu-latest
-  #   needs: deploy-staging
-  #   steps:
-  #     - name: Checkout CICD repository
-  #       uses: actions/checkout@v4.2.2
-  #       with:
-  #         repository: mairie360/CICD
-  #         ref: ${{ inputs.ref }}
-  #     - uses: ./.github/actions/database/prod/release
-  #       with:
-  #         package_name: ${{ inputs.package_name }}
-
-  # deploy-prod:
-  #   runs-on: ubuntu-latest
-  #   needs: release-prod
-  #   steps:
-  #     - name: Checkout CICD repository
-  #       uses: actions/checkout@v4.2.2
-  #       with:
-  #         repository: mairie360/CICD
-  #         ref: ${{ inputs.ref }}
-  #     - uses: ./.github/actions/database/prod/deploy
-  #       with:
-  #         package_name: ${{ inputs.package_name }}
+      # Push Docker image latest
+      - name: Push Docker image (latest)
+        run: |
+          docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-latest
+        shell: bash
