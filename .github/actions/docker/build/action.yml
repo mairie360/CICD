@@ -20,12 +20,17 @@ runs:
 
     - name: Log in to GitHub Container Registry
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      shell: bash
 
     - name: Build Docker image (sha or version)
       run: |
-        TAG=${{ inputs.version || github.sha }}
-        docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.environment }}-$TAG .
-
+        TAG=${{ inputs.version }}
+        if [ -z "$TAG" ]; then
+          TAG=${GITHUB_SHA}
+        fi
+        docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:${{ inputs.environment }}-$TAG .
+      shell: bash
 
     - name: Build Docker image (latest tag for environment)
-      run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ inputs.environment }}-latest .
+      run: docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:${{ inputs.environment }}-latest .
+      shell: bash
