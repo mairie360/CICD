@@ -11,15 +11,6 @@ on:
         required: true
         type: string
         description: Branch or tag of the CICD repository to checkout
-      # github_token:
-      #   required: true
-      #   type: string
-      #   description: GitHub token for actions
-
-    # secrets:
-    #   GITHUB_TOKEN:
-    #     required: true
-    #     description: GitHub token for authentication
 
 jobs:
   release-dev:
@@ -31,12 +22,21 @@ jobs:
           repository: mairie360/CICD
           ref: ${{ inputs.ref }}
 
-      - name: Run Dev Release Action
-        uses: ./.github/actions/database/dev/release
+      # Build Docker image
+      - name: Build Docker image
+        uses: ./.github/actions/docker/build
         with:
           package_name: ${{ inputs.package_name }}
+          environment: dev
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          ref: ${{ inputs.ref }}
+
+      # Publish Docker image
+      - name: Publish Docker image
+        uses: ./.github/actions/docker/publish
+        with:
+          package_name: ${{ inputs.package_name }}
+          environment: dev
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   # deploy-dev:
   #   runs-on: ubuntu-latest
