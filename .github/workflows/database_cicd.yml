@@ -16,10 +16,10 @@ on:
         type: string
         description: GitHub token for actions
 
-    secrets:
-      GITHUB_TOKEN:
-        required: true
-        description: GitHub token for authentication
+    # secrets:
+    #   GITHUB_TOKEN:
+    #     required: true
+    #     description: GitHub token for authentication
 
 jobs:
   release-dev:
