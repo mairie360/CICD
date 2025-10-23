@@ -1,0 +1,19 @@
+name: Database Dev Release Action
+description: 'Action to release database package in dev environment'
+
+inputs:
+  package_name:
+    description: 'Name of the package'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: ./.github/actions/docker/build
+      with:
+        package_name: ${{ inputs.package_name }}
+        environment: dev
+    - uses: ./.github/actions/docker/publish
+      with:
+        package_name: ${{ inputs.package_name }}
+        environment: dev
