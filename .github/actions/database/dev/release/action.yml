@@ -24,7 +24,7 @@ runs:
 
     # Build Docker image
     - name: Build Docker image
-      uses: ./../../docker/build
+      uses: ../../../docker/build
       with:
         package_name: ${{ inputs.package_name }}
         environment: dev
@@ -32,7 +32,7 @@ runs:
 
     # Publish Docker image
     - name: Publish Docker image
-      uses: ./../../docker/publish
+      uses: ../../../docker/publish
       with:
         package_name: ${{ inputs.package_name }}
         environment: dev
