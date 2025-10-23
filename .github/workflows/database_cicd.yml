@@ -9,14 +9,14 @@ on:
         description: The name of the package to release
 
 jobs:
-
   release-dev:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4.2.2
 
-      - uses: ./.github/actions/database/dev/release/action.yml
+      - name: Run Dev Release Action
+        uses: ./.github/actions/database/dev/release
         with:
           package_name: ${{ inputs.package_name }}
 
@@ -27,7 +27,8 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4.2.2
 
-      - uses: ./.github/actions/database/dev/deploy
+      - name: Run Dev Deploy Action
+        uses: ./.github/actions/database/dev/deploy
         with:
           package_name: ${{ inputs.package_name }}
 
