@@ -16,7 +16,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4.2.2
 
-      - uses: ./.github/actions/database/dev/release
+      - uses: ./.github/actions/database/dev/release/action.yml
         with:
           package_name: ${{ inputs.package_name }}
 
