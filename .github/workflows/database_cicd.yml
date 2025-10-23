@@ -11,10 +11,10 @@ on:
         required: true
         type: string
         description: Branch or tag of the CICD repository to checkout
-      github_token:
-        required: true
-        type: string
-        description: GitHub token for actions
+      # github_token:
+      #   required: true
+      #   type: string
+      #   description: GitHub token for actions
 
     # secrets:
     #   GITHUB_TOKEN:
