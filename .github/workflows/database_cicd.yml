@@ -194,3 +194,6 @@ jobs:
           # Créer la release sur GitHub avec le tag
           gh release create $TAG ./liquibase/* --title "Release $TAG" --notes "Release version $TAG" --draft
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+
