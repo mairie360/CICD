@@ -177,7 +177,7 @@ jobs:
             --draft=false
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          TAG: ${{ needs.release-prod.outputs.TAG }}
+          TAG: ${{ steps.set_tag.outputs.TAG }}
 
       - name: Publish release
         run: gh release edit ${{ steps.set_tag.outputs.TAG }} --draft=false
