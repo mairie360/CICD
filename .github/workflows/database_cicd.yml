@@ -105,3 +105,68 @@ jobs:
     steps:
       - name: Notify Staging Deployment
         run: echo "Staging deployment for ${{ inputs.package_name }} has been published."
+
+  release-prod:
+    runs-on: ubuntu-latest
+    needs: publish-staging
+    environment: Production
+    steps:
+      # Checkout repository à la bonne branche/tag
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Connexion à GHCR
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+        shell: bash
+
+      - name: Define Tag based on commit message
+        shell: bash
+        run: |
+          COMMIT_MSG="$(git log -1 --pretty=%B)"
+
+          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then
+            VERSION_TYPE="patch"
+          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then
+            VERSION_TYPE="minor"
+          elif [[ "$COMMIT_MSG" =~ ^MAJOR ]]; then
+            VERSION_TYPE="major"
+          else
+            echo "::error::Commit message must start with 'fix:', 'feat:' or 'MAJOR'"
+            echo "Invalid commit message: $COMMIT_MSG"
+            exit 1
+          fi
+
+          TAG="$VERSION_TYPE-$(date +'%Y%m%d%H%M%S')"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+
+          echo "Commit message: $COMMIT_MSG"
+          echo "Version type detected: $VERSION_TYPE"
+          echo "Generated TAG: $TAG"
+
+
+      # # Build Docker image avec SHA ou version
+      # - name: Build Docker image (sha)
+      #   run: |
+      #     TAG=${GITHUB_SHA}
+      #     docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:prod-$TAG .
+      #   shell: bash
+
+      # # Build Docker image latest pour l'environnement
+      # - name: Build Docker image (latest)
+      #   run: |
+      #     docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:prod-latest .
+      #   shell: bash
+
+      # # Push Docker image avec SHA
+      # - name: Push Docker image (sha)
+      #   run: |
+      #     TAG=${GITHUB_SHA}
+      #     docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:prod-$TAG
+      #   shell: bash
+
+      # # Push Docker image latest
+      # - name: Push Docker image (latest)
+      #   run: |
+      #     docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:prod-latest
+      #   shell: bash
