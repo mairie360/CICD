@@ -172,7 +172,7 @@ jobs:
           git config user.name "${GITHUB_ACTOR}"
           git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
           git tag $TAG
-          git push origin $TAG
+          git push https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git $TAG
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
