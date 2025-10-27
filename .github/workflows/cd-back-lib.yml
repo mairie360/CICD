@@ -34,7 +34,7 @@ jobs:
           cargo install cargo-release
 
       - name: Validate commit messages
-        run: convco check
+        run: convco check --from HEAD~1
 
       - name: Compute next version
         id: version
