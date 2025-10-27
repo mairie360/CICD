@@ -7,6 +7,7 @@ jobs:
   dependencies:
     name: Dependencies
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4.2.2
@@ -17,9 +18,6 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Download Dependencies
-        run: cargo fetch
-
       - name: Cache Cargo Dependencies
         uses: actions/cache@v3
         with:
@@ -28,7 +26,10 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Upload Dependency Artifacts
+      - name: Download Dependencies
+        run: cargo fetch
+
+      - name: Upload Cargo Dependencies
         uses: actions/upload-artifact@v4
         with:
           name: cargo-dependencies
@@ -77,34 +78,32 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Download Dependency Artifacts
+      - name: Download Cargo Dependencies
         uses: actions/download-artifact@v4
         with:
           name: cargo-dependencies
           path: ~/.cargo
 
+      - name: Build
+        run: cargo build --release
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: target/release/
+
   unit_test:
-    name: Unit tests
+    name: Unit Tests
     runs-on: ubuntu-latest
     needs: build
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4.2.2
-
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
-      - name: Download Dependency Artifacts
+      - name: Download Build Artifact
         uses: actions/download-artifact@v4
         with:
-          name: cargo-dependencies
-          path: ~/.cargo
+          name: build-artifact
+          path: target/release/
 
       - name: Run Rust Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+        run: cargo test --release
