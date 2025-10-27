@@ -7,10 +7,10 @@ on:
         required: true
         type: string
         description: The name of the package to release
+    secrets:
       GH_PAT:
         required: true
-        type: string
-        description: GitHub Personal Access Token with repo and write:packages scopes for releasing
+        description: GitHub Personal Access Token with repo and write:packages scopes
 
 jobs:
   # release-dev:
