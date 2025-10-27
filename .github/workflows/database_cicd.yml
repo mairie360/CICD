@@ -167,27 +167,32 @@ jobs:
       - name: Push Docker image (latest)
         run: docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:latest
 
-      - name: Tag the commit
-        run: |
-          # Configurer Git avec ton utilisateur
-          git config user.name "${GITHUB_ACTOR}"
-          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+      # - name: Tag the commit
+      #   run: |
+      #     # Configurer Git avec ton utilisateur
+      #     git config user.name "${GITHUB_ACTOR}"
+      #     git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
-          # Créer le tag
-          git tag $TAG
+      #     # Créer le tag
+      #     git tag $TAG
 
-          # Mettre à jour l'URL du remote pour inclure le token
-          git remote set-url origin https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+      #     # Mettre à jour l'URL du remote pour inclure le token
+      #     git remote set-url origin https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
 
-          # Pousser le tag
-          git push origin $TAG
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+      #     # Pousser le tag
+      #     git push origin $TAG
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Create GitHub release with tag
         shell: bash
         run: |
           zip -r liquibase.zip ./liquibase
           gh release create $TAG liquibase.zip --title "Release $TAG" --notes "Release version $TAG" --draft
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Publish release
+        run: gh release edit $TAG --draft=false
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
