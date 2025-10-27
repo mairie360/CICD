@@ -60,6 +60,7 @@ jobs:
 
   release-staging:
     runs-on: ubuntu-latest
+    needs: publish-dev
     environment: Staging
     steps:
       # Checkout repository à la bonne branche/tag
