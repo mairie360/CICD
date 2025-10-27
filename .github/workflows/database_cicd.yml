@@ -169,10 +169,18 @@ jobs:
 
       - name: Tag the commit
         run: |
+          # Configurer Git avec ton utilisateur
           git config user.name "${GITHUB_ACTOR}"
           git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+          # Créer le tag
           git tag $TAG
-          git push https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git $TAG
+
+          # Mettre à jour l'URL du remote pour inclure le token
+          git remote set-url origin https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+
+          # Pousser le tag
+          git push origin $TAG
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
