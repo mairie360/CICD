@@ -9,97 +9,97 @@ on:
         description: The name of the package to release
 
 jobs:
-  release-dev:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: Dev
-    steps:
-      # Checkout repository à la bonne branche/tag
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  # release-dev:
+  #   if: github.ref == 'refs/heads/main'
+  #   runs-on: ubuntu-latest
+  #   environment: Dev
+  #   steps:
+  #     # Checkout repository à la bonne branche/tag
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
 
-      # Connexion à GHCR
-      - name: Log in to GitHub Container Registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-        shell: bash
+  #     # Connexion à GHCR
+  #     - name: Log in to GitHub Container Registry
+  #       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+  #       shell: bash
 
-      # Build Docker image avec SHA ou version
-      - name: Build Docker image (sha)
-        run: |
-          TAG=${GITHUB_SHA}
-          docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-$TAG .
-        shell: bash
+  #     # Build Docker image avec SHA ou version
+  #     - name: Build Docker image (sha)
+  #       run: |
+  #         TAG=${GITHUB_SHA}
+  #         docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-$TAG .
+  #       shell: bash
 
-      # Build Docker image latest pour l'environnement
-      - name: Build Docker image (latest)
-        run: |
-          docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-latest .
-        shell: bash
+  #     # Build Docker image latest pour l'environnement
+  #     - name: Build Docker image (latest)
+  #       run: |
+  #         docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-latest .
+  #       shell: bash
 
-      # Push Docker image avec SHA
-      - name: Push Docker image (sha)
-        run: |
-          TAG=${GITHUB_SHA}
-          docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-$TAG
-        shell: bash
+  #     # Push Docker image avec SHA
+  #     - name: Push Docker image (sha)
+  #       run: |
+  #         TAG=${GITHUB_SHA}
+  #         docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-$TAG
+  #       shell: bash
 
-      # Push Docker image latest
-      - name: Push Docker image (latest)
-        run: |
-          docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-latest
-        shell: bash
+  #     # Push Docker image latest
+  #     - name: Push Docker image (latest)
+  #       run: |
+  #         docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:dev-latest
+  #       shell: bash
 
-  publish-dev:
-    if: github.ref == 'refs/heads/main'
-    needs: release-dev
-    runs-on: ubuntu-latest
-    environment: Dev
-    steps:
-      - name: Notify Dev Deployment
-        run: echo "Dev deployment for ${{ inputs.package_name }} has been published."
+  # publish-dev:
+  #   if: github.ref == 'refs/heads/main'
+  #   needs: release-dev
+  #   runs-on: ubuntu-latest
+  #   environment: Dev
+  #   steps:
+  #     - name: Notify Dev Deployment
+  #       run: echo "Dev deployment for ${{ inputs.package_name }} has been published."
 
-  release-staging:
-    runs-on: ubuntu-latest
-    needs: publish-dev
-    environment: Staging
-    steps:
-      # Checkout repository à la bonne branche/tag
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  # release-staging:
+  #   runs-on: ubuntu-latest
+  #   needs: publish-dev
+  #   environment: Staging
+  #   steps:
+  #     # Checkout repository à la bonne branche/tag
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
 
-      # Connexion à GHCR
-      - name: Log in to GitHub Container Registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-        shell: bash
+  #     # Connexion à GHCR
+  #     - name: Log in to GitHub Container Registry
+  #       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+  #       shell: bash
 
-      # Build Docker image avec SHA ou version
-      - name: Build Docker image (sha)
-        run: |
-          TAG=${GITHUB_SHA}
-          docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-$TAG .
-        shell: bash
+  #     # Build Docker image avec SHA ou version
+  #     - name: Build Docker image (sha)
+  #       run: |
+  #         TAG=${GITHUB_SHA}
+  #         docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-$TAG .
+  #       shell: bash
 
-      # Build Docker image latest pour l'environnement
-      - name: Build Docker image (latest)
-        run: |
-          docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-latest .
-        shell: bash
+  #     # Build Docker image latest pour l'environnement
+  #     - name: Build Docker image (latest)
+  #       run: |
+  #         docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-latest .
+  #       shell: bash
 
-      # Push Docker image avec SHA
-      - name: Push Docker image (sha)
-        run: |
-          TAG=${GITHUB_SHA}
-          docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-$TAG
-        shell: bash
+  #     # Push Docker image avec SHA
+  #     - name: Push Docker image (sha)
+  #       run: |
+  #         TAG=${GITHUB_SHA}
+  #         docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-$TAG
+  #       shell: bash
 
-      # Push Docker image latest
-      - name: Push Docker image (latest)
-        run: |
-          docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-latest
-        shell: bash
+  #     # Push Docker image latest
+  #     - name: Push Docker image (latest)
+  #       run: |
+  #         docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-latest
+  #       shell: bash
 
   publish-staging:
-    needs: release-staging
+    # needs: release-staging
     runs-on: ubuntu-latest
     environment: Staging
     steps:
