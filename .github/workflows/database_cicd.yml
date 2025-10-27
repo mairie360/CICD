@@ -180,22 +180,62 @@ jobs:
           docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:latest .
         shell: bash
 
+      - name: Create GitHub release with tag
+        id: create_release
+        run: |
+          # Créer la release sur GitHub avec le tag
+          zip -r liquibase.zip ./liquibase
+          gh release create $TAG liquibase.zip --title "Release $TAG" --notes "Release version $TAG" --draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Set output TAG
+        run: echo "TAG=$NEW_TAG" >> $GITHUB_OUTPUT
+
+  publish-prod:
+    runs-on: ubuntu-latest
+    needs: release-prod
+    steps:
+      # Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Connexion à GHCR
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+        shell: bash
+
+      # Récupérer le tag généré dans release-prod
+      - name: Set TAG from previous job
+        run: echo "TAG=${{ needs.release-prod.outputs.TAG }}" >> $GITHUB_ENV
+
+      # Push Docker image versionnée
       - name: Push Docker image (versioned)
         run: |
-          echo "Pushing Docker image with tag: prod-$TAG"
+          echo "Pushing Docker image with tag: $TAG"
           docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:$TAG
         shell: bash
 
+      # Push Docker image latest
       - name: Push Docker image (latest)
         run: |
           echo "Pushing Docker image with tag: latest"
           docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:latest
         shell: bash
 
-      - name: Create GitHub release with tag
-        id: create_release
+      # Ajouter un tag Git sur le commit actuel
+      - name: Tag the commit
         run: |
-          # Créer la release sur GitHub avec le tag
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git tag $TAG
+          git push origin $TAG
+        shell: bash
+
+      # Publier la release sur GitHub
+      - name: Create GitHub release with tag
+        run: |
           zip -r liquibase.zip ./liquibase
           gh release create $TAG liquibase.zip --title "Release $TAG" --notes "Release version $TAG" --draft
         shell: bash
