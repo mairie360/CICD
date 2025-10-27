@@ -98,18 +98,18 @@ jobs:
   #         docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:staging-latest
   #       shell: bash
 
-  publish-staging:
-    # needs: release-staging
-    runs-on: ubuntu-latest
-    environment: Staging
-    steps:
-      - name: Notify Staging Deployment
-        run: echo "Staging deployment for ${{ inputs.package_name }} has been published."
+  # publish-staging:
+  #   needs: release-staging
+  #   runs-on: ubuntu-latest
+  #   environment: Staging
+  #   steps:
+  #     - name: Notify Staging Deployment
+  #       run: echo "Staging deployment for ${{ inputs.package_name }} has been published."
 
   release-prod:
     runs-on: ubuntu-latest
-    needs: publish-staging
-    environment: Production
+    # needs: publish-staging
+    # environment: Production
     steps:
       # Checkout repository à la bonne branche/tag
       - name: Checkout repository
