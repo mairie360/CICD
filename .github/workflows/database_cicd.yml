@@ -196,7 +196,8 @@ jobs:
         id: create_release
         run: |
           # Créer la release sur GitHub avec le tag
-          gh release create $TAG ./liquibase/* --title "Release $TAG" --notes "Release version $TAG" --draft
+          zip -r liquibase.zip ./liquibase
+          gh release create $TAG liquibase.zip --title "Release $TAG" --notes "Release version $TAG" --draft
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
