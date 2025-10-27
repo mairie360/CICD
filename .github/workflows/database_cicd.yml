@@ -11,6 +11,7 @@ on:
 jobs:
   release-dev:
     runs-on: ubuntu-latest
+    environment: Dev
     steps:
       # Checkout repository à la bonne branche/tag
       - name: Checkout repository
