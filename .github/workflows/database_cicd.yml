@@ -161,30 +161,8 @@ jobs:
       - name: Build Docker image (latest)
         run: docker build -t ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:latest .
 
-      - name: Create GitHub release with tag
-        shell: bash
-        run: |
-          zip -r liquibase.zip ./liquibase
-          gh release create ${{ steps.set_tag.outputs.TAG }} liquibase.zip --title "Release ${{ steps.set_tag.outputs.TAG }}" --notes "Release version ${{ steps.set_tag.outputs.TAG }}" --draft
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-
-  publish-prod:
-    runs-on: ubuntu-latest
-    needs: release-prod
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Log in to GitHub Container Registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-        shell: bash
-
-      - name: Set TAG from previous job
-        run: echo "TAG=${{ needs.release-prod.outputs.TAG }}" >> $GITHUB_ENV
-
       - name: Push Docker image (versioned)
-        run: docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:$TAG
+        run: docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:${{ steps.set_tag.outputs.TAG }}
 
       - name: Push Docker image (latest)
         run: docker push ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ inputs.package_name }}:latest
