@@ -120,30 +120,49 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
         shell: bash
 
-      - name: Define Tag based on commit message
+      - name: Get latest release tag
+        id: lasttag
+        shell: bash
+        run: |
+          set -e
+
+          # Récupérer le dernier tag de release via GitHub CLI
+          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
+
+          # Si aucun tag trouvé => fallback 0.0.0
+          if [ -z "$LAST_TAG" ]; then
+            LAST_TAG="0.0.0"
+          fi
+
+          echo "Last release tag found: $LAST_TAG"
+          echo "LAST_TAG=$LAST_TAG" >> $GITHUB_ENV
+
+      - name: Increment tag based on commit message
         shell: bash
         run: |
           COMMIT_MSG="$(git log -1 --pretty=%B)"
+          echo "Commit message: $COMMIT_MSG"
+
+          # Extraire major, minor, patch
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG}"
 
           if [[ "$COMMIT_MSG" =~ ^fix: ]]; then
-            VERSION_TYPE="patch"
+            PATCH=$((PATCH + 1))
           elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then
-            VERSION_TYPE="minor"
+            MINOR=$((MINOR + 1))
+            PATCH=0
           elif [[ "$COMMIT_MSG" =~ ^MAJOR ]]; then
-            VERSION_TYPE="major"
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
           else
             echo "::error::Commit message must start with 'fix:', 'feat:' or 'MAJOR'"
-            echo "Invalid commit message: $COMMIT_MSG"
             exit 1
           fi
 
-          TAG="$VERSION_TYPE-$(date +'%Y%m%d%H%M%S')"
-          echo "TAG=$TAG" >> $GITHUB_ENV
-
-          echo "Commit message: $COMMIT_MSG"
-          echo "Version type detected: $VERSION_TYPE"
-          echo "Generated TAG: $TAG"
-
+          NEW_TAG="$MAJOR.$MINOR.$PATCH"
+          echo "New tag generated: $NEW_TAG"
+          echo "TAG=$NEW_TAG" >> $GITHUB_ENV
 
       # # Build Docker image avec SHA ou version
       # - name: Build Docker image (sha)
