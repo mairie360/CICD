@@ -188,11 +188,11 @@ jobs:
         shell: bash
         run: |
           zip -r liquibase.zip ./liquibase
-          gh release create $TAG liquibase.zip --title "Release $TAG" --notes "Release version $TAG" --draft
+          gh release create ${{ steps.set_tag.outputs.TAG }} liquibase.zip --title "Release ${{ steps.set_tag.outputs.TAG }} --notes "Release version ${{ steps.set_tag.outputs.TAG }} --draft
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Publish release
-        run: gh release edit $TAG --draft=false
+        run: gh release edit ${{ steps.set_tag.outputs.TAG }} --draft=false
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
