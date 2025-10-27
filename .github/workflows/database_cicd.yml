@@ -112,6 +112,8 @@ jobs:
 
   release-prod:
     runs-on: ubuntu-latest
+    outputs:
+      TAG: ${{ steps.set_tag.outputs.TAG }}
     # needs: publish-staging
     # environment: Production
     steps:
@@ -195,8 +197,6 @@ jobs:
 
   publish-prod:
     runs-on: ubuntu-latest
-    outputs:
-      TAG: ${{ steps.set_tag.outputs.TAG }}
     needs: release-prod
     steps:
       # Checkout repository
