@@ -195,5 +195,4 @@ jobs:
           gh release create $TAG ./liquibase/* --title "Release $TAG" --notes "Release version $TAG" --draft
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-
+          GH_TOKEN: ${{ secrets.GH_PAT }}
