@@ -30,6 +30,11 @@ jobs:
           if ! command -v convco &> /dev/null; then cargo install convco; fi
           if ! command -v cargo-release &> /dev/null; then cargo install cargo-release; fi
 
+      - name: Configure Git identity for tagging
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Validate commit formatting
         run: git log -1 --pretty=%B | convco check --from-stdin
 
