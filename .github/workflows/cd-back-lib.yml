@@ -17,7 +17,7 @@ jobs:
           name: build-artifact
           path: target/release/
 
-      - name: Setup repository
+      - name: Checkout repository with full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -25,25 +25,25 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install convco & cargo-release
+      - name: Install convco & cargo-release (cached if available)
         run: |
-          cargo install convco
-          cargo install cargo-release
+          if ! command -v convco &> /dev/null; then cargo install convco; fi
+          if ! command -v cargo-release &> /dev/null; then cargo install cargo-release; fi
 
-      - name: Validate commit formatting (Conventional Commits)
+      - name: Validate commit formatting
         run: git log -1 --pretty=%B | convco check --from-stdin
 
       - name: Detect bump type (major/minor/patch)
         id: bump
         run: |
-          bump_type=$(convco version --bump-style)
+          bump_type=$(convco version --bump)
           echo "BUMP_TYPE=$bump_type" >> $GITHUB_OUTPUT
           echo "Version bump detected: $bump_type"
 
-      - name: Run cargo-release
+      - name: Run cargo-release with bump level
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cargo release \
-            --level ${{ steps.bump.outputs.BUMP_TYPE }} \
-            --no-confirm
+            --no-confirm \
+            ${{ steps.bump.outputs.BUMP_TYPE }}
