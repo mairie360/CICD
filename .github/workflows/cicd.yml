@@ -14,10 +14,6 @@ on:
     secrets:
       POSTMAN_API_KEY:
         required: false
-      DEPLOY_SSH_KEY:
-        required: false
-      MAIRIE_360_DEPLOY_TOKEN:
-        required: false
       CARGO_REGISTRY_TOKEN:
         required: false
 

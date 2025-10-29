@@ -11,12 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download build artifact from CI
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifact
-          path: target/release/
-
       - name: Checkout repository with full history
         uses: actions/checkout@v4
         with:

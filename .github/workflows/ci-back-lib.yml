@@ -108,11 +108,5 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Download Build Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifact
-          path: target/release/
-
       - name: Run Rust Tests
         run: cargo test --release
