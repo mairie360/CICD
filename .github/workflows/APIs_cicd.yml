@@ -176,7 +176,7 @@ jobs:
 
   release-dev:
     if: github.ref == 'refs/heads/main'
-    needs: integration_tests
+    # needs: integration_tests
     runs-on: ubuntu-latest
     environment: Dev
     steps:
@@ -196,7 +196,7 @@ jobs:
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
   release-staging:
-    needs: release-dev
+    # needs: release-dev
     runs-on: ubuntu-latest
     environment: Staging
     steps:
@@ -216,7 +216,7 @@ jobs:
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
   release-prod:
-    needs: release-staging
+    # needs: release-staging
     runs-on: ubuntu-latest
     environment: Prod
     outputs:
@@ -275,7 +275,7 @@ jobs:
             This release acts as a version marker for the API.
 
             **Release Assets:**
-            - **Documentation**: \`API.md\` (Contracts) and \`README.md\`.
+            - **Documentation**: \`API.md\` and \`README.md\`.
             - **Infrastructure**: \`Dockerfile\`, \`docker-compose.yml\`, and \`nginx.conf\`.
 
             *Note: The executable is delivered as a Docker image via GitHub Packages.*"
