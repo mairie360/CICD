@@ -144,5 +144,5 @@ jobs:
           cargo release \
             --execute \
             --no-confirm \
-            fix
+            patch
             # ${{ steps.bump.outputs.BUMP_TYPE }}
