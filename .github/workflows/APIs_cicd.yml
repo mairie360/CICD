@@ -277,9 +277,8 @@ jobs:
             **Release Assets:**
             - **Documentation**: \`API.md\` (Contracts) and \`README.md\`.
             - **Infrastructure**: \`Dockerfile\`, \`docker-compose.yml\`, and \`nginx.conf\`.
-            - **Testing**: \`collection.json\` (API Collection).
 
             *Note: The executable is delivered as a Docker image via GitHub Packages.*"
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.set_tag.outputs.TAG }}
