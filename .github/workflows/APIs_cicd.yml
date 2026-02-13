@@ -42,14 +42,6 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Upload Dependency Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cargo-dependencies
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-
   lint:
     name: Check lint
     runs-on: ubuntu-latest
@@ -71,11 +63,6 @@ jobs:
         with:
           command: lint_check
 
-      - name: Run lint_fix
-        uses: actions-rs/cargo@v1
-        with:
-          command: lint_fix
-
   build:
     name: Build Project
     runs-on: ubuntu-latest
@@ -91,11 +78,27 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Download Dependency Artifacts
-        uses: actions/download-artifact@v4
+      - name: Restore Cargo Cache
+        uses: actions/cache@v3
         with:
-          name: cargo-dependencies
           path: ~/.cargo
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build Project
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+
+      - name: Cache Cargo Build
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
   unit_test:
     name: Unit tests
@@ -112,10 +115,10 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Download Dependency Artifacts
+      - name: Download Build cache
         uses: actions/download-artifact@v4
         with:
-          name: cargo-dependencies
+          name: cargo-build
           path: ~/.cargo
 
       - name: Run Rust Tests
@@ -145,7 +148,7 @@ jobs:
         run: docker-compose up -d --build
 
       - name: Install Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
           node-version: "18"
 
