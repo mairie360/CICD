@@ -179,6 +179,8 @@ jobs:
     # needs: integration_tests
     runs-on: ubuntu-latest
     environment: Dev
+    permissions:
+          packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -194,11 +196,15 @@ jobs:
           # Build & Push Images (Dev)
           docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
+    env:
+      GH_TOKEN: ${{ github.token }}
 
   release-staging:
     # needs: release-dev
     runs-on: ubuntu-latest
     environment: Staging
+    permissions:
+          packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -214,11 +220,16 @@ jobs:
           # On utilise le tag 'staging' pour isoler les images de test
           docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
+    env:
+      GH_TOKEN: ${{ github.token }}
 
   release-prod:
     # needs: release-staging
     runs-on: ubuntu-latest
     environment: Prod
+    permissions:
+          contents: write
+          packages: write
     outputs:
       TAG: ${{ steps.set_tag.outputs.TAG }}
     steps:
