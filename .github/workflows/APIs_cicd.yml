@@ -174,7 +174,7 @@ jobs:
 
   release-dev:
     if: github.ref == 'refs/heads/main'
-    # needs: integration_tests
+    needs: integration_tests
     runs-on: ubuntu-latest
     environment: Dev
     permissions:
@@ -198,7 +198,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
   release-staging:
-    # needs: release-dev
+    needs: release-dev
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
@@ -222,7 +222,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
   release-prod:
-    # needs: release-staging
+    needs: release-staging
     runs-on: ubuntu-latest
     environment: Prod
     permissions:
