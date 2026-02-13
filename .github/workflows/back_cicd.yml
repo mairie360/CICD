@@ -1,0 +1,280 @@
+name: Back CI
+
+on:
+  workflow_call:
+    inputs:
+        postman_collection:
+          required: true
+          type: string
+        package_name:
+          required: false
+          type: string
+          description: "Image base name"
+    secrets:
+      POSTMAN_API_KEY:
+        required: true
+      GH_PAT:
+        required: false
+
+jobs:
+  dependencies:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Download Dependencies
+        run: cargo fetch
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Upload Dependency Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-dependencies
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+
+  lint:
+    name: Check lint
+    runs-on: ubuntu-latest
+    needs: dependencies
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Run lint_check
+        uses: actions-rs/cargo@v1
+        with:
+          command: lint_check
+
+      - name: Run lint_fix
+        uses: actions-rs/cargo@v1
+        with:
+          command: lint_fix
+
+  build:
+    name: Build Project
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Download Dependency Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-dependencies
+          path: ~/.cargo
+
+  unit_test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Download Dependency Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-dependencies
+          path: ~/.cargo
+
+      - name: Run Rust Tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+
+  integration_tests:
+    name: Postman Tests
+    needs: unit_test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and start services
+        run: docker-compose up -d --build
+
+      - name: Install Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+
+      - name: Install Newman
+        run: npm install -g newman
+
+      - name: Download Postman collection
+        env:
+            POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+            POSTMAN_COLLECTION_ID: ${{ inputs.postman_collection }}
+        run: curl -o collection.json "https://api.getpostman.com/collections/${POSTMAN_COLLECTION_ID}?apikey=${POSTMAN_API_KEY}"
+
+      - name: Run Postman tests with Newman
+        run: |
+          cat collection.json
+          newman run collection.json --bail
+
+      - name: Tear down
+        if: always()
+        run: docker-compose down
+        
+  # --- ENVIRONNEMENT DEV (Automatique sur chaque commit main) ---
+  release-dev:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: Dev
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Build & Push Images (Dev)
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+
+          # Build & Push Images (Dev)
+          docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+  # --- ENVIRONNEMENT STAGING (Tests de pré-production) ---
+  release-staging:
+    needs: release-dev
+    runs-on: ubuntu-latest
+    environment: Staging
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Build & Push Images (Staging)
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+
+          # On utilise le tag 'staging' pour isoler les images de test
+          docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+  # --- ENVIRONNEMENT PROD (Release officielle et versioning) ---
+  release-prod:
+    needs: release-staging
+    runs-on: ubuntu-latest
+    environment: Prod
+    outputs:
+      TAG: ${{ steps.set_tag.outputs.TAG }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Calculate Next Version
+        id: set_tag
+        shell: bash
+        run: |
+          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
+          COMMIT_MSG="$(git log -1 --pretty=%B)"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
+
+          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
+          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
+          elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          else echo "Invalid commit message format"; exit 1; fi
+
+          echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build & Push Images (Prod)
+        run: |
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          TAG=${{ steps.set_tag.outputs.TAG }}
+
+          # API
+          docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+      - name: Create GitHub Release
+        run: |
+          # Create an archive with API specifications, infrastructure config, and documentation
+          # Including collection.json ensures that the API tests are snapshotted with this version
+          zip -r api_specs_v${TAG}.zip \
+            API.md \
+            README.md \
+            nginx.conf \
+            docker-compose.yml \
+            collection.json \
+            Dockerfile
+          
+          # Create the release using the GitHub CLI
+          gh release create "v${TAG}" api_specs_v${TAG}.zip \
+            --title "Release v${TAG}" \
+            --notes "### Version v${TAG} Snapshot
+            
+            This release acts as a version marker for the API.
+            
+            **Release Assets:**
+            - **Documentation**: \`API.md\` (Contracts) and \`README.md\`.
+            - **Infrastructure**: \`Dockerfile\`, \`docker-compose.yml\`, and \`nginx.conf\`.
+            - **Testing**: \`collection.json\` (API Collection).
+            
+            *Note: The executable is delivered as a Docker image via GitHub Packages.*"
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          TAG: ${{ steps.set_tag.outputs.TAG }}
