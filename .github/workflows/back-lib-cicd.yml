@@ -145,5 +145,12 @@ jobs:
           cargo release \
             --execute \
             --no-confirm \
-            minor
-            # ${{ steps.bump.outputs.BUMP_TYPE }}
+            ${{ steps.bump.outputs.BUMP_TYPE }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          name: Release ${{ steps.get_tag.outputs.tag }}
+          generate_release_notes: true
+          token: ${{ steps.generate_token.outputs.token }}
