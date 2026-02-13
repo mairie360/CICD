@@ -127,14 +127,20 @@ jobs:
       - name: Detect bump type (major/minor/patch)
         id: bump
         run: |
-          bump_type=$(convco version --bump || echo "patch")
-          echo "BUMP_TYPE=$bump_type" >> $GITHUB_OUTPUT
-          echo "Version bump detected: $bump_type"
+          # On vérifie les commits depuis le dernier tag
+          if git log $(git describe --tags --abbrev=0)..HEAD --oneline | grep -q "^feat"; then
+            echo "BUMP_TYPE=minor" >> $GITHUB_OUTPUT
+          elif git log $(git describe --tags --abbrev=0)..HEAD --oneline | grep -qE "^[a-z]+(\([a-z]+\))?!:"; then
+            echo "BUMP_TYPE=major" >> $GITHUB_OUTPUT
+          else
+            echo "BUMP_TYPE=patch" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Run cargo-release with bump level
+      - name: Run cargo-release
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
+          # En passant 'minor', cargo-release passera de 0.1.1 à 0.2.0 sans discuter
           cargo release \
             --execute \
             --no-confirm \
