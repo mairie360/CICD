@@ -176,9 +176,9 @@ jobs:
 
   release-dev:
     if: github.ref == 'refs/heads/main'
+    needs: integration_tests
     runs-on: ubuntu-latest
     environment: Dev
-    needs: integration_tests
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -265,7 +265,6 @@ jobs:
             README.md \
             nginx.conf \
             docker-compose.yml \
-            collection.json \
             Dockerfile
 
           # Create the release using the GitHub CLI
