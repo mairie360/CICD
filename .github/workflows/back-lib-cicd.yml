@@ -92,6 +92,13 @@ jobs:
     needs: unit_test
     runs-on: ubuntu-latest
     steps:
+      - name: Generate Token
+        id: generate_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PK }}
+
       - name: Checkout repository with full history
         uses: actions/checkout@v4.2.2
         with:
