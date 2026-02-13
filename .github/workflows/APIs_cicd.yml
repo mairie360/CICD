@@ -16,8 +16,6 @@ on:
     secrets:
       POSTMAN_API_KEY:
         required: true
-      GH_PAT:
-        required: false
 
 jobs:
   dependencies:
