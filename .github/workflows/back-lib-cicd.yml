@@ -140,8 +140,8 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          # En passant 'minor', cargo-release passera de 0.1.1 à 0.2.0 sans discuter
           cargo release \
             --execute \
             --no-confirm \
-            ${{ steps.bump.outputs.BUMP_TYPE }}
+            minor
+            # ${{ steps.bump.outputs.BUMP_TYPE }}
