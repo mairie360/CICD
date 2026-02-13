@@ -1,4 +1,4 @@
-name: Back CI
+name: APIs CICD
 
 on:
   workflow_call:
