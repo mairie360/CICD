@@ -89,6 +89,7 @@ jobs:
     
   publish_release:
     if: github.ref == 'refs/heads/main'
+    environment: Release
     needs: unit_test
     runs-on: ubuntu-latest
     steps:
@@ -144,5 +145,5 @@ jobs:
           cargo release \
             --execute \
             --no-confirm \
-            patch
+            minor
             # ${{ steps.bump.outputs.BUMP_TYPE }}
