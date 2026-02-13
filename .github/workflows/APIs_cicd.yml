@@ -95,10 +95,10 @@ jobs:
       - name: Cache Cargo Build
         uses: actions/cache@v3
         with:
-          path: ~/.cargo
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          path: target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-target-
 
   unit_test:
     name: Unit tests
@@ -115,11 +115,13 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Download Build cache
-        uses: actions/download-artifact@v4
+      - name: Restore Cargo Cache
+        uses: actions/cache@v3
         with:
-          name: cargo-build
-          path: ~/.cargo
+          path: target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Run Rust Tests
         uses: actions-rs/cargo@v1
@@ -135,17 +137,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
 
-      - name: Install Docker Compose
-        run: |
-          sudo curl -L "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          sudo chmod +x /usr/local/bin/docker-compose
-          docker-compose --version
-
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
-
       - name: Build and start services
-        run: docker-compose up -d --build
+        run: docker compose up -d --build
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -181,7 +174,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: Dev
     permissions:
-          packages: write
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -205,7 +199,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
-          packages: write
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -229,8 +224,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: Prod
     permissions:
-          contents: write
-          packages: write
+      contents: write
+      packages: write
     outputs:
       TAG: ${{ steps.set_tag.outputs.TAG }}
     steps:
