@@ -1,0 +1,116 @@
+name: Database CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        required: true
+        type: string
+        description: "Nom de l'image de base (ex: database)"
+    secrets:
+      GH_PAT:
+        required: true
+
+jobs:
+  # --- ENVIRONNEMENT DEV (Automatique sur chaque commit main) ---
+  release-dev:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: Dev
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Build & Push Images (Dev)
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+
+          # Build & Push DATABASE
+          docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+          # Build & Push LIQUIBASE
+          docker build -t $REPO/liquibase-migrations:dev-$SHA_TAG -t $REPO/liquibase-migrations:dev-latest ./liquibase
+          docker push $REPO/liquibase-migrations --all-tags
+
+  # --- ENVIRONNEMENT STAGING (Tests de pré-production) ---
+  release-staging:
+    needs: release-dev
+    runs-on: ubuntu-latest
+    environment: Staging
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Build & Push Images (Staging)
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+
+          # On utilise le tag 'staging' pour isoler les images de test
+          docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+          docker build -t $REPO/liquibase-migrations:staging-$SHA_TAG -t $REPO/liquibase-migrations:staging-latest ./liquibase
+          docker push $REPO/liquibase-migrations --all-tags
+
+  # --- ENVIRONNEMENT PROD (Release officielle et versioning) ---
+  release-prod:
+    needs: release-staging
+    runs-on: ubuntu-latest
+    environment: Prod
+    outputs:
+      TAG: ${{ steps.set_tag.outputs.TAG }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Calculate Next Version
+        id: set_tag
+        shell: bash
+        run: |
+          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
+          COMMIT_MSG="$(git log -1 --pretty=%B)"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
+
+          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
+          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
+          elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          else echo "Invalid commit message format"; exit 1; fi
+
+          echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build & Push Images (Prod)
+        run: |
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          TAG=${{ steps.set_tag.outputs.TAG }}
+
+          # Database
+          docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+          # Liquibase
+          docker build -t $REPO/liquibase-migrations:$TAG -t $REPO/liquibase-migrations:latest ./liquibase
+          docker push $REPO/liquibase-migrations --all-tags
+
+      - name: Create GitHub Release
+        run: |
+          zip -r migrations.zip ./liquibase
+          gh release create "v${TAG}" migrations.zip --title "Release v${TAG}" --notes "Database & Migrations Release"
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          TAG: ${{ steps.set_tag.outputs.TAG }}
