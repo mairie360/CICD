@@ -14,6 +14,8 @@ on:
     secrets:
       POSTMAN_API_KEY:
         required: false
+      CARGO_REGISTRY_TOKEN:
+        required: false
 
 jobs:
 
@@ -29,3 +31,13 @@ jobs:
     if: ${{ inputs.type == 'front' }}
     uses: ./.github/workflows/front_ci.yml
 
+  run-api-lib-ci:
+    if: ${{ inputs.type == 'ci-back-lib' }}
+    uses: ./.github/workflows/ci-back-lib.yml
+
+  run-api-lib-cd:
+    if: ${{ inputs.type == 'cd-back-lib' }}
+    uses: ./.github/workflows/cd-back-lib.yml
+    secrets:
+      MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
