@@ -1,0 +1,168 @@
+name: Reusable CI/CD Pipeline
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------
+  # JOB 1 : CI (Tests)
+  # ------------------------------------------------------------------
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Unit tests
+        run: npm test
+
+  # ------------------------------------------------------------------
+  # JOB 2 : Storybook (Build & Deploy)
+  # ------------------------------------------------------------------
+  storybook:
+    name: Storybook Chain
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: releasee
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Check if src/ has changed
+        id: check_src
+        run: |
+          git fetch origin main
+          # Comparaison robuste pour le push main
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            CHANGED=$(git diff --name-only HEAD^ HEAD | grep '^src/' || true)
+          else
+            CHANGED="true" # Premier commit ou cas limite
+          fi
+          echo "changed=$([[ -n \"$CHANGED\" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        if: steps.check_src.outputs.changed == 'true'
+        run: npm ci
+
+      - name: Build Storybook
+        if: steps.check_src.outputs.changed == 'true'
+        run: npm run build-storybook
+
+      - name: Upload Storybook artifact
+        if: steps.check_src.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: storybook-static
+
+      - name: Deploy to GitHub Pages
+        if: steps.check_src.outputs.changed == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ------------------------------------------------------------------
+  # JOB 3 : Package (Build & Publish)
+  # ------------------------------------------------------------------
+  package:
+    name: Package Publish
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release
+    
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PACKAGES_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com/
+          scope: '@mairie360'
+
+      - name: Check if src/ has changed
+        id: check_src
+        run: |
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            CHANGED=$(git diff --name-only HEAD^ HEAD | grep '^src/' || true)
+          else
+             CHANGED="true"
+          fi
+          echo "changed=$([[ -n \"$CHANGED\" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+      - name: Configure npm auth
+        if: steps.check_src.outputs.changed == 'true'
+        run: echo "//npm.pkg.github.com/:_authToken=${{ secrets.GH_PACKAGES_TOKEN }}" > ~/.npmrc
+
+      - name: Install dependencies
+        if: steps.check_src.outputs.changed == 'true'
+        run: npm ci
+
+      - name: Build package
+        if: steps.check_src.outputs.changed == 'true'
+        run: npm run build
+
+      - name: Bump patch version
+        if: steps.check_src.outputs.changed == 'true'
+        id: bump
+        run: |
+          set -e
+          MAX_ATTEMPTS=10
+          attempt=0
+          while [ $attempt -lt $MAX_ATTEMPTS ]; do
+            VERSION=$(npm version patch --no-git-tag-version | sed 's/^v//')
+            TAG="v$VERSION"
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "Tag $TAG exists, retrying..."
+              attempt=$((attempt + 1))
+              continue
+            fi
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            break
+          done
+
+      - name: Create git tag
+        if: steps.check_src.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          TAG="v${{ steps.bump.outputs.version }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Publish to GitHub Packages
+        if: steps.check_src.outputs.changed == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: npm publish --access public
