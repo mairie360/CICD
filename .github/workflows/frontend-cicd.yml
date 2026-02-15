@@ -1,0 +1,197 @@
+name: Frontends CICD
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        required: true
+        type: string
+        description: "Nom de l'image Docker et du package"
+      node_version:
+        required: false
+        type: number
+        default: 23
+        description: "Version de Node.js"
+
+jobs:
+  # --- CI Part---
+  dependencies:
+    name: Install Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.2.2
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4.2.0
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+          
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Cache node_modules
+        uses: actions/cache@v3
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
+
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    needs: dependencies
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.2.0
+        with:
+          node-version: ${{ inputs.node_version }}
+      - name: Restore node_modules
+        uses: actions/cache@v3
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
+      - run: npm run lint
+
+  build:
+    name: Build Check (Next.js)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.2.0
+        with:
+          node-version: ${{ inputs.node_version }}
+      - name: Restore node_modules
+        uses: actions/cache@v3
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
+      
+      - name: Build Next.js App
+        run: npm run build
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.2.0
+        with:
+          node-version: ${{ inputs.node_version }}
+      - name: Restore node_modules
+        uses: actions/cache@v3
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
+      - run: npm test --if-present
+
+  # --- CD Part (DOCKER & RELEASES) ---
+  release-dev:
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    environment: Dev
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4.2.2
+      
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Build & Push Images (Dev)
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          # Conversion en minuscule obligatoire pour ghcr
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="ghcr.io/$OWNER_LOWER"
+
+          # Utilisation du Dockerfile à la racine
+          docker build . --file Dockerfile \
+            -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
+            -t $REPO/${{ inputs.package_name }}:dev-latest
+          
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+  release-staging:
+    needs: release-dev
+    runs-on: ubuntu-latest
+    environment: Staging
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Build & Push (Staging)
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="ghcr.io/$OWNER_LOWER"
+          
+          docker build . --file Dockerfile \
+            -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG \
+            -t $REPO/${{ inputs.package_name }}:staging-latest
+            
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+  release-prod:
+    needs: release-staging
+    runs-on: ubuntu-latest
+    environment: Prod
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      TAG: ${{ steps.set_tag.outputs.TAG }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Calculate Next Version
+        id: set_tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
+          COMMIT_MSG="$(git log -1 --pretty=%B)"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
+          
+          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
+          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
+          elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          else echo "Invalid commit format"; exit 1; fi
+          
+          echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+
+      - name: Build & Push (Prod)
+        run: |
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="ghcr.io/$OWNER_LOWER"
+          TAG=${{ steps.set_tag.outputs.TAG }}
+          
+          docker build . --file Dockerfile \
+            -t $REPO/${{ inputs.package_name }}:$TAG \
+            -t $REPO/${{ inputs.package_name }}:latest
+            
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+
+      - name: Create GitHub Release
+        run: |
+          TAG=${{ steps.set_tag.outputs.TAG }}
+          zip -r release_assets.zip README.md Dockerfile package.json
+          
+          gh release create "v$TAG" release_assets.zip \
+            --title "Release v$TAG" \
+            --notes "Front Next.js Release. Docker Image: ${{ inputs.package_name }}:$TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
