@@ -11,11 +11,6 @@ on:
         required: false
         type: string # Changé en string car setup-node préfère les strings
         default: "23"
-    secrets: # Important pour une workflow_call
-      GH_APP_ID:
-        required: true
-      GH_APP_PRIVATE_KEY:
-        required: true
 
 jobs:
   dependencies:
@@ -30,8 +25,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PK }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4.2.0
