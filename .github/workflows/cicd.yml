@@ -1,43 +1,38 @@
-name: Test Workflow
+name: CICD Release
 
 on:
-  workflow_call:
-    inputs:
-      type:
-        required: true
-        type: string
-        description: 'Back or frontend deployment type'
-      postman_collection:
-        required: false
-        type: string
-        description: 'Collection id for postman tests'
-    secrets:
-      POSTMAN_API_KEY:
-        required: false
-      CARGO_REGISTRY_TOKEN:
-        required: false
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    environment: Release
+    outputs:
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
 
-  run-back:
-    if: ${{ inputs.type == 'back' }}
-    uses: ./.github/workflows/back_ci.yml
-    with:
-      postman_collection: ${{ inputs.postman_collection }}
-    secrets:
-      POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  run-front:
-    if: ${{ inputs.type == 'front' }}
-    uses: ./.github/workflows/front_ci.yml
+      - name: Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            @semantic-release/commit-analyzer
+            @semantic-release/release-notes-generator
+            @semantic-release/github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  run-api-lib-ci:
-    if: ${{ inputs.type == 'ci-back-lib' }}
-    uses: ./.github/workflows/ci-back-lib.yml
-
-  run-api-lib-cd:
-    if: ${{ inputs.type == 'cd-back-lib' }}
-    uses: ./.github/workflows/cd-back-lib.yml
-    secrets:
-      MAIRIE_360_DEPLOY_TOKEN: ${{ secrets.MAIRIE_360_DEPLOY_TOKEN }}
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Summary
+        run: |
+          echo "Release créée : ${{ steps.semantic.outputs.new_release_version }}"
