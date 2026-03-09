@@ -9,12 +9,15 @@ on:
         description: "Nom de l'image Docker et du package"
       node_version:
         required: false
-        type: number
-        default: 23
-        description: "Version de Node.js"
+        type: string # Changé en string car setup-node préfère les strings
+        default: "23"
+    secrets: # Important pour une workflow_call
+      GH_APP_ID:
+        required: true
+      GH_APP_PRIVATE_KEY:
+        required: true
 
 jobs:
-  # --- CI Part---
   dependencies:
     name: Install Dependencies
     runs-on: ubuntu-latest
@@ -22,14 +25,26 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4.2.2
       
+      # Génération du token via l'App GitHub
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v4.2.0
         with:
           node-version: ${{ inputs.node_version }}
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@mairie360'
           cache: 'npm'
           
       - name: Install Dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Cache node_modules
         uses: actions/cache@v3
