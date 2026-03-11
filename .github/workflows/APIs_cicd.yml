@@ -159,7 +159,8 @@ jobs:
 
   release-dev:
     # if: github.ref == 'refs/heads/main'
-    needs: integration_tests
+    # needs: integration_tests
+    needs: build
     runs-on: ubuntu-latest
     environment: Dev
     permissions:
