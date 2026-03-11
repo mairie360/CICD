@@ -160,9 +160,9 @@ jobs:
   release-dev:
     # if: github.ref == 'refs/heads/main'
     # needs: integration_tests
+    # environment: Dev
     needs: build
     runs-on: ubuntu-latest
-    environment: Dev
     permissions:
       contents: read
       packages: write
@@ -183,7 +183,7 @@ jobs:
           docker push $REPO/${{ inputs.package_name }} --all-tags
           
       - name: Publish OpenAPI
-        uses: mairie360/CICD/publish-openapi@mair-56-setup-open-api-gen
+        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
