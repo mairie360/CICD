@@ -187,7 +187,7 @@ jobs:
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: ${{ github.ref }}
+          version: 0.0.0-dev.${{ github.sha }}
     env:
       GH_TOKEN: ${{ github.token }}
 
