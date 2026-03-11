@@ -1,0 +1,31 @@
+# .github/actions/publish-openapi/action.yml
+name: 'Publish OpenAPI Contract'
+inputs:
+  version:
+    required: true
+  package_name:
+    required: true
+  token:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: |
+        ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
+        cargo run --example generate_openapi --quiet > openapi.yaml
+        npx openapi-typescript openapi.yaml -o index.d.ts
+        cat <<EOF > package.json
+        {
+          "name": "@${ORG}/${SAFE_NAME}-openapi",
+          "version": "${{ inputs.version }}",
+          "main": "index.d.ts",
+          "types": "index.d.ts",
+          "publishConfig": { "registry": "https://npm.pkg.github.com" }
+        }
+        EOF
+        echo "@${ORG}:registry=https://npm.pkg.github.com" > .npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> .npmrc
+        npm publish

@@ -158,7 +158,7 @@ jobs:
           run: docker compose down
 
   release-dev:
-    if: github.ref == 'refs/heads/main'
+    # if: github.ref == 'refs/heads/main'
     needs: integration_tests
     runs-on: ubuntu-latest
     environment: Dev
@@ -180,6 +180,13 @@ jobs:
           # Build & Push Images (Dev)
           docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
+          
+      - name: Publish OpenAPI
+        uses: mairie360/CICD/publish-openapi@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ github.ref }}
     env:
       GH_TOKEN: ${{ github.token }}
 
