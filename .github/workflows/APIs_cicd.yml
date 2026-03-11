@@ -158,10 +158,9 @@ jobs:
           run: docker compose down
 
   release-dev:
-    # if: github.ref == 'refs/heads/main'
-    # needs: integration_tests
-    # environment: Dev
-    needs: build
+    if: github.ref == 'refs/heads/main'
+    needs: integration_tests
+    environment: Dev
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -213,6 +212,13 @@ jobs:
           # On utilise le tag 'staging' pour isoler les images de test
           docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
+          
+      - name: Publish OpenAPI
+        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-staging.${{ github.sha }}
     env:
       GH_TOKEN: ${{ github.token }}
 
@@ -283,6 +289,13 @@ jobs:
             - **Infrastructure**: \`Dockerfile\`, \`docker-compose.yml\`, and \`nginx.conf\`.
 
             *Note: The executable is delivered as a Docker image via GitHub Packages.*"
+            
+      - name: Publish OpenAPI
+        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ steps.set_tag.outputs.TAG }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.set_tag.outputs.TAG }}
