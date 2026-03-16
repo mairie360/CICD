@@ -290,6 +290,9 @@ jobs:
 
             *Note: The executable is delivered as a Docker image via GitHub Packages.*"
             
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            
       - name: Publish OpenAPI
         uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
         with:
