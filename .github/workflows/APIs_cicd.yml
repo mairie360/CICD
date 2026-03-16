@@ -292,6 +292,7 @@ jobs:
             
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.set_tag.outputs.TAG }}
             
       - name: Publish OpenAPI
         uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
