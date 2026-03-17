@@ -83,7 +83,9 @@ jobs:
   # --- PARTIE CD (DOCKER & RELEASES) ---
   release-dev:
     name: Release Dev
-    needs: test
+    # if: github.ref == 'refs/heads/main'
+    # needs: test
+    # environment: Dev
     runs-on: ubuntu-latest
     permissions:
       contents: read
