@@ -20,15 +20,16 @@ runs:
         ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
         
+        # [IMPORTANT] Configurer l'auth npm globalement pour cette exécution
+        # Cela permet au 'npm install' de fonctionner pour les dépendances privées
+        echo "@${ORG}:registry=https://npm.pkg.github.com" > ~/.npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> ~/.npmrc
+
         # --- LOGIQUE POUR LES PROJETS RUST ---
         if [ "${{ inputs.language }}" = "rust" ]; then
           echo "🦀 Source détectée : Rust"
-          
-          # Extraction de l'OpenAPI depuis le code Rust
-          # On suppose que tu as un exemple ou un binaire nommé 'generate_openapi'
           cargo run --example generate_openapi --quiet > openapi.json
           
-          # Ici, on prépare le package NPM pour les types TS
           npx openapi-typescript openapi.json -o index.d.ts
           
           mkdir -p dist_pkg
@@ -42,8 +43,7 @@ runs:
           }
         EOF
           mv index.d.ts dist_pkg/
-          echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_pkg/.npmrc
-          echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_pkg/.npmrc
+          cp ~/.npmrc dist_pkg/.npmrc # On réutilise le config créé au début
           
           cd dist_pkg && npm publish
 
@@ -51,11 +51,10 @@ runs:
         elif [ "${{ inputs.language }}" = "typescript" ]; then
           echo "📦 Source détectée : TypeScript"
           
-          # Dans un projet TS, on extrait l'OpenAPI via ton script scripts/export-swagger.ts
+          # Maintenant npm install fonctionnera car ~/.npmrc existe
           npm install --legacy-peer-deps
-          npm run openapi:extract # Doit générer openapi.json
+          npm run openapi:extract 
           
-          # Publication identique des types générés
           npx openapi-typescript openapi.json -o index.d.ts
           
           mkdir -p dist_pkg
@@ -69,8 +68,7 @@ runs:
           }
         EOF
           mv index.d.ts dist_pkg/
-          echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_pkg/.npmrc
-          echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_pkg/.npmrc
+          cp ~/.npmrc dist_pkg/.npmrc
           
           cd dist_pkg && npm publish
         fi
