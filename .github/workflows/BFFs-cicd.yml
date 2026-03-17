@@ -9,8 +9,8 @@ on:
         description: "Nom de l'image Docker et du package"
       node_version:
         required: false
-        type: number
-        default: 20
+        type: string
+        default: "20"
         description: "Version de Node.js"
 
 jobs:
@@ -79,124 +79,112 @@ jobs:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
       - run: npm test
-        
-# -- TODO: add integration tests
 
-    # --- PARTIE CD (DOCKER & RELEASES) ---
-    
-    release-dev:
-      # if: github.ref == 'refs/heads/main'
-      # needs: test
-      # environment: Dev
-      runs-on: ubuntu-latest
-      permissions:
-        contents: read
-        packages: write
-      steps:
-        - uses: actions/checkout@v4
-        
-        - name: Log in to GHCR
-          run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-  
-        - name: Build & Push Images (Dev)
-          run: |
-            SHA_TAG=${GITHUB_SHA::7}
-            OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-            REPO="ghcr.io/$OWNER_LOWER"
-            docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
-            docker push $REPO/${{ inputs.package_name }} --all-tags
-  
-        - name: Publish OpenAPI (Dev)
-          uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
-          with:
-            package_name: ${{ inputs.package_name }}
-            token: ${{ secrets.GITHUB_TOKEN }}
-            version: 0.0.0-dev.${{ github.sha }}
-  
-    release-staging:
-      needs: release-dev
-      environment: Staging
-      runs-on: ubuntu-latest
-      permissions:
-        contents: read
-        packages: write
-      steps:
-        - uses: actions/checkout@v4
-  
-        - name: Log in to GHCR
-          run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-  
-        - name: Build & Push Images (Staging)
-          run: |
-            SHA_TAG=${GITHUB_SHA::7}
-            OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-            REPO="ghcr.io/$OWNER_LOWER"
-            docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
-            docker push $REPO/${{ inputs.package_name }} --all-tags
-  
-        - name: Publish OpenAPI (Staging)
-          uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
-          with:
-            package_name: ${{ inputs.package_name }}
-            token: ${{ secrets.GITHUB_TOKEN }}
-            version: 0.0.0-staging.${{ github.sha }}
-  
-    release-prod:
-      needs: release-staging
-      environment: Prod
-      runs-on: ubuntu-latest
-      permissions:
-        contents: write
-        packages: write
-      outputs:
-        TAG: ${{ steps.set_tag.outputs.TAG }}
-      steps:
-        - uses: actions/checkout@v4
-          with:
-            fetch-depth: 0
-  
-        - name: Log in to GHCR
-          run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-  
-        - name: Calculate Next Version
-          id: set_tag
-          shell: bash
-          run: |
-            LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
-            COMMIT_MSG="$(git log -1 --pretty=%B)"
-            IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
-            if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
-            elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
-            elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-            else 
-              echo "Format de message de commit invalide"; 
-              exit 1; 
-            fi
-            echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
-          env:
-            GH_TOKEN: ${{ github.token }}
-  
-        - name: Build & Push Images (Prod)
-          run: |
-            OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-            REPO="ghcr.io/$OWNER_LOWER"
-            TAG=${{ steps.set_tag.outputs.TAG }}
-            docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
-            docker push $REPO/${{ inputs.package_name }} --all-tags
-  
-        - name: Create GitHub Release
-          run: |
-            TAG=${{ steps.set_tag.outputs.TAG }}
-            zip -r release_assets_v${TAG}.zip README.md Dockerfile package.json
-            gh release create "v${TAG}" release_assets_v${TAG}.zip \
-              --title "Release v${TAG}" \
-              --notes "### Version v${TAG} (BFF)"
-          env:
-            GH_TOKEN: ${{ github.token }}
-  
-        - name: Publish OpenAPI (Prod)
-          uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
-          with:
-            package_name: ${{ inputs.package_name }}
-            token: ${{ secrets.GITHUB_TOKEN }}
-            version: ${{ steps.set_tag.outputs.TAG }}
+  # --- PARTIE CD (DOCKER & RELEASES) ---
+  release-dev:
+    name: Release Dev
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Build & Push Images (Dev)
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="ghcr.io/$OWNER_LOWER"
+          docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+      - name: Publish OpenAPI (Dev)
+        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-dev.${{ github.sha }}
+
+  release-staging:
+    name: Release Staging
+    needs: release-dev
+    environment: Staging
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Build & Push Images (Staging)
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="ghcr.io/$OWNER_LOWER"
+          docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+      - name: Publish OpenAPI (Staging)
+        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-staging.${{ github.sha }}
+
+  release-prod:
+    name: Release Prod
+    needs: release-staging
+    environment: Prod
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      TAG: ${{ steps.set_tag.outputs.TAG }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Calculate Next Version
+        id: set_tag
+        shell: bash
+        run: |
+          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
+          COMMIT_MSG="$(git log -1 --pretty=%B)"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
+          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
+          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
+          elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          else 
+            echo "Format de message de commit invalide"
+            exit 1
+          fi
+          echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & Push Images (Prod)
+        run: |
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="ghcr.io/$OWNER_LOWER"
+          TAG=${{ steps.set_tag.outputs.TAG }}
+          docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+      - name: Create GitHub Release
+        run: |
+          TAG=${{ steps.set_tag.outputs.TAG }}
+          zip -r release_assets_v${TAG}.zip README.md Dockerfile package.json
+          gh release create "v${TAG}" release_assets_v${TAG}.zip \
+            --title "Release v${TAG}" \
+            --notes "### Version v${TAG} (BFF)"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publish OpenAPI (Prod)
+        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ steps.set_tag.outputs.TAG }}
