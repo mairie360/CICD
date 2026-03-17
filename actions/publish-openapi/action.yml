@@ -1,5 +1,6 @@
-# .github/actions/publish-openapi/action.yml
 name: 'Publish OpenAPI Contract'
+description: 'Génère et publie le contrat OpenAPI'
+
 inputs:
   version:
     required: true
@@ -7,6 +8,9 @@ inputs:
     required: true
   token:
     required: true
+  language:
+    required: true
+    description: "Le langage du projet source : 'rust' ou 'typescript'"
 
 runs:
   using: "composite"
@@ -16,29 +20,57 @@ runs:
         ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
         
-        # 1. Génération des fichiers
-        cargo run --example generate_openapi --quiet > openapi.yaml
-        npx openapi-typescript openapi.yaml -o index.d.ts
-        
-        # 2. Création d'un dossier propre pour la publication (staging)
-        mkdir -p dist_package
-        
-        # 3. Création du package.json directement dans le dossier dist
-        cat <<EOF > dist_package/package.json
-        {
-          "name": "@${ORG}/${SAFE_NAME}-openapi",
-          "version": "${{ inputs.version }}",
-          "main": "index.d.ts",
-          "types": "index.d.ts",
-          "publishConfig": { "registry": "https://npm.pkg.github.com" }
-        }
+        # --- LOGIQUE POUR LES PROJETS RUST ---
+        if [ "${{ inputs.language }}" = "rust" ]; then
+          echo "🦀 Source détectée : Rust"
+          
+          # Extraction de l'OpenAPI depuis le code Rust
+          # On suppose que tu as un exemple ou un binaire nommé 'generate_openapi'
+          cargo run --example generate_openapi --quiet > openapi.json
+          
+          # Ici, on prépare le package NPM pour les types TS
+          npx openapi-typescript openapi.json -o index.d.ts
+          
+          mkdir -p dist_pkg
+          cat <<EOF > dist_pkg/package.json
+          {
+            "name": "@${ORG}/${SAFE_NAME}-openapi",
+            "version": "${{ inputs.version }}",
+            "main": "index.d.ts",
+            "types": "index.d.ts",
+            "publishConfig": { "registry": "https://npm.pkg.github.com" }
+          }
         EOF
-        
-        # 4. Déplacement des types et config dans le dossier dist
-        mv index.d.ts dist_package/
-        echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_package/.npmrc
-        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_package/.npmrc
-        
-        # 5. Publication DEPUIS le dossier dist
-        cd dist_package
-        npm publish
+          mv index.d.ts dist_pkg/
+          echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_pkg/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_pkg/.npmrc
+          
+          cd dist_pkg && npm publish
+
+        # --- LOGIQUE POUR LES PROJETS TYPESCRIPT (BFF) ---
+        elif [ "${{ inputs.language }}" = "typescript" ]; then
+          echo "📦 Source détectée : TypeScript"
+          
+          # Dans un projet TS, on extrait l'OpenAPI via ton script scripts/export-swagger.ts
+          npm install --legacy-peer-deps
+          npm run openapi:extract # Doit générer openapi.json
+          
+          # Publication identique des types générés
+          npx openapi-typescript openapi.json -o index.d.ts
+          
+          mkdir -p dist_pkg
+          cat <<EOF > dist_pkg/package.json
+          {
+            "name": "@${ORG}/${SAFE_NAME}-openapi",
+            "version": "${{ inputs.version }}",
+            "main": "index.d.ts",
+            "types": "index.d.ts",
+            "publishConfig": { "registry": "https://npm.pkg.github.com" }
+          }
+        EOF
+          mv index.d.ts dist_pkg/
+          echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_pkg/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_pkg/.npmrc
+          
+          cd dist_pkg && npm publish
+        fi
