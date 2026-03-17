@@ -20,12 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
           cache: 'npm'
+
       - run: npm ci
+
       - name: Cache node_modules
         uses: actions/cache@v3
         with:
@@ -38,14 +41,17 @@ jobs:
     needs: dependencies
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
+
       - name: Restore node_modules
         uses: actions/cache@v3
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
       - run: npm run lint
 
   build:
@@ -54,14 +60,17 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
+
       - name: Restore node_modules
         uses: actions/cache@v3
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
       - run: npm run build
 
   test:
@@ -70,14 +79,17 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
+
       - name: Restore node_modules
         uses: actions/cache@v3
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
       - run: npm test
 
   # --- PARTIE CD (DOCKER & RELEASES) ---
@@ -92,15 +104,31 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
       - name: Build & Push Images (Dev)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
-          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-          REPO="ghcr.io/$OWNER_LOWER"
-          docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
-          docker push $REPO/${{ inputs.package_name }} --all-tags
+                    OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+                    REPO="ghcr.io/$OWNER_LOWER"
+          
+                    # On crée un fichier .npmrc temporaire pour le build
+                    echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
+                    echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
+          
+                    # On passe le fichier comme secret au build docker
+                    docker build \
+                      --secret id=npmrc,src=.npmrc_tmp \
+                      -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
+                      -t $REPO/${{ inputs.package_name }}:dev-latest .
+          
+                    docker push $REPO/${{ inputs.package_name }} --all-tags
+                    
+                    # Nettoyage
+                    rm .npmrc_tmp
+
       - name: Publish OpenAPI (Dev)
         uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
         with:
@@ -118,15 +146,31 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
       - name: Build & Push Images (Staging)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
-          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-          REPO="ghcr.io/$OWNER_LOWER"
-          docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
-          docker push $REPO/${{ inputs.package_name }} --all-tags
+                    OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+                    REPO="ghcr.io/$OWNER_LOWER"
+          
+                    # On crée un fichier .npmrc temporaire pour le build
+                    echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
+                    echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
+          
+                    # On passe le fichier comme secret au build docker
+                    docker build \
+                      --secret id=npmrc,src=.npmrc_tmp \
+                      -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG \
+                      -t $REPO/${{ inputs.package_name }}:staging-latest .
+          
+                    docker push $REPO/${{ inputs.package_name }} --all-tags
+                    
+                    # Nettoyage
+                    rm .npmrc_tmp
+
       - name: Publish OpenAPI (Staging)
         uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
         with:
@@ -148,8 +192,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
       - name: Calculate Next Version
         id: set_tag
         shell: bash
@@ -167,13 +213,27 @@ jobs:
           echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build & Push Images (Prod)
         run: |
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
-          TAG=${{ steps.set_tag.outputs.TAG }}
-          docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
+
+          # On crée un fichier .npmrc temporaire pour le build
+          echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
+
+          # On passe le fichier comme secret au build docker
+          docker build \
+            --secret id=npmrc,src=.npmrc_tmp \
+            -t $REPO/${{ inputs.package_name }}:$TAG \
+            -t $REPO/${{ inputs.package_name }}:latest .
+
           docker push $REPO/${{ inputs.package_name }} --all-tags
+          
+          # Nettoyage
+          rm .npmrc_tmp
+
       - name: Create GitHub Release
         run: |
           TAG=${{ steps.set_tag.outputs.TAG }}
