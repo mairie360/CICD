@@ -182,12 +182,11 @@ jobs:
           docker push $REPO/${{ inputs.package_name }} --all-tags
           
       - name: Publish OpenAPI
-        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
+        uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-dev.${{ github.sha }}
-          language: "rust"
     env:
       GH_TOKEN: ${{ github.token }}
 
@@ -215,12 +214,11 @@ jobs:
           docker push $REPO/${{ inputs.package_name }} --all-tags
           
       - name: Publish OpenAPI
-        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
+        uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-staging.${{ github.sha }}
-          language: "rust"
     env:
       GH_TOKEN: ${{ github.token }}
 
@@ -297,12 +295,11 @@ jobs:
           TAG: ${{ steps.set_tag.outputs.TAG }}
             
       - name: Publish OpenAPI
-        uses: mairie360/CICD/actions/publish-openapi@mair-56-setup-open-api-gen
+        uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ steps.set_tag.outputs.TAG }}
-          language: "rust"
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.set_tag.outputs.TAG }}

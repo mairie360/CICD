@@ -1,0 +1,43 @@
+name: 'Publish OpenAPI from Rust'
+description: 'Extrait le contrat d’une API Rust et publie les types TS'
+
+inputs:
+  version:
+    required: true
+  package_name:
+    required: true
+  token:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: |
+        ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
+
+        # 1. Génération du JSON via Rust
+        cargo run --example generate_openapi --quiet > openapi.json
+
+        # 2. Génération des types TS
+        npx openapi-typescript openapi.json -o index.d.ts
+
+        # 3. Préparation du package
+        mkdir -p dist_pkg
+        cat <<EOF > dist_pkg/package.json
+        {
+          "name": "@${ORG}/${SAFE_NAME}-openapi",
+          "version": "${{ inputs.version }}",
+          "main": "index.d.ts",
+          "types": "index.d.ts",
+          "publishConfig": { "registry": "https://npm.pkg.github.com" }
+        }
+        EOF
+
+        mv index.d.ts dist_pkg/
+        echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_pkg/.npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_pkg/.npmrc
+
+        # 4. Publication
+        cd dist_pkg && npm publish
