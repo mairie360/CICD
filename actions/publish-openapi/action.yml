@@ -15,9 +15,16 @@ runs:
       run: |
         ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
+        
+        # 1. Génération des fichiers
         cargo run --example generate_openapi --quiet > openapi.yaml
         npx openapi-typescript openapi.yaml -o index.d.ts
-        cat <<EOF > package.json
+        
+        # 2. Création d'un dossier propre pour la publication (staging)
+        mkdir -p dist_package
+        
+        # 3. Création du package.json directement dans le dossier dist
+        cat <<EOF > dist_package/package.json
         {
           "name": "@${ORG}/${SAFE_NAME}-openapi",
           "version": "${{ inputs.version }}",
@@ -26,6 +33,12 @@ runs:
           "publishConfig": { "registry": "https://npm.pkg.github.com" }
         }
         EOF
-        echo "@${ORG}:registry=https://npm.pkg.github.com" > .npmrc
-        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> .npmrc
+        
+        # 4. Déplacement des types et config dans le dossier dist
+        mv index.d.ts dist_package/
+        echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_package/.npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_package/.npmrc
+        
+        # 5. Publication DEPUIS le dossier dist
+        cd dist_package
         npm publish
