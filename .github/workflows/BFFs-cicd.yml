@@ -239,3 +239,12 @@ jobs:
 
           docker push $REPO/${{ inputs.package_name }} --all-tags
           rm .npmrc_tmp
+          
+      - name: Publish OpenAPI (Prod)
+        env:
+          TAG: ${{ steps.set_tag.outputs.TAG }}
+        uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: $TAG
