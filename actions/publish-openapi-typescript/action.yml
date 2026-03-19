@@ -17,50 +17,36 @@ runs:
         ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
 
-        # 1. Écraser TOUTE configuration existante pour éviter les conflits
-        # On crée le .npmrc directement à la racine du projet actuel
+        # 1. Auth & Install (inchangé)
         echo "@${ORG}:registry=https://npm.pkg.github.com" > .npmrc
         echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> .npmrc
-
-        # On s'assure que npm utilise BIEN ce fichier
         export NPM_CONFIG_USERCONFIG=$(pwd)/.npmrc
+        npm install --legacy-peer-deps
 
-        # 2. Installation (maintenant le token est forcément lu depuis le .npmrc local)
-        if [ ! -d "node_modules" ]; then
-          echo "📦 Installation des dépendances..."
-          npm install --legacy-peer-deps --no-audit --no-fund
-        fi
-
-        # 3. Extraction du swagger
-        echo "🔍 Extraction du swagger..."
+        # 2. Extraction (Génère openapi.json)
         npm run openapi:extract 
 
-        # 4. Génération des types
-        echo "🛠️ Génération des types..."
-        npx openapi-typescript openapi.json -o index.d.ts
+        # 3. Génération du SDK complet (Services + Models)
+        # On utilise axios par défaut pour les fonctions appelables
+        npx openapi-typescript-codegen --input openapi.json --output ./dist_pkg/sdk --client axios
 
-        # 5. Préparation du dossier de publication
-        mkdir -p dist_pkg
+        # 4. Préparation du package.json dans dist_pkg
         cat <<EOF > dist_pkg/package.json
         {
           "name": "@${ORG}/${SAFE_NAME}-openapi",
           "version": "${{ inputs.version }}",
-          "main": "index.d.ts",
-          "types": "index.d.ts",
+          "main": "./sdk/index.js",
+          "types": "./sdk/index.d.ts",
           "publishConfig": { "registry": "https://npm.pkg.github.com" }
         }
         EOF
+
+        # 5. Compilation du SDK (Optionnel mais recommandé si tu veux du JS pur)
+        # Si tu publies pour d'autres projets TS, le dossier /sdk généré suffit souvent.
+        # Sinon, on s'assure que le point d'entrée pointe sur le index.ts généré.
         
-        mv index.d.ts dist_pkg/
-        
-        # 6. Finalisation de la structure et publication
-        # On copie le .npmrc dans le dossier dist pour que npm publish soit authentifié
         cp .npmrc dist_pkg/.npmrc
 
-        echo "🚀 Publication du package @${ORG}/${SAFE_NAME}-openapi..."
-        
-        # On entre dans le dossier et on publie
+        # 6. Publication
         cd dist_pkg
         npm publish
-
-        echo "✅ Terminé !"

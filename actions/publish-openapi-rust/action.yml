@@ -9,35 +9,31 @@ inputs:
   token:
     required: true
 
-runs:
-  using: "composite"
-  steps:
-    - shell: bash
-      run: |
-        ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
-
-        # 1. Génération du JSON via Rust
-        cargo run --example generate_openapi --quiet > openapi.json
-
-        # 2. Génération des types TS
-        npx openapi-typescript openapi.json -o index.d.ts
-
-        # 3. Préparation du package
-        mkdir -p dist_pkg
-        cat <<EOF > dist_pkg/package.json
-        {
-          "name": "@${ORG}/${SAFE_NAME}-openapi",
-          "version": "${{ inputs.version }}",
-          "main": "index.d.ts",
-          "types": "index.d.ts",
-          "publishConfig": { "registry": "https://npm.pkg.github.com" }
-        }
-        EOF
-
-        mv index.d.ts dist_pkg/
-        echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_pkg/.npmrc
-        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_pkg/.npmrc
-
-        # 4. Publication
-        cd dist_pkg && npm publish
+run: |
+  ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+  SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
+  
+  # 1. Générer le YAML depuis Rust
+  cargo run --example generate_openapi --quiet > openapi.yaml
+  
+  # 2. Générer le CLIENT COMPLET (Views + Fonctions)
+  # On utilise 'axios' ici, mais tu peux choisir 'fetch'
+  npx openapi-typescript-codegen --input openapi.yaml --output ./dist_package --client axios
+  
+  # 3. Créer le package.json dans le dossier généré
+  cat <<EOF > dist_package/package.json
+  {
+    "name": "@${ORG}/${SAFE_NAME}-openapi",
+    "version": "${{ inputs.version }}",
+    "main": "./index.ts",
+    "types": "./index.ts",
+    "dependencies": { "axios": "^1.0.0" },
+    "publishConfig": { "registry": "https://npm.pkg.github.com" }
+  }
+  EOF
+  
+  # 4. Publier
+  cd dist_package
+  echo "@${ORG}:registry=https://npm.pkg.github.com" > .npmrc
+  echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> .npmrc
+  npm publish
