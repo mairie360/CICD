@@ -17,36 +17,42 @@ runs:
         ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
 
-        # 1. Auth & Install (inchangé)
+        # 1. Nettoyage et préparation du dossier de staging
+        rm -rf ./dist_pkg
+        mkdir -p ./dist_pkg
+
+        # 2. Auth & Install (pour pouvoir lancer openapi:extract)
         echo "@${ORG}:registry=https://npm.pkg.github.com" > .npmrc
         echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> .npmrc
-        export NPM_CONFIG_USERCONFIG=$(pwd)/.npmrc
         npm install --legacy-peer-deps
 
-        # 2. Extraction (Génère openapi.json)
+        # 3. Extraction (Génère le fichier openapi.json à la racine)
         npm run openapi:extract 
 
-        # 3. Génération du SDK complet (Services + Models)
-        # On utilise axios par défaut pour les fonctions appelables
-        npx openapi-typescript-codegen --input openapi.json --output ./dist_pkg/sdk --client axios
+        # 4. Génération du SDK complet DANS le dossier dist_pkg
+        # On génère directement à la racine de dist_pkg pour simplifier les imports
+        npx openapi-typescript-codegen --input openapi.json --output ./dist_pkg --client axios
 
-        # 4. Préparation du package.json dans dist_pkg
+        # 5. Création du package.json DANS dist_pkg
+        # Note : Le codegen génère un index.ts (ou .js si compilé) à la racine de l'output
         cat <<EOF > dist_pkg/package.json
         {
           "name": "@${ORG}/${SAFE_NAME}-openapi",
           "version": "${{ inputs.version }}",
-          "main": "./sdk/index.js",
-          "types": "./sdk/index.d.ts",
-          "publishConfig": { "registry": "https://npm.pkg.github.com" }
+          "main": "./index.ts",
+          "types": "./index.ts",
+          "dependencies": {
+            "axios": "^1.0.0"
+          },
+          "publishConfig": { 
+            "registry": "https://npm.pkg.github.com" 
+          }
         }
         EOF
 
-        # 5. Compilation du SDK (Optionnel mais recommandé si tu veux du JS pur)
-        # Si tu publies pour d'autres projets TS, le dossier /sdk généré suffit souvent.
-        # Sinon, on s'assure que le point d'entrée pointe sur le index.ts généré.
-        
+        # 6. Copie de l'auth NPM pour la publication
         cp .npmrc dist_pkg/.npmrc
 
-        # 6. Publication
+        # 7. Publication (On entre dans dist_pkg, isolant le reste du repo)
         cd dist_pkg
-        npm publish
+        npm publish --access restricted
