@@ -182,63 +182,35 @@ jobs:
           version: 0.0.0-staging.${{ github.sha }}
 
   release-prod:
-    name: Release Prod
     needs: release-staging
-    environment: Prod
     runs-on: ubuntu-latest
+    environment: Prod
     permissions:
       contents: write
       packages: write
     outputs:
-      TAG: ${{ steps.set_tag.outputs.TAG }}
+      TAG: ${{ steps.set_tag.outputs.new_release_version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      - name: Calculate Next Version
+  
+      - name: Calculate & Create Tag
         id: set_tag
-        shell: bash
+        uses: ./.github/actions/semantic-tag
+  
+      - name: Log in to GHCR
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+  
+      - name: Build & Push Images
+        if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
-          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
-          # On nettoie le 'v' initial si présent pour le calcul
-          VERSION=${LAST_TAG#v}
-          COMMIT_MSG="$(git log -1 --pretty=%B)"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          
-          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
-          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
-          elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          else 
-            echo "Format de message de commit invalide"
-            exit 1
-          fi
-          NEW_TAG="$MAJOR.$MINOR.$PATCH"
-          echo "TAG=$NEW_TAG" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build & Push Images (Prod)
-        env:
-          TAG: ${{ steps.set_tag.outputs.TAG }}
-        run: |
-          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-          REPO="ghcr.io/$OWNER_LOWER"
-
-          echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
-          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
-
-          # Maintenant $TAG sera bien rempli
-          docker build \
-            --secret id=npmrc,src=.npmrc_tmp \
-            -t $REPO/${{ inputs.package_name }}:$TAG \
-            -t $REPO/${{ inputs.package_name }}:latest .
-
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          TAG=${{ steps.set_tag.outputs.new_release_version }}
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > .npmrc
+          docker build --secret id=npmrc,src=.npmrc -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
-          rm .npmrc_tmp
           
       - name: Publish OpenAPI (Prod)
         env:
@@ -247,4 +219,4 @@ jobs:
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: $TAG
+          version: ${{ steps.set_tag.outputs.new_release_version }}

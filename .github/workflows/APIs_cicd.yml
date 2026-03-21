@@ -230,76 +230,32 @@ jobs:
       contents: write
       packages: write
     outputs:
-      TAG: ${{ steps.set_tag.outputs.TAG }}
+      TAG: ${{ steps.set_tag.outputs.new_release_version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      - name: Calculate Next Version
+  
+      - name: Calculate & Create Tag
         id: set_tag
-        shell: bash
-        run: |
-          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
-          COMMIT_MSG="$(git log -1 --pretty=%B)"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
-
-          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
-          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
-          elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          else echo "Invalid commit message format"; exit 1; fi
-
-          echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ github.token }}
-
+        uses: ./.github/actions/semantic-tag
+  
+      - name: Log in to GHCR
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+  
       - name: Build & Push Images (Prod)
+        if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          TAG=${{ steps.set_tag.outputs.TAG }}
-
-          # API
+          TAG=${{ steps.set_tag.outputs.new_release_version }}
           docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
-
-      - name: Create GitHub Release
-        run: |
-          # Create an archive with API specifications, infrastructure config, and documentation
-          # Including collection.json ensures that the API tests are snapshotted with this version
-          zip -r api_specs_v${TAG}.zip \
-            API.md \
-            README.md \
-            nginx.conf \
-            docker-compose.yml \
-            Dockerfile
-
-          # Create the release using the GitHub CLI
-          gh release create "v${TAG}" api_specs_v${TAG}.zip \
-            --title "Release v${TAG}" \
-            --notes "### Version v${TAG} Snapshot
-
-            This release acts as a version marker for the API.
-
-            **Release Assets:**
-            - **Documentation**: \`API.md\` and \`README.md\`.
-            - **Infrastructure**: \`Dockerfile\`, \`docker-compose.yml\`, and \`nginx.conf\`.
-
-            *Note: The executable is delivered as a Docker image via GitHub Packages.*"
-            
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.set_tag.outputs.TAG }}
-            
+  
       - name: Publish OpenAPI
+        if: steps.set_tag.outputs.new_release_published == 'true'
         uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: ${{ steps.set_tag.outputs.TAG }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.set_tag.outputs.TAG }}
+          version: ${{ steps.set_tag.outputs.new_release_version }}

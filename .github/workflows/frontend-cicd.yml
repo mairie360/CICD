@@ -156,54 +156,20 @@ jobs:
     permissions:
       contents: write
       packages: write
-    outputs:
-      TAG: ${{ steps.set_tag.outputs.TAG }}
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      - name: Calculate Next Version
+  
+      - name: Calculate & Create Tag
         id: set_tag
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
+        uses: ./.github/actions/semantic-tag
+  
+      - name: Build & Push Front
+        if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
-          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
-          COMMIT_MSG="$(git log -1 --pretty=%B)"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
-          
-          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
-          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
-          elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          else echo "Invalid commit format"; exit 1; fi
-          
-          echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
-
-      - name: Build & Push (Prod)
-        run: |
-          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-          REPO="ghcr.io/$OWNER_LOWER"
-          TAG=${{ steps.set_tag.outputs.TAG }}
-          
-          # Et le token pour la prod
-          docker build . --file Dockerfile \
-            --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
-            -t $REPO/${{ inputs.package_name }}:$TAG \
-            -t $REPO/${{ inputs.package_name }}:latest
-            
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          TAG=${{ steps.set_tag.outputs.new_release_version }}
+          docker build . --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
-
-      - name: Create GitHub Release
-        run: |
-          TAG=${{ steps.set_tag.outputs.TAG }}
-          zip -r release_assets.zip README.md Dockerfile package.json
-          
-          gh release create "v$TAG" release_assets.zip \
-            --title "Release v$TAG" \
-            --notes "Front Next.js Release. Docker Image: ${{ inputs.package_name }}:$TAG"
-        env:
-          GH_TOKEN: ${{ github.token }}
