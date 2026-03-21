@@ -12,13 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@v2
 
       - name: Download Dependencies
         run: cargo fetch
@@ -32,7 +32,7 @@ jobs:
     needs: dependencies
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -40,31 +40,32 @@ jobs:
           components: rustfmt, clippy
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@v2
 
       - name: Run lint_check
-        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
+        uses: actions-rs/cargo@v1
         with:
           command: lint_check
+
   build:
     name: Build Release
     runs-on: ubuntu-latest
     needs: lint
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --release
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@v4
         with:
           name: build-artifact
           path: target/release/
@@ -76,13 +77,13 @@ jobs:
     needs: [build, lint]
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@v2
 
       - name: Run Rust Tests
         run: cargo test --release
@@ -95,13 +96,13 @@ jobs:
     steps:
       - name: Generate Token
         id: generate_token
-        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PK }}
 
       - name: Checkout repository with full history
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v4
         with:
           token: ${{ steps.generate_token.outputs.token }}
           fetch-depth: 0
@@ -111,7 +112,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@v2
 
       - name: Install convco & cargo-release (cached if available)
         run: |
@@ -129,7 +130,6 @@ jobs:
       - name: Detect bump type (major/minor/patch)
         id: bump
         run: |
-          # On vérifie les commits depuis le dernier tag
           if git log $(git describe --tags --abbrev=0)..HEAD --oneline | grep -q "^feat"; then
             echo "BUMP_TYPE=minor" >> $GITHUB_OUTPUT
           elif git log $(git describe --tags --abbrev=0)..HEAD --oneline | grep -qE "^[a-z]+(\([a-z]+\))?!:"; then
@@ -148,7 +148,7 @@ jobs:
             ${{ steps.bump.outputs.BUMP_TYPE }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_tag.outputs.tag }}
           name: Release ${{ steps.get_tag.outputs.tag }}

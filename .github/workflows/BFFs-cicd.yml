@@ -14,20 +14,19 @@ on:
         description: "Version de Node.js"
 
 jobs:
-  # --- PARTIE CI (NODE.TS) ---
   dependencies:
     name: Install dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@v4
       - name: Use Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
           cache: 'npm'
       - run: npm ci
       - name: Cache node_modules
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
@@ -37,12 +36,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: dependencies
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
       - name: Restore node_modules
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
@@ -53,12 +52,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
       - name: Restore node_modules
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
@@ -69,21 +68,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
       - name: Restore node_modules
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
       - run: npm test
         
-# -- TODO: add integration tests
-
-  # --- PARTIE CD (DOCKER & RELEASES) ---
-  
   release-dev:
     if: github.ref == 'refs/heads/main'
     needs: test
@@ -93,7 +88,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@v4
       
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
@@ -101,10 +96,8 @@ jobs:
       - name: Build & Push Images (Dev)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
-          # Conversion en minuscule pour le registre docker
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
-
           docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
@@ -116,7 +109,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@v4
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
@@ -126,7 +119,6 @@ jobs:
           SHA_TAG=${GITHUB_SHA::7}
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
-
           docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
@@ -140,7 +132,7 @@ jobs:
     outputs:
       TAG: ${{ steps.set_tag.outputs.TAG }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -151,21 +143,16 @@ jobs:
         id: set_tag
         shell: bash
         run: |
-          # Récupération du dernier tag ou défaut 0.0.0
           LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
           COMMIT_MSG="$(git log -1 --pretty=%B)"
-          # Nettoyage du 'v' si présent
           IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
-
-          # Logique de versioning sémantique basée sur le message de commit
           if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
           elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
           elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
           else 
-            echo "Format de message de commit invalide pour une release (attendu: fix:, feat:, major:)"; 
+            echo "Format de message de commit invalide"; 
             exit 1; 
           fi
-
           echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ github.token }}
@@ -175,21 +162,15 @@ jobs:
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
           TAG=${{ steps.set_tag.outputs.TAG }}
-
           docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
       - name: Create GitHub Release
         run: |
           TAG=${{ steps.set_tag.outputs.TAG }}
-          
-          # On crée une archive des sources pour la forme, ou des fichiers de config spécifiques
           zip -r release_assets_v${TAG}.zip README.md Dockerfile package.json
-
           gh release create "v${TAG}" release_assets_v${TAG}.zip \
             --title "Release v${TAG}" \
-            --notes "### Version v${TAG} (BFF)
-            Automated release based on commit message.
-            Docker Image: ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${{ inputs.package_name }}:$TAG"
+            --notes "Automated release BFF: $TAG"
         env:
           GH_TOKEN: ${{ github.token }}

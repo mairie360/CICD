@@ -6,40 +6,34 @@ on:
       package_name:
         required: true
         type: string
-        description: "Nom de l'image Docker et du package"
       node_version:
         required: false
-        type: string # Changé en string car setup-node préfère les strings
+        type: string
         default: "23"
 
 jobs:
   dependencies:
     name: Install Dependencies
     runs-on: ubuntu-latest
-    # 1. INDISPENSABLE : Autoriser le token natif à lire les packages
     permissions:
       contents: read
       packages: read
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
+        uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
           registry-url: 'https://npm.pkg.github.com'
           scope: '@mairie360'
           cache: 'npm'
-          
       - name: Install Dependencies
         run: npm ci
         env:
-          # 2. Utilisation du token natif du dépôt (autorisé via "Manage Actions access")
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Cache node_modules
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
@@ -49,12 +43,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: dependencies
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
       - name: Restore node_modules
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
@@ -65,36 +59,33 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
       - name: Restore node_modules
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
-      
-      - name: Build Next.js App
-        run: npm run build
+      - run: npm run build
 
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
       - name: Restore node_modules
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
       - run: npm test --if-present
 
-  # --- CD Part (DOCKER & RELEASES) ---
   release-dev:
     if: github.ref == 'refs/heads/main'
     needs: test
@@ -104,24 +95,17 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      
+      - uses: actions/checkout@v4
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
       - name: Build & Push Images (Dev)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
-          # Conversion en minuscule obligatoire pour ghcr
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
-
-          # Utilisation du Dockerfile à la racine AVEC le token passé à Docker
-          docker build . --file Dockerfile \
-            --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+          docker build . --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
             -t $REPO/${{ inputs.package_name }}:dev-latest
-          
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
   release-staging:
@@ -132,7 +116,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v4
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
       - name: Build & Push (Staging)
@@ -140,13 +124,9 @@ jobs:
           SHA_TAG=${GITHUB_SHA::7}
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
-          
-          # Ajout du token ici aussi
-          docker build . --file Dockerfile \
-            --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+          docker build . --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG \
             -t $REPO/${{ inputs.package_name }}:staging-latest
-            
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
   release-prod:
@@ -159,13 +139,11 @@ jobs:
     outputs:
       TAG: ${{ steps.set_tag.outputs.TAG }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
       - name: Calculate Next Version
         id: set_tag
         shell: bash
@@ -175,35 +153,24 @@ jobs:
           LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
           COMMIT_MSG="$(git log -1 --pretty=%B)"
           IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
-          
           if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
           elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
           elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          else echo "Invalid commit format"; exit 1; fi
-          
+          else exit 1; fi
           echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
-
       - name: Build & Push (Prod)
         run: |
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
           TAG=${{ steps.set_tag.outputs.TAG }}
-          
-          # Et le token pour la prod
-          docker build . --file Dockerfile \
-            --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+          docker build . --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -t $REPO/${{ inputs.package_name }}:$TAG \
             -t $REPO/${{ inputs.package_name }}:latest
-            
           docker push $REPO/${{ inputs.package_name }} --all-tags
-
       - name: Create GitHub Release
         run: |
           TAG=${{ steps.set_tag.outputs.TAG }}
           zip -r release_assets.zip README.md Dockerfile package.json
-          
-          gh release create "v$TAG" release_assets.zip \
-            --title "Release v$TAG" \
-            --notes "Front Next.js Release. Docker Image: ${{ inputs.package_name }}:$TAG"
+          gh release create "v$TAG" release_assets.zip --title "Release v$TAG"
         env:
           GH_TOKEN: ${{ github.token }}
