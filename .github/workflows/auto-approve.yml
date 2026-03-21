@@ -1,0 +1,19 @@
+name: Auto Approve Renovate
+on: pull_request_target
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-latest
+    # On ajoute explicitement les permissions ici
+    permissions:
+      pull-requests: write
+      contents: write
+    if: github.actor == 'renovate[bot]'
+    steps:
+      - uses: hmarr/auto-approve-action@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          
+      # - uses: hmarr/auto-approve-action@v4
+      #   with:
+      #     github-token: ${{ secrets.MY_TECH_ACCOUNT_PAT }}

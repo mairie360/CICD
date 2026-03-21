@@ -1,6 +1,5 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "local>mairie360/renovate-config"
+    "github>mairie360/renovate-config"
   ]
 }
