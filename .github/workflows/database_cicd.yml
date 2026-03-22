@@ -6,13 +6,11 @@ on:
       package_name:
         required: true
         type: string
-        description: "Nom de l'image de base (ex: database)"
     secrets:
       GH_PAT:
         required: true
 
 jobs:
-  # --- ENVIRONNEMENT DEV (Automatique sur chaque commit main) ---
   release-dev:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -20,24 +18,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
       - name: Build & Push Images (Dev)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-
-          # Build & Push DATABASE
           docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
-
-          # Build & Push LIQUIBASE
           docker build -t $REPO/liquibase-migrations:dev-$SHA_TAG -t $REPO/liquibase-migrations:dev-latest ./liquibase
           docker push $REPO/liquibase-migrations --all-tags
 
-  # --- ENVIRONNEMENT STAGING (Tests de pré-production) ---
   release-staging:
     needs: release-dev
     runs-on: ubuntu-latest
@@ -45,23 +36,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
       - name: Build & Push Images (Staging)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-
-          # On utilise le tag 'staging' pour isoler les images de test
           docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
-
           docker build -t $REPO/liquibase-migrations:staging-$SHA_TAG -t $REPO/liquibase-migrations:staging-latest ./liquibase
           docker push $REPO/liquibase-migrations --all-tags
 
-  # --- ENVIRONNEMENT PROD (Release officielle et versioning) ---
   release-prod:
     needs: release-staging
     runs-on: ubuntu-latest

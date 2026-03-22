@@ -1,0 +1,5 @@
+{
+  "extends": [
+    "github>mairie360/renovate-config"
+  ]
+}
