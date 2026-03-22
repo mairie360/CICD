@@ -1,0 +1,58 @@
+name: 'Publish OpenAPI from TypeScript'
+description: 'Extrait le contrat d’un BFF TS et publie les types'
+
+inputs:
+  version:
+    required: true
+  package_name:
+    required: true
+  token:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: |
+        ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
+
+        # 1. Nettoyage et préparation du dossier de staging
+        rm -rf ./dist_pkg
+        mkdir -p ./dist_pkg
+
+        # 2. Auth & Install (pour pouvoir lancer openapi:extract)
+        echo "@${ORG}:registry=https://npm.pkg.github.com" > .npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> .npmrc
+        npm install --legacy-peer-deps
+
+        # 3. Extraction (Génère le fichier openapi.json à la racine)
+        npm run openapi:extract 
+
+        # 4. Génération du SDK complet DANS le dossier dist_pkg
+        # On génère directement à la racine de dist_pkg pour simplifier les imports
+        npx openapi-typescript-codegen --input openapi.json --output ./dist_pkg --client axios
+
+        # 5. Création du package.json DANS dist_pkg
+        # Note : Le codegen génère un index.ts (ou .js si compilé) à la racine de l'output
+        cat <<EOF > dist_pkg/package.json
+        {
+          "name": "@${ORG}/${SAFE_NAME}-openapi",
+          "version": "${{ inputs.version }}",
+          "main": "./index.ts",
+          "types": "./index.ts",
+          "dependencies": {
+            "axios": "^1.0.0"
+          },
+          "publishConfig": { 
+            "registry": "https://npm.pkg.github.com" 
+          }
+        }
+        EOF
+
+        # 6. Copie de l'auth NPM pour la publication
+        cp .npmrc dist_pkg/.npmrc
+
+        # 7. Publication (On entre dans dist_pkg, isolant le reste du repo)
+        cd dist_pkg
+        npm publish --access restricted

@@ -1,4 +1,4 @@
-name: BFF Generic CICD
+name: BFFs CICD
 
 on:
   workflow_call:
@@ -9,8 +9,8 @@ on:
         description: "Nom de l'image Docker et du package"
       node_version:
         required: false
-        type: number
-        default: 20
+        type: string
+        default: "20"
         description: "Version de Node.js"
 
 jobs:
@@ -19,12 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
           cache: 'npm'
+          # [AJOUT] Configure npm pour utiliser le registre GitHub automatiquement
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@mairie360'
+
+      # [AJOUT] On passe le token pour l'installation des packages privés
       - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
@@ -40,11 +49,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
+      
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
       - run: npm run lint
 
   build:
@@ -56,11 +67,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
+
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
       - run: npm run build
 
   test:
@@ -72,24 +85,28 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
+
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
       - run: npm test
-        
+
+  # --- PARTIE CD (DOCKER & RELEASES) ---
   release-dev:
+    name: Release Dev
     if: github.ref == 'refs/heads/main'
     needs: test
-    runs-on: ubuntu-latest
     environment: Dev
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
@@ -98,13 +115,34 @@ jobs:
           SHA_TAG=${GITHUB_SHA::7}
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
-          docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
+
+          # On crée un fichier .npmrc temporaire pour le build
+          echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
+
+          # On passe le fichier comme secret au build docker
+          docker build \
+            --secret id=npmrc,src=.npmrc_tmp \
+            -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
+            -t $REPO/${{ inputs.package_name }}:dev-latest .
+
           docker push $REPO/${{ inputs.package_name }} --all-tags
+          
+          # Nettoyage
+          rm .npmrc_tmp
+
+      - name: Publish OpenAPI (Dev)
+        uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-dev.${{ github.sha }}
 
   release-staging:
+    name: Release Staging
     needs: release-dev
-    runs-on: ubuntu-latest
     environment: Staging
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -119,13 +157,34 @@ jobs:
           SHA_TAG=${GITHUB_SHA::7}
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
-          docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
+
+          # On crée un fichier .npmrc temporaire pour le build
+          echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
+
+          # On passe le fichier comme secret au build docker
+          docker build \
+            --secret id=npmrc,src=.npmrc_tmp \
+            -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG \
+            -t $REPO/${{ inputs.package_name }}:staging-latest .
+
           docker push $REPO/${{ inputs.package_name }} --all-tags
+          
+          # Nettoyage
+          rm .npmrc_tmp
+
+      - name: Publish OpenAPI (Staging)
+        uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-staging.${{ github.sha }}
 
   release-prod:
+    name: Release Prod
     needs: release-staging
-    runs-on: ubuntu-latest
     environment: Prod
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
@@ -144,33 +203,47 @@ jobs:
         shell: bash
         run: |
           LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
+          # On nettoie le 'v' initial si présent pour le calcul
+          VERSION=${LAST_TAG#v}
           COMMIT_MSG="$(git log -1 --pretty=%B)"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
           if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
           elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
           elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
           else 
-            echo "Format de message de commit invalide"; 
-            exit 1; 
+            echo "Format de message de commit invalide"
+            exit 1
           fi
-          echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+          NEW_TAG="$MAJOR.$MINOR.$PATCH"
+          echo "TAG=$NEW_TAG" >> $GITHUB_OUTPUT
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & Push Images (Prod)
+        env:
+          TAG: ${{ steps.set_tag.outputs.TAG }}
         run: |
           OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="ghcr.io/$OWNER_LOWER"
-          TAG=${{ steps.set_tag.outputs.TAG }}
-          docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
-          docker push $REPO/${{ inputs.package_name }} --all-tags
 
-      - name: Create GitHub Release
-        run: |
-          TAG=${{ steps.set_tag.outputs.TAG }}
-          zip -r release_assets_v${TAG}.zip README.md Dockerfile package.json
-          gh release create "v${TAG}" release_assets_v${TAG}.zip \
-            --title "Release v${TAG}" \
-            --notes "Automated release BFF: $TAG"
+          echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
+
+          # Maintenant $TAG sera bien rempli
+          docker build \
+            --secret id=npmrc,src=.npmrc_tmp \
+            -t $REPO/${{ inputs.package_name }}:$TAG \
+            -t $REPO/${{ inputs.package_name }}:latest .
+
+          docker push $REPO/${{ inputs.package_name }} --all-tags
+          rm .npmrc_tmp
+          
+      - name: Publish OpenAPI (Prod)
         env:
-          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.set_tag.outputs.TAG }}
+        uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: $TAG

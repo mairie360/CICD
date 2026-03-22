@@ -1,0 +1,56 @@
+name: 'Publish OpenAPI from Rust'
+description: 'Extrait le contrat d’une API Rust et publie les types TS'
+
+inputs:
+  version:
+    required: true
+  package_name:
+    required: true
+  token:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: |
+        ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
+        
+        # 1. Nettoyer tout ancien build pour éviter les résidus
+        rm -rf ./dist_package
+        mkdir -p ./dist_package
+
+        # 2. Générer le YAML depuis Rust
+        # On le génère à la racine temporairement
+        cargo run --example generate_openapi --quiet > openapi.yaml
+        
+        # 3. Générer le CLIENT COMPLET dans le dossier de destination
+        # 'openapi-typescript-codegen' va remplir ./dist_package
+        npx openapi-typescript-codegen --input openapi.yaml --output ./dist_package --client axios
+        
+        # 4. Créer le package.json directement DANS dist_package
+        # Note: 'openapi-typescript-codegen' génère un index.ts à la racine de l'output
+        cat <<EOF > dist_package/package.json
+        {
+          "name": "@${ORG}/${SAFE_NAME}-openapi",
+          "version": "${{ inputs.version }}",
+          "main": "./index.ts",
+          "types": "./index.ts",
+          "dependencies": { 
+            "axios": "^1.0.0" 
+          },
+          "publishConfig": { 
+            "registry": "https://npm.pkg.github.com" 
+          }
+        }
+        EOF
+        
+        # 5. Configuration NPM locale au dossier de publication
+        echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_package/.npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_package/.npmrc
+        
+        # 6. PUBLICATION : L'étape cruciale
+        # En entrant dans le dossier, npm ignore totalement le contenu du dossier parent (Rust)
+        cd dist_package
+        npm publish --access restricted

@@ -160,8 +160,8 @@ jobs:
   release-dev:
     if: github.ref == 'refs/heads/main'
     needs: integration_tests
-    runs-on: ubuntu-latest
     environment: Dev
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -180,6 +180,13 @@ jobs:
           # Build & Push Images (Dev)
           docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
+          
+      - name: Publish OpenAPI
+        uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-dev.${{ github.sha }}
     env:
       GH_TOKEN: ${{ github.token }}
 
@@ -205,6 +212,13 @@ jobs:
           # On utilise le tag 'staging' pour isoler les images de test
           docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
+          
+      - name: Publish OpenAPI
+        uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-staging.${{ github.sha }}
     env:
       GH_TOKEN: ${{ github.token }}
 
@@ -275,6 +289,17 @@ jobs:
             - **Infrastructure**: \`Dockerfile\`, \`docker-compose.yml\`, and \`nginx.conf\`.
 
             *Note: The executable is delivered as a Docker image via GitHub Packages.*"
+            
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.set_tag.outputs.TAG }}
+            
+      - name: Publish OpenAPI
+        uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ steps.set_tag.outputs.TAG }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.set_tag.outputs.TAG }}
