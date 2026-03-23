@@ -132,7 +132,7 @@ jobs:
           rm .npmrc_tmp
 
       - name: Publish OpenAPI (Dev)
-        uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
+        uses: mairie360/CICD/actions/publish-openapi-typescript@${{ github.action_ref }}
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -174,7 +174,7 @@ jobs:
           rm .npmrc_tmp
 
       - name: Publish OpenAPI (Staging)
-        uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
+        uses: mairie360/CICD/actions/publish-openapi-typescript@${{ github.action_ref }}
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -242,7 +242,7 @@ jobs:
       - name: Publish OpenAPI (Prod)
         env:
           TAG: ${{ steps.set_tag.outputs.TAG }}
-        uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
+        uses: mairie360/CICD/actions/publish-openapi-typescript@${{ github.action_ref }}
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}

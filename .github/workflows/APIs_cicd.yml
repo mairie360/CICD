@@ -181,7 +181,7 @@ jobs:
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
       - name: Publish OpenAPI
-        uses: mairie360/CICD/actions/publish-openapi-rust@v1
+        uses: mairie360/CICD/actions/publish-openapi-rust@${{ github.action_ref }}
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -212,7 +212,7 @@ jobs:
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
       - name: Publish OpenAPI
-        uses: mairie360/CICD/actions/publish-openapi-rust@v1
+        uses: mairie360/CICD/actions/publish-openapi-rust@${{ github.action_ref }}
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -280,7 +280,7 @@ jobs:
           TAG: ${{ steps.set_tag.outputs.TAG }}
 
       - name: Publish OpenAPI
-        uses: mairie360/CICD/actions/publish-openapi-rust@v1
+        uses: mairie360/CICD/actions/publish-openapi-rust@${{ github.action_ref }}
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
