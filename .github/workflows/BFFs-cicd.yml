@@ -19,21 +19,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
           cache: 'npm'
-          # [AJOUT] Configure npm pour utiliser le registre GitHub automatiquement
           registry-url: 'https://npm.pkg.github.com'
           scope: '@mairie360'
-
-      # [AJOUT] On passe le token pour l'installation des packages privés
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
@@ -46,20 +41,15 @@ jobs:
     needs: dependencies
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node_version }}
-      
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-
       - run: npm run lint
 
   build:
-    name: Build Check (TS)
+    name: Build & OpenAPI Spec
     runs-on: ubuntu-latest
     needs: lint
     steps:
@@ -67,34 +57,38 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
-
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-
+      
       - run: npm run build
+      
+      - name: Generate OpenAPI Spec
+        run: npm run openapi:generate > openapi-spec.json
+
+      - name: Upload Build & Spec
+        uses: actions/upload-artifact@v4
+        with:
+          name: bff-assets
+          path: |
+            dist/
+            openapi-spec.json
 
   test:
-    name: Test Check (TS)
+    name: Test Check
     runs-on: ubuntu-latest
     needs: build
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node_version }}
-
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-
       - run: npm test
 
-  # --- PARTIE CD (DOCKER & RELEASES) ---
   release-dev:
     name: Release Dev
     if: github.ref == 'refs/heads/main'
@@ -106,29 +100,28 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - name: Download Spec
+        uses: actions/download-artifact@v4
+        with:
+          name: bff-assets
+          path: .
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
-      - name: Build & Push Images (Dev)
+      - name: Build & Push Image (Source of Truth)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
-          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-          REPO="ghcr.io/$OWNER_LOWER"
-
-          # On crée un fichier .npmrc temporaire pour le build
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
 
-          # On passe le fichier comme secret au build docker
           docker build \
             --secret id=npmrc,src=.npmrc_tmp \
             -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
             -t $REPO/${{ inputs.package_name }}:dev-latest .
-
-          docker push $REPO/${{ inputs.package_name }} --all-tags
           
-          # Nettoyage
+          docker push $REPO/${{ inputs.package_name }} --all-tags
           rm .npmrc_tmp
 
       - name: Publish OpenAPI (Dev)
@@ -137,6 +130,7 @@ jobs:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-dev.${{ github.sha }}
+          spec_file: ./openapi-spec.json
 
   release-staging:
     name: Release Staging
@@ -147,31 +141,23 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Download Spec
+        uses: actions/download-artifact@v4
+        with:
+          name: bff-assets
+          path: .
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
-      - name: Build & Push Images (Staging)
+      - name: Promote Image to Staging
         run: |
           SHA_TAG=${GITHUB_SHA::7}
-          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-          REPO="ghcr.io/$OWNER_LOWER"
-
-          # On crée un fichier .npmrc temporaire pour le build
-          echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
-          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
-
-          # On passe le fichier comme secret au build docker
-          docker build \
-            --secret id=npmrc,src=.npmrc_tmp \
-            -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG \
-            -t $REPO/${{ inputs.package_name }}:staging-latest .
-
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          docker pull $REPO/${{ inputs.package_name }}:$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
-          
-          # Nettoyage
-          rm .npmrc_tmp
 
       - name: Publish OpenAPI (Staging)
         uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
@@ -179,6 +165,7 @@ jobs:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-staging.${{ github.sha }}
+          spec_file: ./openapi-spec.json
 
   release-prod:
     name: Release Prod
@@ -189,34 +176,58 @@ jobs:
       contents: write
       packages: write
     outputs:
-      TAG: ${{ steps.set_tag.outputs.new_release_version }}
+      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-  
+
+      - name: Download Spec
+        uses: actions/download-artifact@v4
+        with:
+          name: bff-assets
+          path: .
+
       - name: Calculate & Create Tag
         id: set_tag
         uses: ./.github/actions/semantic-tag
-  
+
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-  
-      - name: Build & Push Images
+
+      - name: Promote Image to Prod
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
+          SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           TAG=${{ steps.set_tag.outputs.new_release_version }}
-          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > .npmrc
-          docker build --secret id=npmrc,src=.npmrc -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
+          docker pull $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
+          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
-          
+
       - name: Publish OpenAPI (Prod)
-        env:
-          TAG: ${{ steps.set_tag.outputs.TAG }}
+        if: steps.set_tag.outputs.new_release_published == 'true'
         uses: mairie360/CICD/actions/publish-openapi-typescript@mair-56-setup-open-api-gen
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ steps.set_tag.outputs.new_release_version }}
+          spec_file: ./openapi-spec.json
+
+  cleanup:
+    name: Cleanup
+    needs: release-prod
+    if: needs.release-prod.outputs.PUBLISHED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete Obsolete Images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ inputs.package_name }}
+          package-type: 'container'
+          min-versions-to-keep: 3
+          delete-only-pre-release-versions: 'true'

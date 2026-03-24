@@ -24,16 +24,13 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
-
       - name: Download Dependencies
         run: cargo fetch
-
       - name: Cache Cargo Dependencies
         uses: actions/cache@v4
         with:
@@ -46,66 +43,45 @@ jobs:
     name: Check lint
     runs-on: ubuntu-latest
     needs: dependencies
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
           components: rustfmt, clippy
-
       - name: Run lint_check
         uses: actions-rs/cargo@v1
         with:
           command: lint_check
 
   build:
-    name: Build Project
+    name: Build Project & Spec
     runs-on: ubuntu-latest
     needs: lint
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
-
       - name: Restore Cargo Cache
         uses: actions/cache@v4
         with:
           path: ~/.cargo
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
       - name: Build Project
         uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release
-
-      - name: Cache Cargo Build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-target-
-            
       - name: Generate OpenAPI Spec
-        run: |
-          # Remplace cette commande par celle qui génère ton fichier (ex: un binaire qui exporte le json)
-          cargo run --release --bin export-openapi > openapi-spec.json
-
-      - name: Upload Build & OpenAPI Artifacts
+        run: cargo run --release --bin export-openapi > openapi-spec.json
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: api-assets
@@ -117,25 +93,14 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     needs: build
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
-
-      - name: Restore Cargo Cache
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-target-
-
       - name: Run Rust Tests
         uses: actions-rs/cargo@v1
         with:
@@ -145,27 +110,20 @@ jobs:
     name: Postman Tests
     runs-on: ubuntu-latest
     needs: unit_test
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Build and start services
         run: docker compose up -d --build
-
       - name: Install Postman CLI
-        run: |
-          curl -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
-
+        run: curl -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
       - name: Login to Postman CLI
         run: postman login --with-api-key ${{ secrets.POSTMAN_API_KEY }}
-
       - name: Run Postman tests
         run: |
           postman collection run "${{ inputs.postman_collection }}" \
             -e "${{ inputs.postman_environment }}" \
             --bail
-
       - name: Tear down
         if: always()
         run: docker compose down
@@ -181,32 +139,26 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
-      - name: Download OpenAPI Spec
+      - name: Download Spec
         uses: actions/download-artifact@v4
         with:
           name: api-assets
           path: .
-
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      - name: Build & Push Images (Dev)
+      - name: Build & Push (Dev)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-
-          docker build -t $REPO/${{ inputs.package_name }}:$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
+          docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
-
       - name: Publish OpenAPI
         uses: mairie360/CICD/actions/publish-openapi-rust@v1
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-dev.${{ github.sha }}
-    env:
-      GH_TOKEN: ${{ github.token }}
+          spec_file: ./openapi-spec.json
 
   release-staging:
     needs: release-dev
@@ -216,28 +168,28 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      - name: Download Spec
+        uses: actions/download-artifact@v4
+        with:
+          name: api-assets
+          path: .
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      - name: Promote Image to Staging
+      - name: Promote to Staging
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
+          docker pull $REPO/${{ inputs.package_name }}:$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
-
       - name: Publish OpenAPI
         uses: mairie360/CICD/actions/publish-openapi-rust@v1
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-staging.${{ github.sha }}
-    env:
-      GH_TOKEN: ${{ github.token }}
+          spec_file: ./openapi-spec.json
 
   release-prod:
     needs: release-staging
@@ -248,31 +200,33 @@ jobs:
       packages: write
     outputs:
       TAG: ${{ steps.set_tag.outputs.new_release_version }}
+      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-  
+      - name: Download Spec
+        uses: actions/download-artifact@v4
+        with:
+          name: api-assets
+          path: .
       - name: Calculate & Create Tag
         id: set_tag
         uses: ./.github/actions/semantic-tag
-  
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-  
-      - name: Promote Image to Prod
+      - name: Promote to Prod
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           TAG=${{ steps.set_tag.outputs.new_release_version }}
-          docker pull $REPO/${{ inputs.package_name }}:$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
-          docker tag $REPO/${{ inputs.package_name }}:$SHA_TAG $REPO/${{ inputs.package_name }}:latest
+          docker pull $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
+          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
-  
       - name: Publish OpenAPI
         if: steps.set_tag.outputs.new_release_published == 'true'
         uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
@@ -280,3 +234,20 @@ jobs:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ steps.set_tag.outputs.new_release_version }}
+          spec_file: ./openapi-spec.json
+
+  cleanup:
+    name: Cleanup Old Images
+    needs: release-prod
+    if: needs.release-prod.outputs.PUBLISHED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete old Dev/Staging versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ inputs.package_name }}
+          package-type: 'container'
+          min-versions-to-keep: 3
+          delete-only-pre-release-versions: 'true'
