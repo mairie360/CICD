@@ -85,7 +85,7 @@ jobs:
       - name: Generate OpenAPI Spec
         run: cargo run --release --bin export-openapi > openapi-spec.json
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: api-assets
           path: |
@@ -143,7 +143,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Download Spec
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: api-assets
           path: .
@@ -180,7 +180,7 @@ jobs:
       packages: write
     steps:
       - name: Download Spec
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: api-assets
           path: .
@@ -228,7 +228,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download Spec
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: api-assets
           path: .

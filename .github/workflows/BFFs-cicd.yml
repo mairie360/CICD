@@ -72,7 +72,7 @@ jobs:
         run: npm run openapi:generate > openapi-spec.json
 
       - name: Upload Build & Spec
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bff-assets
           path: |
@@ -104,7 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Download Spec
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: bff-assets
           path: .
@@ -145,7 +145,7 @@ jobs:
       packages: write
     steps:
       - name: Download Spec
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: bff-assets
           path: .
@@ -186,7 +186,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download Spec
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: bff-assets
           path: .
