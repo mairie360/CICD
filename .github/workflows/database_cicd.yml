@@ -15,76 +15,117 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: Dev
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
       - name: Build & Push Images (Dev)
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+
+          # Build unique de la DB et des Migrations
           docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
-          docker push $REPO/${{ inputs.package_name }} --all-tags
           docker build -t $REPO/liquibase-migrations:dev-$SHA_TAG -t $REPO/liquibase-migrations:dev-latest ./liquibase
+          
+          docker push $REPO/${{ inputs.package_name }} --all-tags
           docker push $REPO/liquibase-migrations --all-tags
 
   release-staging:
     needs: release-dev
     runs-on: ubuntu-latest
     environment: Staging
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-      - name: Build & Push Images (Staging)
+
+      - name: Promote Images to Staging
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
+
+          # Promotion de l'image DB
+          docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
-          docker build -t $REPO/liquibase-migrations:staging-$SHA_TAG -t $REPO/liquibase-migrations:staging-latest ./liquibase
+
+          # Promotion de l'image Liquibase
+          docker pull $REPO/liquibase-migrations:dev-$SHA_TAG
+          docker tag $REPO/liquibase-migrations:dev-$SHA_TAG $REPO/liquibase-migrations:staging-$SHA_TAG
+          docker tag $REPO/liquibase-migrations:dev-$SHA_TAG $REPO/liquibase-migrations:staging-latest
           docker push $REPO/liquibase-migrations --all-tags
 
   release-prod:
     needs: release-staging
     runs-on: ubuntu-latest
     environment: Prod
+    permissions:
+      contents: write
+      packages: write
     outputs:
-      TAG: ${{ steps.set_tag.outputs.TAG }}
+      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-      - name: Calculate Next Version
+  
+      - name: Calculate & Create Tag
         id: set_tag
-        shell: bash
+        uses: ./.github/actions/semantic-tag
+  
+      - name: Log in to GHCR
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+  
+      - name: Promote Images to Prod
+        if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
-          LAST_TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "0.0.0")
-          COMMIT_MSG="$(git log -1 --pretty=%B)"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG//v/}"
-          if [[ "$COMMIT_MSG" =~ ^fix: ]]; then PATCH=$((PATCH + 1))
-          elif [[ "$COMMIT_MSG" =~ ^feat: ]]; then MINOR=$((MINOR + 1)); PATCH=0
-          elif [[ "$COMMIT_MSG" =~ ^major: ]]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          else exit 1; fi
-          echo "TAG=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - name: Build & Push Images (Prod)
-        run: |
+          SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          TAG=${{ steps.set_tag.outputs.TAG }}
-          docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
+          TAG=${{ steps.set_tag.outputs.new_release_version }}
+
+          # Pull et Tag final pour la DB
+          docker pull $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
+          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
-          docker build -t $REPO/liquibase-migrations:$TAG -t $REPO/liquibase-migrations:latest ./liquibase
+
+          # Pull et Tag final pour Liquibase
+          docker pull $REPO/liquibase-migrations:staging-$SHA_TAG
+          docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:$TAG
+          docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:latest
           docker push $REPO/liquibase-migrations --all-tags
-      - name: Create GitHub Release
-        run: |
-          zip -r migrations.zip ./liquibase
-          gh release create "v${TAG}" migrations.zip --title "Release v${TAG}"
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+  cleanup:
+    name: Cleanup
+    needs: release-prod
+    if: needs.release-prod.outputs.PUBLISHED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete Old DB Images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ inputs.package_name }}
+          package-type: 'container'
+          min-versions-to-keep: 3
+          delete-only-pre-release-versions: 'true'
+
+      - name: Delete Old Migration Images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: 'liquibase-migrations'
+          package-type: 'container'
+          min-versions-to-keep: 3
+          delete-only-pre-release-versions: 'true'

@@ -93,6 +93,8 @@ jobs:
     environment: Release
     needs: unit_test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Generate Token
         id: generate_token
@@ -100,57 +102,24 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PK }}
-
-      - name: Checkout repository with full history
-        uses: actions/checkout@v4
+  
+      - uses: actions/checkout@v4
         with:
           token: ${{ steps.generate_token.outputs.token }}
           fetch-depth: 0
-          clean: false
-
-      - name: Setup Rust
+  
+      - name: Calculate & Create Tag
+        id: set_tag
+        uses: ./.github/actions/semantic-tag
+        env:
+          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+  
+      - name: Setup Rust & Cargo Release
+        if: steps.set_tag.outputs.new_release_published == 'true'
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install convco & cargo-release (cached if available)
-        run: |
-          if ! command -v convco &> /dev/null; then cargo install convco; fi
-          if ! command -v cargo-release &> /dev/null; then cargo install cargo-release; fi
-
-      - name: Configure Git identity for tagging
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Validate commit formatting
-        run: git log -1 --pretty=%B | convco check --from-stdin
-
-      - name: Detect bump type (major/minor/patch)
-        id: bump
-        run: |
-          if git log $(git describe --tags --abbrev=0)..HEAD --oneline | grep -q "^feat"; then
-            echo "BUMP_TYPE=minor" >> $GITHUB_OUTPUT
-          elif git log $(git describe --tags --abbrev=0)..HEAD --oneline | grep -qE "^[a-z]+(\([a-z]+\))?!:"; then
-            echo "BUMP_TYPE=major" >> $GITHUB_OUTPUT
-          else
-            echo "BUMP_TYPE=patch" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Run cargo-release
+  
+      - name: Publish to Cargo
+        if: steps.set_tag.outputs.new_release_published == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cargo release \
-            --execute \
-            --no-confirm \
-            ${{ steps.bump.outputs.BUMP_TYPE }}
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.get_tag.outputs.tag }}
-          name: Release ${{ steps.get_tag.outputs.tag }}
-          generate_release_notes: true
-          token: ${{ steps.generate_token.outputs.token }}
+        run: cargo publish # On utilise simple publish car le tag existe déjà

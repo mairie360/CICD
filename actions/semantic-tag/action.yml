@@ -1,0 +1,24 @@
+name: 'Semantic Tag & Release'
+description: 'Calcule la version, crée le tag et la release GitHub via Semantic Release'
+
+outputs:
+  new_release_published:
+    description: 'true si une nouvelle version est publiée'
+    value: ${{ steps.semantic.outputs.new_release_published }}
+  new_release_version:
+    description: 'La version calculée (ex: 1.2.0)'
+    value: ${{ steps.semantic.outputs.new_release_version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Semantic Release
+      id: semantic
+      uses: cycjimmy/semantic-release-action@v4
+      with:
+        extra_plugins: |
+          @semantic-release/commit-analyzer
+          @semantic-release/release-notes-generator
+          @semantic-release/github
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
