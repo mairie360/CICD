@@ -99,6 +99,19 @@ jobs:
           key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-target-
+            
+      - name: Generate OpenAPI Spec
+        run: |
+          # Remplace cette commande par celle qui génère ton fichier (ex: un binaire qui exporte le json)
+          cargo run --release --bin export-openapi > openapi-spec.json
+
+      - name: Upload Build & OpenAPI Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-assets
+          path: |
+            target/release/
+            openapi-spec.json
 
   unit_test:
     name: Unit tests
@@ -168,6 +181,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        
+      - name: Download OpenAPI Spec
+        uses: actions/download-artifact@v4
+        with:
+          name: api-assets
+          path: .
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
@@ -177,7 +196,7 @@ jobs:
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
 
-          docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
+          docker build -t $REPO/${{ inputs.package_name }}:$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
       - name: Publish OpenAPI
@@ -203,12 +222,12 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
-      - name: Build & Push Images (Staging)
+      - name: Promote Image to Staging
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-
-          docker build -t $REPO/${{ inputs.package_name }}:staging-$SHA_TAG -t $REPO/${{ inputs.package_name }}:staging-latest .
+          docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
       - name: Publish OpenAPI
@@ -243,12 +262,15 @@ jobs:
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
   
-      - name: Build & Push Images (Prod)
+      - name: Promote Image to Prod
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
+          SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           TAG=${{ steps.set_tag.outputs.new_release_version }}
-          docker build -t $REPO/${{ inputs.package_name }}:$TAG -t $REPO/${{ inputs.package_name }}:latest .
+          docker pull $REPO/${{ inputs.package_name }}:$SHA_TAG
+          docker tag $REPO/${{ inputs.package_name }}:$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
+          docker tag $REPO/${{ inputs.package_name }}:$SHA_TAG $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
   
       - name: Publish OpenAPI
