@@ -13,6 +13,9 @@ on:
         required: false
         type: string
         description: "Image base name"
+      cicd_version:
+        required: true
+        type: string
     secrets:
       POSTMAN_API_KEY:
         required: true
@@ -144,6 +147,14 @@ jobs:
         with:
           name: api-assets
           path: .
+        
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v4
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
       - name: Build & Push (Dev)
@@ -153,7 +164,7 @@ jobs:
           docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
           docker push $REPO/${{ inputs.package_name }} --all-tags
       - name: Publish OpenAPI
-        uses: mairie360/CICD/actions/publish-openapi-rust@v1
+        uses: ./cicd-repo/actions/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -173,6 +184,16 @@ jobs:
         with:
           name: api-assets
           path: .
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v4
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
       - name: Promote to Staging
@@ -184,7 +205,7 @@ jobs:
           docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
       - name: Publish OpenAPI
-        uses: mairie360/CICD/actions/publish-openapi-rust@v1
+        uses: ./cicd-repo/actions/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -211,9 +232,17 @@ jobs:
         with:
           name: api-assets
           path: .
+          
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v4
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
       - name: Calculate & Create Tag
         id: set_tag
         uses: ./.github/actions/semantic-tag
+
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
@@ -228,8 +257,7 @@ jobs:
           docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
       - name: Publish OpenAPI
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        uses: mairie360/CICD/actions/publish-openapi-rust@mair-56-setup-open-api-gen
+        uses: ./cicd-repo/actions/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
