@@ -63,7 +63,7 @@ jobs:
       - name: Deploy to GitHub Pages
         if: steps.check_src.outputs.changed == 'true'
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   package:
     name: Package Publish
