@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -48,7 +48,7 @@ jobs:
     needs: dependencies
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -66,7 +66,7 @@ jobs:
     needs: lint
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -98,7 +98,7 @@ jobs:
     needs: build
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -115,7 +115,7 @@ jobs:
     needs: unit_test
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Build and start services
         run: docker compose up -d --build
       - name: Install Postman CLI
@@ -141,7 +141,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Download Spec
         uses: actions/download-artifact@v8
         with:
@@ -149,7 +149,7 @@ jobs:
           path: .
         
       - name: Checkout CICD Tools
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -185,10 +185,10 @@ jobs:
           name: api-assets
           path: .
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Checkout CICD Tools
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -224,7 +224,7 @@ jobs:
       PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Download Spec
@@ -234,7 +234,7 @@ jobs:
           path: .
           
       - name: Checkout CICD Tools
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}

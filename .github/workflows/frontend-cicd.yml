@@ -20,7 +20,7 @@ jobs:
       packages: read
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: dependencies
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
@@ -69,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Restore node_modules
         uses: actions/cache@v4
         with:
@@ -86,7 +86,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
       
@@ -130,7 +130,7 @@ jobs:
     outputs:
       PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
   
