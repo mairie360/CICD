@@ -6,12 +6,27 @@ on:
       package_name:
         required: true
         type: string
+      cicd_version:
+        required: true
+        type: string
     secrets:
       GH_PAT:
         required: true
 
 jobs:
+  tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      
+      - name: Run tests
+        run: ./test.sh
+    
+  
   release-dev:
+    needs: tests
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: Dev
