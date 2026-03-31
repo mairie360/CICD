@@ -110,7 +110,7 @@ jobs:
       
       - name: Calculate & Create Tag
         id: set_tag
-        uses: ./.github/actions/semantic-tag
+        uses: ./cicd-repo/.github/actions/semantic-tag 
         with:
           cicd_path: cicd-repo
   
