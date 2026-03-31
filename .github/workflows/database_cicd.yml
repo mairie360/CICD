@@ -111,6 +111,8 @@ jobs:
       - name: Calculate & Create Tag
         id: set_tag
         uses: ./cicd-repo/actions/semantic-tag 
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           cicd_path: cicd-repo
   
