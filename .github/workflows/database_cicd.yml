@@ -45,10 +45,17 @@ jobs:
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
 
-          # Build unique de la DB et des Migrations
-          docker build -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG -t $REPO/${{ inputs.package_name }}:dev-latest .
-          docker build -t $REPO/liquibase-migrations:dev-$SHA_TAG -t $REPO/liquibase-migrations:dev-latest ./liquibase
-          
+          docker build \
+            -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
+            -t $REPO/${{ inputs.package_name }}:dev-latest .
+
+          # 2. Build de l'image Liquibase
+          docker build \
+            -f liquibase/Dockerfile \
+            -t $REPO/liquibase-migrations:dev-$SHA_TAG \
+            -t $REPO/liquibase-migrations:dev-latest .
+
+          # Push des images
           docker push $REPO/${{ inputs.package_name }} --all-tags
           docker push $REPO/liquibase-migrations --all-tags
 
