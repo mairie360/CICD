@@ -2,6 +2,10 @@ name: Back lib CICD
 
 on:
   workflow_call:
+    inputs:
+      cicd_version:
+        required: true
+        type: string
     secrets:
       CARGO_REGISTRY_TOKEN:
         required: true
@@ -107,6 +111,13 @@ jobs:
         with:
           token: ${{ steps.generate_token.outputs.token }}
           fetch-depth: 0
+          
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v6
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
   
       - name: Calculate & Create Tag
         id: set_tag
