@@ -133,4 +133,8 @@ jobs:
         if: steps.set_tag.outputs.new_release_published == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish # On utilise simple publish car le tag existe déjà
+          NEW_VERSION: ${{ steps.set_tag.outputs.new_release_version }}
+        run: |
+          # Met à jour la version dans Cargo.toml avec celle du nouveau tag
+          sed -i "s/^version = .*/version = \"$NEW_VERSION\"/" Cargo.toml
+          cargo publish
