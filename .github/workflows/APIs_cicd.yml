@@ -82,15 +82,15 @@ jobs:
         with:
           command: build
           args: --release
-      - name: Generate OpenAPI Spec
-        run: cargo run --release --bin export-openapi > openapi-spec.json
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: api-assets
-          path: |
-            target/release/
-            openapi-spec.json
+      # - name: Generate OpenAPI Spec
+      #   run: cargo open_api > openapi.json
+      # - name: Upload Artifacts
+      #   uses: actions/upload-artifact@v7
+      #   with:
+      #     name: api-assets
+      #     path: |
+      #       target/release/
+      #       openapi-spec.json
 
   unit_test:
     name: Unit tests
@@ -147,7 +147,7 @@ jobs:
         with:
           name: api-assets
           path: .
-        
+
       - name: Checkout CICD Tools
         uses: actions/checkout@v6
         with:
@@ -186,7 +186,7 @@ jobs:
           path: .
       - name: Checkout repository
         uses: actions/checkout@v6
-        
+
       - name: Checkout CICD Tools
         uses: actions/checkout@v6
         with:
@@ -232,7 +232,7 @@ jobs:
         with:
           name: api-assets
           path: .
-          
+
       - name: Checkout CICD Tools
         uses: actions/checkout@v6
         with:
@@ -276,6 +276,6 @@ jobs:
         uses: actions/delete-package-versions@v5
         with:
           package-name: ${{ inputs.package_name }}
-          package-type: 'container'
+          package-type: "container"
           min-versions-to-keep: 3
-          delete-only-pre-release-versions: 'true'
+          delete-only-pre-release-versions: "true"

@@ -21,15 +21,19 @@ runs:
         rm -rf ./dist_package
         mkdir -p ./dist_package
 
-        # 2. Générer le YAML depuis Rust
+        # 2. Générer le JSON depuis Rust
         # On le génère à la racine temporairement
-        cargo run --example generate_openapi --quiet > openapi.yaml
+        cargo open_api > openapi.json
         
         # 3. Générer le CLIENT COMPLET dans le dossier de destination
         # 'openapi-typescript-codegen' va remplir ./dist_package
-        npx openapi-typescript-codegen --input openapi.yaml --output ./dist_package --client axios
+        npm install orval -D
         
-        # 4. Créer le package.json directement DANS dist_package
+        # 4. Générer le CLIENT COMPLET dans le dossier de destination
+        # 'openapi-typescript-codegen' va remplir ./dist_package
+        npx orval openapi.json --output ./dist_package
+        
+        # 5. Créer le package.json directement DANS dist_package
         # Note: 'openapi-typescript-codegen' génère un index.ts à la racine de l'output
         cat <<EOF > dist_package/package.json
         {
