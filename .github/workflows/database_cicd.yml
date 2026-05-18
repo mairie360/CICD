@@ -20,12 +20,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      
+
       - name: Run tests
         run: ./test.sh
-    
-  
+
   release-dev:
+    name: Release to Dev
     needs: tests
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -37,27 +37,45 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build & Push Images (Dev)
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate Tags
+        id: meta
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          echo "db_repo=$REPO/${{ inputs.package_name }}" >> $GITHUB_OUTPUT
+          echo "liq_repo=$REPO/liquibase-migrations" >> $GITHUB_OUTPUT
+          echo "sha_tag=$SHA_TAG" >> $GITHUB_OUTPUT
 
-          docker build \
-            -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
-            -t $REPO/${{ inputs.package_name }}:dev-latest .
+      # Build & Push propre de la DB (Casse le cache si le contexte change)
+      - name: Build & Push DB Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.db_repo }}:dev-${{ steps.meta.outputs.sha_tag }}
+            ${{ steps.meta.outputs.db_repo }}:dev-latest
 
-          # 2. Build de l'image Liquibase
-          docker build \
-            -f liquibase/Dockerfile \
-            -t $REPO/liquibase-migrations:dev-$SHA_TAG \
-            -t $REPO/liquibase-migrations:dev-latest .
-
-          # Push des images
-          docker push $REPO/${{ inputs.package_name }} --all-tags
-          docker push $REPO/liquibase-migrations --all-tags
+      # Build & Push de Liquibase (Détectera à coup sûr ton nouveau fichier SQL)
+      - name: Build & Push Liquibase Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./liquibase/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.liq_repo }}:dev-${{ steps.meta.outputs.sha_tag }}
+            ${{ steps.meta.outputs.liq_repo }}:dev-latest
 
   release-staging:
     needs: release-dev
@@ -100,26 +118,26 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          
+
       - name: Checkout CICD Tools
         uses: actions/checkout@v6
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
-      
+
       - name: Calculate & Create Tag
         id: set_tag
-        uses: ./cicd-repo/actions/semantic-tag 
+        uses: ./cicd-repo/actions/semantic-tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           cicd_path: cicd-repo
-  
+
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-  
+
       - name: Promote Images to Prod
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
@@ -151,14 +169,14 @@ jobs:
         uses: actions/delete-package-versions@v5
         with:
           package-name: ${{ inputs.package_name }}
-          package-type: 'container'
+          package-type: "container"
           min-versions-to-keep: 3
-          delete-only-pre-release-versions: 'true'
+          delete-only-pre-release-versions: "true"
 
       - name: Delete Old Migration Images
         uses: actions/delete-package-versions@v5
         with:
-          package-name: 'liquibase-migrations'
-          package-type: 'container'
+          package-name: "liquibase-migrations"
+          package-type: "container"
           min-versions-to-keep: 3
-          delete-only-pre-release-versions: 'true'
+          delete-only-pre-release-versions: "true"
