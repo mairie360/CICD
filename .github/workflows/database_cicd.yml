@@ -58,7 +58,7 @@ jobs:
 
       # Build & Push propre de la DB (Casse le cache si le contexte change)
       - name: Build & Push DB Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -68,7 +68,7 @@ jobs:
 
       # Build & Push de Liquibase (Détectera à coup sûr ton nouveau fichier SQL)
       - name: Build & Push Liquibase Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./liquibase/Dockerfile
