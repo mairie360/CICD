@@ -88,18 +88,40 @@ jobs:
         run: npm ci
       - name: Build package
         run: npm run build
-      - name: Bump patch version from latest GitHub tag
+      - name: Bump version from latest GitHub tag
         id: bump
+        shell: bash
         run: |
-          LATEST_VERSION=$(
-            git ls-remote --tags --refs origin 'v*' \
-              | sed -E 's#.*refs/tags/v?([0-9]+\.[0-9]+\.[0-9]+)$#\1#; t; d' \
-              | sort -V \
-              | tail -n 1
+          set -euo pipefail
+
+          LATEST_TAG=$(
+            git ls-remote --tags --refs origin \
+              | awk -F/ '
+                  {
+                    tag = $NF
+                    version = tag
+                    sub(/^v/, "", version)
+                    if (version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) {
+                      print version "\t" tag
+                    }
+                  }
+                ' \
+              | sort -V -k1,1 \
+              | tail -n 1 \
+              | cut -f2
           )
 
-          if [ -z "$LATEST_VERSION" ]; then
-            LATEST_VERSION="0.0.0"
+          TAG_PREFIX="v"
+          if [ -n "$LATEST_TAG" ]; then
+            LATEST_VERSION="${LATEST_TAG#v}"
+            if [[ "$LATEST_TAG" != v* ]]; then
+              TAG_PREFIX=""
+            fi
+          else
+            LATEST_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || true)
+            if [ -z "$LATEST_VERSION" ]; then
+              LATEST_VERSION="0.0.0"
+            fi
           fi
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
@@ -116,16 +138,41 @@ jobs:
           fi
 
           VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          TAG="${TAG_PREFIX}${VERSION}"
 
           npm version "$VERSION" --no-git-tag-version
+          echo "Latest tag: ${LATEST_TAG:-none}"
+          echo "Latest version: $LATEST_VERSION"
+          echo "Next version: $VERSION"
+          echo "Next tag: $TAG"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-      - name: Create git tag
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+      - name: Commit version and create git tag
+        shell: bash
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          TAG="v${{ steps.bump.outputs.version }}"
+          VERSION="${{ steps.bump.outputs.version }}"
+          TAG="${{ steps.bump.outputs.tag }}"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists on origin"
+            exit 1
+          fi
+
+          git add package.json
+          if [ -f package-lock.json ]; then
+            git add package-lock.json
+          fi
+          if [ -f npm-shrinkwrap.json ]; then
+            git add npm-shrinkwrap.json
+          fi
+
+          git commit -m "chore(release): $VERSION [skip ci]"
           git tag "$TAG"
-          git push origin "$TAG"
+          git push --atomic origin "HEAD:${GITHUB_REF_NAME}" "$TAG"
       - name: Publish to GitHub Packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
