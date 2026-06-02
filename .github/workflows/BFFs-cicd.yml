@@ -109,6 +109,13 @@ jobs:
           name: bff-assets
           path: .
 
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v6
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
@@ -128,7 +135,7 @@ jobs:
           rm .npmrc_tmp
 
       - name: Publish OpenAPI (Dev)
-        uses: mairie360/CICD/actions/publish-openapi-typescript@${{ inputs.cicd_version }}
+        uses: ./cicd-repo/actions/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -150,6 +157,13 @@ jobs:
           name: bff-assets
           path: .
 
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v6
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
@@ -163,7 +177,7 @@ jobs:
           docker push $REPO/${{ inputs.package_name }} --all-tags
 
       - name: Publish OpenAPI (Staging)
-        uses: mairie360/CICD/actions/publish-openapi-typescript@${{ inputs.cicd_version }}
+        uses: ./cicd-repo/actions/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -191,6 +205,13 @@ jobs:
           name: bff-assets
           path: .
 
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v6
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       - name: Calculate & Create Tag
         id: set_tag
         uses: ./.github/actions/semantic-tag
@@ -214,7 +235,7 @@ jobs:
         if: steps.set_tag.outputs.new_release_published == 'true'
         env:
           TAG: ${{ steps.set_tag.outputs.TAG }}
-        uses: mairie360/CICD/actions/publish-openapi-typescript@${{ inputs.cicd_version }}
+        uses: ./cicd-repo/actions/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
