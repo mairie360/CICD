@@ -88,10 +88,36 @@ jobs:
         run: npm ci
       - name: Build package
         run: npm run build
-      - name: Bump patch version
+      - name: Bump patch version from latest GitHub tag
         id: bump
         run: |
-          VERSION=$(npm version patch --no-git-tag-version | sed 's/^v//')
+          LATEST_VERSION=$(
+            git ls-remote --tags --refs origin 'v*' \
+              | sed -E 's#.*refs/tags/v?([0-9]+\.[0-9]+\.[0-9]+)$#\1#; t; d' \
+              | sort -V \
+              | tail -n 1
+          )
+
+          if [ -z "$LATEST_VERSION" ]; then
+            LATEST_VERSION="0.0.0"
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+          PATCH=$((PATCH + 1))
+
+          if [ "$PATCH" -ge 10 ]; then
+            PATCH=0
+            MINOR=$((MINOR + 1))
+          fi
+
+          if [ "$MINOR" -ge 10 ]; then
+            MINOR=0
+            MAJOR=$((MAJOR + 1))
+          fi
+
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+          npm version "$VERSION" --no-git-tag-version
           echo "version=$VERSION" >> $GITHUB_OUTPUT
       - name: Create git tag
         run: |
