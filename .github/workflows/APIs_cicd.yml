@@ -84,13 +84,13 @@ jobs:
           args: --release
       # - name: Generate OpenAPI Spec
       #   run: cargo open_api > openapi.json
-      # - name: Upload Artifacts
-      #   uses: actions/upload-artifact@v7
-      #   with:
-      #     name: api-assets
-      #     path: |
-      #       target/release/
-      #       openapi-spec.json
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-assets
+          path: |
+            target/release/
+            openapi-spec.json
 
   unit_test:
     name: Unit tests
