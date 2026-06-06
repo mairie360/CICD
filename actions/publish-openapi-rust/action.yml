@@ -34,7 +34,7 @@ runs:
 
         # 4. Générer le CLIENT COMPLET dans le dossier de destination
         # 'openapi-typescript-codegen' va remplir ./dist_package
-        npx orval openapi.json --output ./dist_package
+        npx orval --input ./openapi.json --output ./dist_package
 
         # 5. Créer le package.json directement DANS dist_package
         # Note: 'openapi-typescript-codegen' génère un index.ts à la racine de l'output
