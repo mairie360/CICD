@@ -21,24 +21,24 @@ runs:
         SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
 
         # 1. Nettoyer tout ancien build pour éviter les résidus
-        rm -rf ./dist_package
-        mkdir -p ./dist_package
+        rm -rf ./generated
+        mkdir -p ./generated
 
         # 2. Générer le JSON depuis Rust
         # On le génère à la racine temporairement
         cargo open_api > openapi.json
 
         # 3. Générer le CLIENT COMPLET dans le dossier de destination
-        # 'openapi-typescript-codegen' va remplir ./dist_package
+        # 'openapi-typescript-codegen' va remplir ./generated
         npm install orval -D
 
         # 4. Générer le CLIENT COMPLET dans le dossier de destination
-        # 'openapi-typescript-codegen' va remplir ./dist_package
-        npx orval --input ./openapi.json --output ./dist_package
+        # 'openapi-typescript-codegen' va remplir ./generated
+        npx orval
 
-        # 5. Créer le package.json directement DANS dist_package
+        # 5. Créer le package.json directement DANS generated
         # Note: 'openapi-typescript-codegen' génère un index.ts à la racine de l'output
-        cat <<EOF > dist_package/package.json
+        cat <<EOF > generated/package.json
         {
           "name": "@${ORG}/${SAFE_NAME}-openapi",
           "version": "${{ inputs.version }}",
@@ -53,11 +53,11 @@ runs:
         }
         EOF
 
-        # 5. Configuration NPM locale au dossier de publication
-        echo "@${ORG}:registry=https://npm.pkg.github.com" > dist_package/.npmrc
-        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> dist_package/.npmrc
+        # 6. Configuration NPM locale au dossier de publication
+        echo "@${ORG}:registry=https://npm.pkg.github.com" > generated/.npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> generated/.npmrc
 
-        # 6. PUBLICATION : L'étape cruciale
+        # 7. PUBLICATION : L'étape cruciale
         # En entrant dans le dossier, npm ignore totalement le contenu du dossier parent (Rust)
-        cd dist_package
+        cd generated
         npm publish --access restricted
