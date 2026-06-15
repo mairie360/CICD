@@ -157,7 +157,7 @@ jobs:
           fi
 
           git tag "$TAG"
-          git push --atomic origin "HEAD:${GITHUB_REF_NAME}" "$TAG"
+          git push origin "$TAG"
       - name: Publish to GitHub Packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
