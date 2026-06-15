@@ -48,7 +48,7 @@ jobs:
           else
             CHANGED="true"
           fi
-          echo "changed=$([[ -n \"$CHANGED\" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "changed=$([[ -n \"$CHANGED\" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - name: Install dependencies
         if: steps.check_src.outputs.changed == 'true'
         run: npm ci
@@ -117,10 +117,11 @@ jobs:
           fi
 
           VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          TAG="v${VERSION}"
 
           npm version "$VERSION" --no-git-tag-version
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - name: Commit version and create git tag
         shell: bash
         run: |
@@ -130,6 +131,11 @@ jobs:
           git config user.email "github-actions@github.com"
           VERSION="${{ steps.bump.outputs.version }}"
           TAG="${{ steps.bump.outputs.tag }}"
+
+          if [ -z "$TAG" ]; then
+            echo "::error::Release tag is empty"
+            exit 1
+          fi
 
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "::error::Tag $TAG already exists on origin"
@@ -144,7 +150,12 @@ jobs:
             git add npm-shrinkwrap.json
           fi
 
-          git commit -m "chore(release): $VERSION [skip ci]"
+          if git diff --cached --quiet; then
+            echo "No version files changed; skipping release commit"
+          else
+            git commit -m "chore(release): $VERSION [skip ci]"
+          fi
+
           git tag "$TAG"
           git push --atomic origin "HEAD:${GITHUB_REF_NAME}" "$TAG"
       - name: Publish to GitHub Packages
