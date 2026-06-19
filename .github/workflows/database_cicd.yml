@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Run tests
         run: ./test.sh
@@ -35,7 +35,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -115,12 +115,12 @@ jobs:
     outputs:
       PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Checkout CICD Tools
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
