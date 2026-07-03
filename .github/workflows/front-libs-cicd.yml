@@ -119,7 +119,7 @@ jobs:
           VERSION="${MAJOR}.${MINOR}.${PATCH}"
           TAG="v${VERSION}"
 
-          npm version "$VERSION" --no-git-tag-version
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - name: Commit version and create git tag
