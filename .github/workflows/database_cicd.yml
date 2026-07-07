@@ -157,26 +157,26 @@ jobs:
           docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:latest
           docker push $REPO/liquibase-migrations --all-tags
 
-  cleanup:
-    name: Cleanup
-    needs: release-prod
-    if: needs.release-prod.outputs.PUBLISHED == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    steps:
-      - name: Delete Old DB Images
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ inputs.package_name }}
-          package-type: "container"
-          min-versions-to-keep: 3
-          delete-only-pre-release-versions: "true"
+  # cleanup:
+  #   name: Cleanup
+  #   needs: release-prod
+  #   if: needs.release-prod.outputs.PUBLISHED == 'true'
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     packages: write
+  #   steps:
+  #     - name: Delete Old DB Images
+  #       uses: actions/delete-package-versions@v5
+  #       with:
+  #         package-name: ${{ inputs.package_name }}
+  #         package-type: "container"
+  #         min-versions-to-keep: 3
+  #         delete-only-pre-release-versions: "true"
 
-      - name: Delete Old Migration Images
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: "liquibase-migrations"
-          package-type: "container"
-          min-versions-to-keep: 3
-          delete-only-pre-release-versions: "true"
+  #     - name: Delete Old Migration Images
+  #       uses: actions/delete-package-versions@v5
+  #       with:
+  #         package-name: "liquibase-migrations"
+  #         package-type: "container"
+  #         min-versions-to-keep: 3
+  #         delete-only-pre-release-versions: "true"
