@@ -91,7 +91,7 @@ jobs:
 
       - name: Run Rust Tests
         run: cargo test --release
-    
+
   publish_release:
     if: github.ref == 'refs/heads/main'
     environment: Release
@@ -106,29 +106,29 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PK }}
-  
+
       - uses: actions/checkout@v7
         with:
           token: ${{ steps.generate_token.outputs.token }}
           fetch-depth: 0
-          
+
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
-  
+
       - name: Calculate & Create Tag
         id: set_tag
         uses: ./cicd-repo/actions/semantic-tag
         env:
           GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
-  
+
       - name: Setup Rust & Cargo Release
         if: steps.set_tag.outputs.new_release_published == 'true'
         uses: dtolnay/rust-toolchain@stable
-  
+
       - name: Publish to Cargo
         if: steps.set_tag.outputs.new_release_published == 'true'
         env:
@@ -137,4 +137,5 @@ jobs:
         run: |
           # Met à jour la version dans Cargo.toml avec celle du nouveau tag
           sed -i "s/^version = .*/version = \"$NEW_VERSION\"/" Cargo.toml
-          cargo publish
+          # Autorise la publication malgré le Cargo.toml modifié et le dossier cicd-repo
+          cargo publish --allow-dirty
