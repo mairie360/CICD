@@ -157,26 +157,42 @@ jobs:
           docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:latest
           docker push $REPO/liquibase-migrations --all-tags
 
-  # cleanup:
-  #   name: Cleanup
-  #   needs: release-prod
-  #   if: needs.release-prod.outputs.PUBLISHED == 'true'
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     packages: write
-  #   steps:
-  #     - name: Delete Old DB Images
-  #       uses: actions/delete-package-versions@v5
-  #       with:
-  #         package-name: ${{ inputs.package_name }}
-  #         package-type: "container"
-  #         min-versions-to-keep: 3
-  #         delete-only-pre-release-versions: "true"
+  Cleanup:
+    runs-on: ubuntu-latest
+    needs: release-prod
+    steps:
+      - name: Cleanup database
+        uses: vlaurin/action-ghcr-prune@v0.6.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          organization: mairie360
+          container: database
+          dry-run: true # ⚠️ Laissez sur true pour le premier test !
+          # 1. Supprimer les images sans tags
+          prune-untagged: true
+          # 2. Supprimer les tags de développement et de staging
+          prune-tags-regexes: |
+            ^dev-.*
+            ^staging-.*
+          # 3. 🛡️ BOUCLIER : Ne JAMAIS supprimer ces tags, même s'ils croisent une autre règle
+          keep-tags-regexes: |
+            ^latest$
+            ^v?[0-9]+\.[0-9]+\.[0-9]+.*
 
-  #     - name: Delete Old Migration Images
-  #       uses: actions/delete-package-versions@v5
-  #       with:
-  #         package-name: "liquibase-migrations"
-  #         package-type: "container"
-  #         min-versions-to-keep: 3
-  #         delete-only-pre-release-versions: "true"
+      - name: Cleanup liquibase-migrations
+        uses: vlaurin/action-ghcr-prune@v0.6.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          organization: mairie360
+          container: liquibase-migrations
+          dry-run: true # ⚠️ Laissez sur true pour le premier test !
+          # 1. Supprimer les images sans tags
+          prune-untagged: true
+          # 2. Supprimer les tags de développement et de staging
+          prune-tags-regexes: |
+            ^dev-.*
+            ^staging-.*
+          # 3. 🛡️ BOUCLIER : Ne JAMAIS supprimer ces tags, même s'ils croisent une autre règle
+          keep-tags-regexes: |
+            ^latest$
+            ^v?[0-9]+\.[0-9]+\.[0-9]+.*
