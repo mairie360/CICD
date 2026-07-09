@@ -155,6 +155,15 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
+      - name: Calculate Tags
+        id: meta
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          echo "db_repo=$REPO/${{ inputs.package_name }}" >> $GITHUB_OUTPUT
+          echo "liq_repo=$REPO/liquibase-migrations" >> $GITHUB_OUTPUT
+          echo "sha_tag=$SHA_TAG" >> $GITHUB_OUTPUT
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
       - name: Build & Push (Dev)
@@ -168,7 +177,7 @@ jobs:
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: 0.0.0-dev.${{ github.sha }}
+          version: dev-${{ steps.meta.outputs.sha_tag }}
           spec_file: ./openapi-spec.json
 
   release-staging:
@@ -194,6 +203,15 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
+      - name: Calculate Tags
+        id: meta
+        run: |
+          SHA_TAG=${GITHUB_SHA::7}
+          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          echo "db_repo=$REPO/${{ inputs.package_name }}" >> $GITHUB_OUTPUT
+          echo "liq_repo=$REPO/liquibase-migrations" >> $GITHUB_OUTPUT
+          echo "sha_tag=$SHA_TAG" >> $GITHUB_OUTPUT
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
       - name: Promote to Staging
@@ -209,7 +227,7 @@ jobs:
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: 0.0.0-staging.${{ github.sha }}
+          version: staging.${{ steps.meta.outputs.sha_tag }}
           spec_file: ./openapi-spec.json
 
   release-prod:
