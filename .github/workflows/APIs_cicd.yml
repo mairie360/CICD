@@ -200,7 +200,7 @@ jobs:
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          docker pull $REPO/${{ inputs.package_name }}:$SHA_TAG
+          docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
           docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
           docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
