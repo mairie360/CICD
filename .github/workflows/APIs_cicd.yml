@@ -177,7 +177,7 @@ jobs:
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: dev-${{ steps.meta.outputs.sha_tag }}
+          version: 0.0.0-dev-${{ steps.meta.outputs.sha_tag }}
           spec_file: ./openapi-spec.json
 
   release-staging:
@@ -220,14 +220,13 @@ jobs:
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
           docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
       - name: Publish OpenAPI
         uses: ./cicd-repo/actions/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: staging.${{ steps.meta.outputs.sha_tag }}
+          version: 0.0.0-staging.${{ steps.meta.outputs.sha_tag }}
           spec_file: ./openapi-spec.json
 
   release-prod:
