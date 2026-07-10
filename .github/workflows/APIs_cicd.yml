@@ -283,7 +283,7 @@ jobs:
 
       - name: Calculate & Create Tag
         id: set_tag
-        uses: ./actions/semantic-tag
+        uses: ./cicd-repo/actions/semantic-tag
 
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
