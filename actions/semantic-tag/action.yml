@@ -12,14 +12,14 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Install semantic-release-cargo
+      shell: bash
+      run: npm install -g semantic-release-cargo
+
     - name: Semantic Release
       id: semantic
       uses: cycjimmy/semantic-release-action@v6.0.0
       with:
-        extra_plugins: |
-          @semantic-release/commit-analyzer
-          @semantic-release/release-notes-generator
-          @semantic-release/github
-          conventional-changelog-conventionalcommits
+        config_file: release.config.js # Pointe vers notre config Rust
       env:
         GITHUB_TOKEN: ${{ github.token }}
