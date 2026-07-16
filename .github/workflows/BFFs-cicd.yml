@@ -102,12 +102,12 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v7
-      - name: Download Spec
-        uses: actions/download-artifact@v8
-        with:
-          name: bff-assets
-          path: .
+      # - uses: actions/checkout@v7
+      # - name: Download Spec
+      #   uses: actions/download-artifact@v8
+      #   with:
+      #     name: bff-assets
+      #     path: .
 
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
