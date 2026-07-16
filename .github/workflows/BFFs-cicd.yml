@@ -65,11 +65,11 @@ jobs:
         with:
           path: node_modules
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-      
+
       - run: npm run build
-      
+
       - name: Generate OpenAPI Spec
-        run: npm run openapi:generate > openapi-spec.json
+        run: npm run openapi:extract > openapi-spec.json
 
       - name: Upload Build & Spec
         uses: actions/upload-artifact@v7
@@ -130,7 +130,7 @@ jobs:
             --secret id=npmrc,src=.npmrc_tmp \
             -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
             -t $REPO/${{ inputs.package_name }}:dev-latest .
-          
+
           docker push $REPO/${{ inputs.package_name }} --all-tags
           rm .npmrc_tmp
 
