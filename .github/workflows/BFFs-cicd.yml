@@ -68,16 +68,16 @@ jobs:
 
       - run: npm run build
 
-      - name: Generate OpenAPI Spec
-        run: npm run openapi:extract > openapi.json
+      # - name: Generate OpenAPI Spec
+      #   run: npm run openapi:extract > openapi.json
 
-      - name: Upload Build & Spec
-        uses: actions/upload-artifact@v7
-        with:
-          name: bff-assets
-          path: |
-            dist/
-            openapi-spec.json
+      # - name: Upload Build & Spec
+      #   uses: actions/upload-artifact@v7
+      #   with:
+      #     name: bff-assets
+      #     path: |
+      #       dist/
+      #       openapi-spec.json
 
   test:
     name: Test Check
