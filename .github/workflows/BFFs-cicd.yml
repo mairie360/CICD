@@ -69,7 +69,7 @@ jobs:
       - run: npm run build
 
       - name: Generate OpenAPI Spec
-        run: npm run openapi:extract > openapi-spec.json
+        run: npm run openapi:extract > openapi.json
 
       - name: Upload Build & Spec
         uses: actions/upload-artifact@v7

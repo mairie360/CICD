@@ -1,5 +1,5 @@
 name: 'Publish OpenAPI from TypeScript'
-description: 'Extrait le contrat d’un BFF TS et publie les types'
+description: 'Extrait le contrat d’un BFF TS, compile et publie les types'
 
 inputs:
   version:
@@ -27,32 +27,47 @@ runs:
         npm install --legacy-peer-deps
 
         # 3. Extraction (Génère le fichier openapi.json à la racine)
-        npm run openapi:extract 
+        npm run openapi:extract
 
-        # 4. Génération du SDK complet DANS le dossier dist_pkg
-        # On génère directement à la racine de dist_pkg pour simplifier les imports
-        npx openapi-typescript-codegen --input openapi.json --output ./dist_pkg --client axios
+        # 4. Génération du SDK complet DANS le dossier dist_pkg/src
+        npx openapi-typescript-codegen --input openapi.json --output ./dist_pkg/src --client axios
 
-        # 5. Création du package.json DANS dist_pkg
-        # Note : Le codegen génère un index.ts (ou .js si compilé) à la racine de l'output
+        # 5. Création d'un tsconfig.json pour compiler le SDK généré
+        cat <<EOF > dist_pkg/tsconfig.json
+        {
+          "compilerOptions": {
+            "target": "ES2022",
+            "module": "CommonJS",
+            "declaration": true,
+            "outDir": "./dist",
+            "strict": false
+          },
+          "include": ["src/**/*"]
+        }
+        EOF
+
+        # 6. Création du package.json DANS dist_pkg
+        # On pointe désormais vers les fichiers JavaScript et de déclaration (.d.ts) compilés
         cat <<EOF > dist_pkg/package.json
         {
           "name": "@${ORG}/${SAFE_NAME}-openapi",
           "version": "${{ inputs.version }}",
-          "main": "./index.ts",
-          "types": "./index.ts",
+          "main": "./dist/index.js",
+          "types": "./dist/index.d.ts",
           "dependencies": {
             "axios": "^1.0.0"
           },
-          "publishConfig": { 
-            "registry": "https://npm.pkg.github.com" 
+          "publishConfig": {
+            "registry": "https://npm.pkg.github.com"
           }
         }
         EOF
 
-        # 6. Copie de l'auth NPM pour la publication
+        # 7. Copie de l'auth NPM pour la publication
         cp .npmrc dist_pkg/.npmrc
 
-        # 7. Publication (On entre dans dist_pkg, isolant le reste du repo)
+        # 8. Compilation et Publication
         cd dist_pkg
+        npm install typescript --no-save
+        npx tsc
         npm publish --access restricted
