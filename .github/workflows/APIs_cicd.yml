@@ -28,17 +28,19 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      # [CHANGEMENT] Remplacement de actions-rs/toolchain (obsolète) par dtolnay/rust-toolchain
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # [CHANGEMENT] Remplacement du cache manuel par Swatinem/rust-cache@v2
-      # qui gère automatiquement et efficacement les dépendances et le cache Cargo.
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
       - name: Download Dependencies
         run: cargo fetch
+
+      - name: Security Audit (cargo-audit)
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
 
   lint:
     name: Check lint
@@ -96,43 +98,20 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Rust Tests
-        run: cargo test
-
-  integration_tests:
-    name: Postman Tests
-    runs-on: ubuntu-latest
-    needs: unit_test
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Build and start services
-        run: docker compose up -d --build
-
-      - name: Install Postman CLI
-        run: curl -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
-
-      - name: Login to Postman CLI
-        run: postman login --with-api-key ${{ secrets.POSTMAN_API_KEY }}
-
-      - name: Run Postman tests
+      - name: Run Rust Tests & Check Coverage
         run: |
-          postman collection run "${{ inputs.postman_collection }}" \
-            -e "${{ inputs.postman_environment }}" \
-            --bail
-
-      - name: Tear down
-        if: always()
-        run: docker compose down
+          cargo install cargo-llvm-cov --locked
+          cargo llvm-cov --workspace --fail-under-lines 60
 
   release-dev:
     if: github.ref == 'refs/heads/main'
-    needs: integration_tests
+    needs: unit_test
     environment: Dev
     runs-on: ubuntu-latest
     permissions:
@@ -190,6 +169,52 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-dev-${{ steps.meta.outputs.sha_tag }}
           spec_file: ./openapi-spec.json
+
+  integration_tests:
+    if: github.ref == 'refs/heads/main'
+    name: Postman Tests
+    runs-on: ubuntu-latest
+    needs: release-dev
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Build and start services
+        run: docker compose up -d --build
+
+      - name: Install Postman CLI
+        run: curl -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
+
+      - name: Login to Postman CLI
+        run: postman login --with-api-key ${{ secrets.POSTMAN_API_KEY }}
+
+      - name: Run Postman tests
+        run: |
+          postman collection run "${{ inputs.postman_collection }}" \
+            -e "${{ inputs.postman_environment }}" \
+            --bail
+
+      - name: Tear down
+        if: always()
+        run: docker compose down
+
+  integration_and_security:
+    if: github.ref == 'refs/heads/main'
+    needs: release-dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Build and run tests via Docker Compose
+        run: |
+          # Lance le compose. --exit-code-from security-scan fait échouer le job
+          # si Newman échoue OU si ZAP détecte une vulnérabilité.
+          docker compose -f docker-compose.test.yml up --build --exit-code-from security-scan
+
+      - name: Clean up Docker Compose
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
 
   release-staging:
     needs: release-dev

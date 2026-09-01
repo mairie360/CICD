@@ -11,8 +11,6 @@ on:
         required: true
       CODECOV_TOKEN:
         required: true
-      # [CHANGEMENT] Déclaration des secrets de l'App GitHub utilisés dans le job release
-      # pour éviter qu'ils ne soient considérés comme non définis dans le workflow appelant.
       RELEASE_APP_ID:
         required: true
       RELEASE_APP_PK:
@@ -38,6 +36,31 @@ jobs:
       - name: Pre-compile dependencies
         run: cargo check --release
 
+  # [NOUVEAU] Job dédié aux audits de sécurité de la bibliothèque
+  security_audit:
+    name: Security & License Audit
+    runs-on: ubuntu-latest
+    needs: dependencies
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Cargo Audit (Vulnerability Check)
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      - name: Run Cargo Deny (License & Advisory Check)
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check advisories licenses
+
   lint:
     name: Check lint
     runs-on: ubuntu-latest
@@ -54,15 +77,13 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      # [CHANGEMENT] Remplacement de l'action obsolète actions-rs/cargo par une commande
-      # shell standard 'cargo lint_check' pour plus de pérennité.
       - name: Run lint check
         run: cargo lint_check
 
   build:
     name: Build Release
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [lint, security_audit] # Bloqué si l'audit de sécurité échoue
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
