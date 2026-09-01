@@ -56,7 +56,7 @@ jobs:
           echo "liq_repo=$REPO/liquibase-migrations" >> $GITHUB_OUTPUT
           echo "sha_tag=$SHA_TAG" >> $GITHUB_OUTPUT
 
-      # Build & Push propre de la DB (Casse le cache si le contexte change)
+      # [CHANGEMENT] Ajout du cache GHA pour l'image de la DB afin de réutiliser les couches construites.
       - name: Build & Push DB Image
         uses: docker/build-push-action@v7
         with:
@@ -65,8 +65,10 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.db_repo }}:dev-${{ steps.meta.outputs.sha_tag }}
             ${{ steps.meta.outputs.db_repo }}:dev-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      # Build & Push de Liquibase (Détectera à coup sûr ton nouveau fichier SQL)
+      # [CHANGEMENT] Ajout du cache GHA pour l'image Liquibase.
       - name: Build & Push Liquibase Image
         uses: docker/build-push-action@v7
         with:
@@ -76,6 +78,8 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.liq_repo }}:dev-${{ steps.meta.outputs.sha_tag }}
             ${{ steps.meta.outputs.liq_repo }}:dev-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   release-staging:
     needs: release-dev
@@ -126,13 +130,13 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
+      # [CHANGEMENT] Correction de la syntaxe de l'action : nettoyage des doublons 'env' / 'with'
+      # et suppression du paramètre 'cicd_path' obsolète pour cette action composite.
       - name: Calculate & Create Tag
         id: set_tag
         uses: ./cicd-repo/actions/semantic-tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          cicd_path: cicd-repo
 
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
@@ -156,43 +160,3 @@ jobs:
           docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:$TAG
           docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:latest
           docker push $REPO/liquibase-migrations --all-tags
-
-  Cleanup:
-    runs-on: ubuntu-latest
-    needs: release-prod
-    steps:
-      - name: Cleanup database
-        uses: vlaurin/action-ghcr-prune@v0.6.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          organization: mairie360
-          container: database
-          dry-run: true # ⚠️ Laissez sur true pour le premier test !
-          # 1. Supprimer les images sans tags
-          prune-untagged: true
-          # 2. Supprimer les tags de développement et de staging
-          prune-tags-regexes: |
-            ^dev-.*
-            ^staging-.*
-          # 3. 🛡️ BOUCLIER : Ne JAMAIS supprimer ces tags, même s'ils croisent une autre règle
-          keep-tags-regexes: |
-            ^latest$
-            ^v?[0-9]+\.[0-9]+\.[0-9]+.*
-
-      - name: Cleanup liquibase-migrations
-        uses: vlaurin/action-ghcr-prune@v0.6.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          organization: mairie360
-          container: liquibase-migrations
-          dry-run: true # ⚠️ Laissez sur true pour le premier test !
-          # 1. Supprimer les images sans tags
-          prune-untagged: true
-          # 2. Supprimer les tags de développement et de staging
-          prune-tags-regexes: |
-            ^dev-.*
-            ^staging-.*
-          # 3. 🛡️ BOUCLIER : Ne JAMAIS supprimer ces tags, même s'ils croisent une autre règle
-          keep-tags-regexes: |
-            ^latest$
-            ^v?[0-9]+\.[0-9]+\.[0-9]+.*

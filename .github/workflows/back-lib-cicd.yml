@@ -11,6 +11,12 @@ on:
         required: true
       CODECOV_TOKEN:
         required: true
+      # [CHANGEMENT] Déclaration des secrets de l'App GitHub utilisés dans le job release
+      # pour éviter qu'ils ne soient considérés comme non définis dans le workflow appelant.
+      RELEASE_APP_ID:
+        required: true
+      RELEASE_APP_PK:
+        required: true
 
 jobs:
   dependencies:
@@ -48,10 +54,10 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run lint_check
-        uses: actions-rs/cargo@v1
-        with:
-          command: lint_check
+      # [CHANGEMENT] Remplacement de l'action obsolète actions-rs/cargo par une commande
+      # shell standard 'cargo lint_check' pour plus de pérennité.
+      - name: Run lint check
+        run: cargo lint_check
 
   build:
     name: Build Release
@@ -97,7 +103,7 @@ jobs:
       - name: Générer le rapport de couverture
         if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
         run: cargo llvm-cov --workspace --codecov --output-path codecov.json
-      
+
       - name: Envoyer à Codecov
         if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
         uses: codecov/codecov-action@v7
@@ -140,8 +146,6 @@ jobs:
           GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
 
       - name: Cleanup CICD Tools checkout
-        # On n'a plus besoin de cicd-repo une fois le tag calculé : on l'enlève
-        # pour que cargo ne le voie pas comme des fichiers non commités.
         run: rm -rf cicd-repo
 
       - name: Setup Rust & Cargo Release
@@ -152,18 +156,13 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           NEW_VERSION: ${{ steps.set_tag.outputs.new_release_version }}
         run: |
-          # Met à jour la version dans Cargo.toml avec celle du nouveau tag
           sed -i "s/^version = .*/version = \"$NEW_VERSION\"/" Cargo.toml
-          # Autorise la publication malgré le Cargo.toml/Cargo.lock modifiés
-          # (bump de version non commité, c'est le seul changement attendu ici)
           cargo publish --allow-dirty
 
       - name: Commit version bump
         env:
           NEW_VERSION: ${{ steps.set_tag.outputs.new_release_version }}
         run: |
-          # Reporte sur main la version publiée, pour que Cargo.toml/Cargo.lock
-          # reflètent toujours ce qui a été publié sur crates.io.
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock

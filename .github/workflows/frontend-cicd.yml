@@ -10,6 +10,11 @@ on:
         required: false
         type: string
         default: "23"
+      # [CHANGEMENT] Ajout de l'input cicd_version pour récupérer dynamiquement
+      # l'action partagée de release, comme dans les autres workflows centralisés.
+      cicd_version:
+        required: true
+        type: string
 
 jobs:
   dependencies:
@@ -21,6 +26,9 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
+
+      # [CHANGEMENT] Utilisation native du cache npm de setup-node (sur ~/.npm)
+      # plus léger et performant que la sauvegarde complète du dossier node_modules.
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
@@ -28,15 +36,11 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@mairie360'
           cache: 'npm'
+
       - name: Install Dependencies
         run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
 
   lint:
     name: Lint Code
@@ -44,11 +48,18 @@ jobs:
     needs: dependencies
     steps:
       - uses: actions/checkout@v7
-      - name: Restore node_modules
-        uses: actions/cache@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
         with:
-          path: node_modules
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - run: npm run lint
 
   build:
@@ -57,11 +68,18 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@v7
-      - name: Restore node_modules
-        uses: actions/cache@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
         with:
-          path: node_modules
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - run: npm run build
 
   test:
@@ -70,11 +88,18 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v7
-      - name: Restore node_modules
-        uses: actions/cache@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
         with:
-          path: node_modules
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - run: npm test --if-present
 
   release-dev:
@@ -87,18 +112,27 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-      
+
+      # [CHANGEMENT] Configuration de Buildx et activation du cache GHA pour Docker
+      # afin d'éviter de reconstruire toutes les couches Next.js à chaque run.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build & Push Image (Source of Truth)
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          # Build unique avec les secrets pour les packages privés
-          docker build . --build-arg NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} \
-            -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
-            -t $REPO/${{ inputs.package_name }}:dev-latest
-          docker push $REPO/${{ inputs.package_name }} --all-tags
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-latest
+          build-args: |
+            NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   release-staging:
     needs: release-dev
@@ -110,7 +144,7 @@ jobs:
     steps:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-      
+
       - name: Promote Image to Staging
         run: |
           SHA_TAG=${GITHUB_SHA::7}
@@ -133,39 +167,33 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-  
+
+      # [CHANGEMENT] Récupération du dépôt centralisé des outils CI/CD
+      # pour pouvoir utiliser l'action composite 'semantic-tag'.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      # [CHANGEMENT] Correction du chemin d'appel vers le dépôt centralisé 'cicd-repo'.
       - name: Calculate & Create Tag
         id: set_tag
-        uses: ./.github/actions/semantic-tag
-  
+        uses: ./cicd-repo/actions/semantic-tag
+
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-  
+
       - name: Promote Image to Prod
         if: steps.set_tag.outputs.new_release_published == 'true'
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           TAG=${{ steps.set_tag.outputs.new_release_version }}
-          
+
           docker pull $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
           docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
           docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
-
-  cleanup:
-    name: Cleanup
-    needs: release-prod
-    if: needs.release-prod.outputs.PUBLISHED == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    steps:
-      - name: Delete Obsolete Front Images
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ inputs.package_name }}
-          package-type: 'container'
-          min-versions-to-keep: 3
-          delete-only-pre-release-versions: 'true'
