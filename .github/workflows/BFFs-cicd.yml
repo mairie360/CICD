@@ -22,6 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # [CHANGEMENT] Utilisation du cache natif de setup-node (sur ~/.npm)
+      # qui suffit amplement et évite de stocker un dossier node_modules lourd et instable.
       - name: Use Node.js
         uses: actions/setup-node@v7
         with:
@@ -29,14 +32,10 @@ jobs:
           cache: 'npm'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@mairie360'
+
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
 
   lint:
     name: Lint code
@@ -44,11 +43,17 @@ jobs:
     needs: dependencies
     steps:
       - uses: actions/checkout@v7
-      - name: Restore node_modules
-        uses: actions/cache@v6
+
+      - name: Use Node.js
+        uses: actions/setup-node@v7
         with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - run: npm run lint
 
   build:
@@ -57,27 +62,26 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@v7
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node_version }}
-      - name: Restore node_modules
-        uses: actions/cache@v6
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          cache: 'npm'
+
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: npm run build
 
-      # - name: Generate OpenAPI Spec
-      #   run: npm run openapi:extract > openapi.json
-
+      # [CHANGEMENT] Ajout de retention-days: 1 pour purger rapidement l'artefact temporaire
       - name: Upload Build & Spec
         uses: actions/upload-artifact@v7
         with:
           name: bff-assets
           path: |
             dist/
-            # openapi-spec.json
+          retention-days: 1
 
   test:
     name: Test Check
@@ -85,11 +89,16 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v7
-      - name: Restore node_modules
-        uses: actions/cache@v6
+
+      - uses: actions/setup-node@v7
         with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - run: npm test
 
   release-dev:
@@ -103,11 +112,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
-      # - name: Download Spec
-      #   uses: actions/download-artifact@v8
-      #   with:
-      #     name: bff-assets
-      #     path: .
 
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
@@ -119,20 +123,25 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
+      # [CHANGEMENT] Configuration de Buildx et activation du cache GHA pour Docker
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build & Push Image (Source of Truth)
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          echo "@mairie360:registry=https://npm.pkg.github.com" > .npmrc_tmp
-          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc_tmp
-
-          docker build \
-            --secret id=npmrc,src=.npmrc_tmp \
-            -t $REPO/${{ inputs.package_name }}:dev-$SHA_TAG \
-            -t $REPO/${{ inputs.package_name }}:dev-latest .
-
-          docker push $REPO/${{ inputs.package_name }} --all-tags
-          rm .npmrc_tmp
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-latest
+          secrets: |
+            npmrc=<<EOF
+            @mairie360:registry=https://npm.pkg.github.com
+            //npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}
+            EOF
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Publish OpenAPI (Dev)
         uses: ./cicd-repo/actions/publish-openapi-typescript
@@ -145,8 +154,8 @@ jobs:
   release-staging:
     name: Release Staging
     needs: release-dev
-    environment: Staging
     runs-on: ubuntu-latest
+    environment: Staging
     permissions:
       contents: read
       packages: write
@@ -171,7 +180,7 @@ jobs:
         run: |
           SHA_TAG=${GITHUB_SHA::7}
           REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          docker pull $REPO/${{ inputs.package_name }}:$SHA_TAG
+          docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
           docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
           docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
@@ -212,9 +221,11 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
+      # [CHANGEMENT] Correction du chemin de l'action pour pointer vers le dépôt centralisé 'cicd-repo'
+      # au lieu de ./.github/actions/semantic-tag qui n'existe pas dans ce contexte.
       - name: Calculate & Create Tag
         id: set_tag
-        uses: ./.github/actions/semantic-tag
+        uses: ./cicd-repo/actions/semantic-tag
 
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
@@ -241,19 +252,3 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ steps.set_tag.outputs.new_release_version }}
           spec_file: ./openapi-spec.json
-
-  cleanup:
-    name: Cleanup
-    needs: release-prod
-    if: needs.release-prod.outputs.PUBLISHED == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    steps:
-      - name: Delete Obsolete Images
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ inputs.package_name }}
-          package-type: 'container'
-          min-versions-to-keep: 3
-          delete-only-pre-release-versions: 'true'

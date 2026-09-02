@@ -15,8 +15,19 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # [CHANGEMENT] Ajout de l'action setup-node pour s'assurer d'avoir un environnement
+    # Node.js propre et stable avant d'exécuter des commandes npm/npx.
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
     - shell: bash
       run: |
+        # [CHANGEMENT] Ajout de 'set -e' pour faire échouer le workflow immédiatement
+        # en cas d'erreur dans le script bash (évite les publications partielles).
+        set -e
+
         ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
 
@@ -25,19 +36,13 @@ runs:
         mkdir -p ./generated
 
         # 2. Générer le JSON depuis Rust
-        # On le génère à la racine temporairement
         cargo open_api > openapi.json
 
-        # 3. Générer le CLIENT COMPLET dans le dossier de destination
-        # 'openapi-typescript-codegen' va remplir ./generated
-        npm install orval -D
-
-        # 4. Générer le CLIENT COMPLET dans le dossier de destination
-        # 'openapi-typescript-codegen' va remplir ./generated
-        npx orval
+        # [CHANGEMENT] Suppression du 'npm install orval -D' à chaque run qui ralentit l'action.
+        # Utilisation de 'npx -y orval' pour exécuter l'outil proprement sans installation locale superflue.
+        npx -y orval
 
         # 5. Créer le package.json directement DANS generated
-        # Note: 'openapi-typescript-codegen' génère un index.ts à la racine de l'output
         cat <<EOF > generated/package.json
         {
           "name": "@${ORG}/${SAFE_NAME}-openapi",
@@ -58,6 +63,5 @@ runs:
         echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> generated/.npmrc
 
         # 7. PUBLICATION : L'étape cruciale
-        # En entrant dans le dossier, npm ignore totalement le contenu du dossier parent (Rust)
         cd generated
         npm publish --access restricted
