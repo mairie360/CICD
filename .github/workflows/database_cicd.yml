@@ -81,8 +81,39 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  release-staging:
+  database_tests:
+    name: Database Migration & Integrity Tests
+    runs-on: ubuntu-latest
     needs: release-dev
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Database Tests via Docker Compose
+        run: |
+          SHA_TAG=${{ needs.release-dev.outputs.sha_tag }}
+          REPO="ghcr.io/${{ github.repository_owner,, }}"
+
+          # On injecte les images de dev fraîches dans le compose de test
+          export DB_IMAGE="$REPO/${{ inputs.package_name }}:dev-$SHA_TAG"
+          export LIQUIBASE_IMAGE="$REPO/liquibase-migrations:dev-$SHA_TAG"
+
+          # Lance le compose et fait échouer le job si le conteneur de test plante
+          docker compose -f docker-compose.test.yml up --build --exit-code-from db-test
+
+      - name: Clean up Docker Compose
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+  release-staging:
+    needs: database_tests
     runs-on: ubuntu-latest
     environment: Staging
     permissions:

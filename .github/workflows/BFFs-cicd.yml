@@ -202,9 +202,30 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.test.yml down -v
 
+  performance_tests:
+    name: Isolated Performance Tests (k6)
+    runs-on: ubuntu-latest
+    needs: release-dev
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Run Performance Tests via Docker Compose
+        run: |
+          # On transmet l'image fraîchement construite au fichier compose
+          export TARGET_IMAGE="ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-${{ github.sha }}"
+          docker compose -f docker-compose.test.yml up --build --exit-code-from k6-perf-test
+
+      - name: Clean up Performance Docker Compose
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
   release-staging:
     name: Release Staging
-    needs: security_tests
+    needs: [security_tests, performance_tests]
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
