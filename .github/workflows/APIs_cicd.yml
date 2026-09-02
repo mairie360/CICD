@@ -170,7 +170,7 @@ jobs:
       # [CHANGEMENT] Configuration de Buildx et ajout du cache GHA pour Docker
       # afin de réutiliser les couches d'une exécution à l'autre et accélérer le build.
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build & Push (Dev)
         uses: docker/build-push-action@v6

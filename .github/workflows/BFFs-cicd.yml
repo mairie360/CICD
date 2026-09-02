@@ -125,7 +125,7 @@ jobs:
 
       # [CHANGEMENT] Configuration de Buildx et activation du cache GHA pour Docker
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build & Push Image (Source of Truth)
         uses: docker/build-push-action@v6
