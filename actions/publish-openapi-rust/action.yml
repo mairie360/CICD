@@ -18,7 +18,7 @@ runs:
     # [CHANGEMENT] Ajout de l'action setup-node pour s'assurer d'avoir un environnement
     # Node.js propre et stable avant d'exécuter des commandes npm/npx.
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: "24"
 

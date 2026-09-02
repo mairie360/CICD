@@ -15,7 +15,7 @@ runs:
     # [CHANGEMENT] Ajout de l'action setup-node pour garantir une version stable de Node.js
     # au lieu d'utiliser l'environnement global implicite du runner.
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: "24"
 
