@@ -47,7 +47,7 @@ dependencies → (lint, security_audit[, security_sast]) → build → test
 Key invariants:
 
 - **Images are built exactly once** (in `release-dev`). Staging and prod "releases" only `docker pull` + `docker tag` + `docker push --all-tags` — never rebuild. Preserve this; rebuilding per-environment is a regression.
-- Deploy jobs gated on `if: github.ref == 'refs/heads/main'`.
+- Deploy jobs gated on `if: github.ref == 'refs/heads/main'`. Note: in `APIs_cicd.yml` only `release-dev` (and the test jobs) carry the explicit `if`; `release-staging` / `release-prod` are gated **transitively** — their `needs` chain is main-only, so they skip off-main because a skipped dependency skips its dependents. Keep that chain intact if you reorder jobs.
 - GitHub **Environments** (`Dev`, `Staging`, `Prod`, `Release`, and the misc `release`/`releasee` in `front-libs`) hold the approval gates and environment-scoped secrets. Environment names are load-bearing strings.
 - Image registry is GHCR: `ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/<package_name>`. The `,,` lowercases the owner — this is **bash** parameter expansion and only works inside `run:` blocks, not in `${{ }}` expressions.
 - Short SHA convention: `SHA_TAG=${GITHUB_SHA::7}`. Note an existing inconsistency — some jobs tag images with the **full** `${{ github.sha }}` while later promotion jobs look for the **7-char** tag; keep sha-tag length consistent within a workflow when editing.
@@ -76,7 +76,7 @@ No shared Node version. `cicd.yml`, `front-libs-cicd.yml`, and both composite ac
 
 | Workflow | Stack | Extra behavior |
 |---|---|---|
-| `APIs_cicd.yml` | Rust API | `cargo audit`, `cargo clippy -D warnings`, `cargo llvm-cov --fail-under-lines 60` + Codecov upload (main / PR-to-main, needs `CODECOV_TOKEN`), Postman/Newman integration tests, publishes OpenAPI (rust) |
+| `APIs_cicd.yml` | Rust API | `cargo audit`, `cargo clippy -D warnings`; coverage via the downstream **`cargo cov` alias** (must run tests, enforce the threshold, and emit `codecov.json`) + Codecov upload (main / PR-to-main, `CODECOV_TOKEN` is a **required** secret); `unit_test` needs only `lint` and runs in parallel with `build` (so `release-dev` needs both); Postman/Newman integration tests, publishes OpenAPI (rust). Uses `docker-release` for all three release stages. |
 | `back-lib-cicd.yml` | Rust library | `cargo audit` + `cargo deny check advisories licenses`, `cargo lint_check` (a cargo alias the repo must define), Codecov upload, `cargo publish` to crates.io, commits version bump to `main` |
 | `BFFs-cicd.yml` | Node/TS BFF | `npm audit --audit-level=high`, Semgrep (`p/typescript`, `p/owasp-top-ten`), Docker build with GH Packages `.npmrc` secret, publishes OpenAPI (typescript) |
 | `frontend-cicd.yml` | Next.js | `npm audit`, `npm run build`, Docker image only (no npm publish) |
@@ -87,7 +87,7 @@ No shared Node version. `cicd.yml`, `front-libs-cicd.yml`, and both composite ac
 
 ## What downstream repos must provide
 
-Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.test.yml` exposing services named `security-scan` (ZAP), `k6-perf-test`, `db-test`, or `newman` (jobs use `--exit-code-from <that service>`); `test.sh` (database); npm scripts `lint` / `build` / `test` / `typecheck` / `build-storybook`; cargo commands `cargo open_api` and the `cargo lint_check` alias; an `openapi-spec.json` / `openapi.json` at repo root for OpenAPI publishing.
+Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.test.yml` exposing services named `security-scan` (ZAP), `k6-perf-test`, `db-test`, or `newman` (jobs use `--exit-code-from <that service>`); `test.sh` (database); npm scripts `lint` / `build` / `test` / `typecheck` / `build-storybook`; cargo commands `cargo open_api` and the `cargo lint_check` alias (plus the `cargo cov` alias for `APIs_cicd.yml`, which must emit `codecov.json` and enforce the coverage threshold itself); an `openapi-spec.json` / `openapi.json` at repo root for OpenAPI publishing.
 
 ## Conventions
 

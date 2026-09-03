@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     # [CHANGEMENT] Dépend de `lint` et non de `build` : le job ne consomme pas l'artefact
     # de build et recompile de toute façon en mode instrumenté. Il tourne donc en parallèle
-    # de `build`. Les tests unitaires ne sont exécutés qu'une seule fois, via `cargo llvm-cov`.
+    # de `build`. Les tests unitaires ne sont exécutés qu'une seule fois, via `cargo cov`.
     needs: lint
     steps:
       - name: Checkout Repository
@@ -115,10 +115,11 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # [CHANGEMENT] Un seul passage : exécute les tests, applique le seuil de 60 %
-      # et produit le rapport Codecov.
+      # [CHANGEMENT] Passe par l'alias cargo `cov` défini par le repo consommateur
+      # (aligné sur la convention `cargo lint_check`). L'alias doit exécuter les tests,
+      # appliquer le seuil de couverture et produire `codecov.json` pour l'upload ci-dessous.
       - name: Run Rust Tests & Check Coverage
-        run: cargo llvm-cov --workspace --fail-under-lines 60 --codecov --output-path codecov.json
+        run: cargo cov
 
       # [NOUVEAU] Upload de la couverture vers Codecov (copié de back-lib-cicd.yml),
       # uniquement sur main ou sur une PR ciblant main.
