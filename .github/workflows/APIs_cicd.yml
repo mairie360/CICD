@@ -19,6 +19,9 @@ on:
     secrets:
       POSTMAN_API_KEY:
         required: true
+      # [NOUVEAU] Requis pour l'upload de couverture vers Codecov (aligné sur back-lib-cicd.yml)
+      CODECOV_TOKEN:
+        required: true
 
 jobs:
   dependencies:
@@ -104,10 +107,25 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      # [CHANGEMENT] Installation via taiki-e/install-action (plus rapide que `cargo install`),
+      # aligné sur back-lib-cicd.yml.
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      # [CHANGEMENT] Un seul passage : exécute les tests, applique le seuil de 60 %
+      # et produit le rapport Codecov.
       - name: Run Rust Tests & Check Coverage
-        run: |
-          cargo install cargo-llvm-cov --locked
-          cargo llvm-cov --workspace --fail-under-lines 60
+        run: cargo llvm-cov --workspace --fail-under-lines 60 --codecov --output-path codecov.json
+
+      # [NOUVEAU] Upload de la couverture vers Codecov (copié de back-lib-cicd.yml),
+      # uniquement sur main ou sur une PR ciblant main.
+      - name: Envoyer à Codecov
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: codecov.json
+          fail_ci_if_error: true
 
   release-dev:
     if: github.ref == 'refs/heads/main'
@@ -134,40 +152,22 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      - name: Calculate Tags
-        id: meta
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          echo "db_repo=$REPO/${{ inputs.package_name }}" >> $GITHUB_OUTPUT
-          echo "liq_repo=$REPO/liquibase-migrations" >> $GITHUB_OUTPUT
-          echo "sha_tag=$SHA_TAG" >> $GITHUB_OUTPUT
-
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      # [CHANGEMENT] Configuration de Buildx et ajout du cache GHA pour Docker
-      # afin de réutiliser les couches d'une exécution à l'autre et accélérer le build.
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build & Push (Dev)
-        uses: docker/build-push-action@v7
+      # [CHANGEMENT] Logique Docker (build unique + push dev-<sha> / dev-latest)
+      # centralisée dans l'action composite partagée `docker-release`.
+      - name: Build & Push image (Dev)
+        id: release
+        uses: ./cicd-repo/actions/docker-release
         with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-${{ steps.meta.outputs.sha_tag }}
-            ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          stage: dev
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish OpenAPI
         uses: ./cicd-repo/actions/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: 0.0.0-dev-${{ steps.meta.outputs.sha_tag }}
+          version: 0.0.0-dev-${{ steps.release.outputs.sha_tag }}
           spec_file: ./openapi-spec.json
 
   integration_tests:
@@ -269,32 +269,22 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      - name: Calculate Tags
-        id: meta
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          echo "db_repo=$REPO/${{ inputs.package_name }}" >> $GITHUB_OUTPUT
-          echo "liq_repo=$REPO/liquibase-migrations" >> $GITHUB_OUTPUT
-          echo "sha_tag=$SHA_TAG" >> $GITHUB_OUTPUT
-
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      - name: Promote to Staging
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
-          docker push $REPO/${{ inputs.package_name }} --all-tags
+      # [CHANGEMENT] Re-tag dev -> staging centralisé dans l'action composite `docker-release`.
+      # Ajoute au passage le tag `staging-latest` (auparavant absent pour la stack API).
+      - name: Promote image to Staging
+        id: release
+        uses: ./cicd-repo/actions/docker-release
+        with:
+          stage: staging
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish OpenAPI
         uses: ./cicd-repo/actions/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: 0.0.0-staging.${{ steps.meta.outputs.sha_tag }}
+          version: 0.0.0-staging.${{ steps.release.outputs.sha_tag }}
           spec_file: ./openapi-spec.json
 
   release-prod:
@@ -330,22 +320,22 @@ jobs:
         id: set_tag
         uses: ./cicd-repo/actions/semantic-tag
 
-      - name: Log in to GHCR
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      # [CHANGEMENT] Re-tag staging -> <version> / latest centralisé dans `docker-release`.
+      # La promotion ne s'exécute que si semantic-release a publié une nouvelle version
+      # (garde-fou porté par l'action via `release_published`).
+      - name: Promote image to Prod
+        uses: ./cicd-repo/actions/docker-release
+        with:
+          stage: prod
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          release_published: ${{ steps.set_tag.outputs.new_release_published }}
+          release_version: ${{ steps.set_tag.outputs.new_release_version }}
 
-      - name: Promote to Prod
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          TAG=${{ steps.set_tag.outputs.new_release_version }}
-          docker pull $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
-          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
-          docker push $REPO/${{ inputs.package_name }} --all-tags
-
+      # [CHANGEMENT] Ajout du garde-fou : ne publie l'OpenAPI que si une version a été créée
+      # (auparavant exécuté avec une version vide quand aucun release n'était publié).
       - name: Publish OpenAPI
+        if: steps.set_tag.outputs.new_release_published == 'true'
         uses: ./cicd-repo/actions/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}

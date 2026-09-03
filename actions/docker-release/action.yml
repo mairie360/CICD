@@ -1,0 +1,175 @@
+name: "Docker Release"
+description: >
+  Logique commune de release Docker partagée par les workflows API / BFF / frontend / database.
+  L'image est construite UNE SEULE FOIS au stage `dev` ; `staging` et `prod` ne font que
+  `docker pull` + `docker tag` + `docker push` (jamais de rebuild).
+
+inputs:
+  stage:
+    description: "Étape de release : dev | staging | prod"
+    required: true
+  package_name:
+    description: "Nom de base de l'image principale (sans le registre `ghcr.io/<owner>/` ni le tag)"
+    required: true
+  github_token:
+    description: "Token pour l'authentification GHCR (passer `secrets.GITHUB_TOKEN`)"
+    required: true
+
+  # --- Build : utilisés uniquement quand stage == dev ---
+  context:
+    description: "Contexte de build Docker"
+    required: false
+    default: "."
+  dockerfile:
+    description: "Chemin du Dockerfile de l'image principale"
+    required: false
+    default: "Dockerfile"
+  build_args:
+    description: "build-args multi-lignes transmis à docker/build-push-action (ex: NODE_AUTH_TOKEN=...)"
+    required: false
+    default: ""
+  build_secrets:
+    description: "secrets multi-lignes transmis à docker/build-push-action (ex: npmrc=<<EOF ... EOF)"
+    required: false
+    default: ""
+
+  # --- Image secondaire optionnelle (ex: `liquibase-migrations` pour la stack database) ---
+  extra_package_name:
+    description: "Nom de base d'une seconde image à construire / promouvoir en parallèle (optionnel)"
+    required: false
+    default: ""
+  extra_dockerfile:
+    description: "Dockerfile de l'image secondaire"
+    required: false
+    default: "Dockerfile"
+
+  # --- Prod uniquement : sorties de l'action `semantic-tag`, appelée en amont dans le job ---
+  release_published:
+    description: "'true' si semantic-release a publié une nouvelle version"
+    required: false
+    default: "false"
+  release_version:
+    description: "Version sémantique calculée (ex: 1.4.0)"
+    required: false
+    default: ""
+
+  sha_length:
+    description: "Longueur du SHA court utilisé dans les tags `dev-` / `staging-` (uniformisé pour tous les stages)"
+    required: false
+    default: "7"
+
+outputs:
+  sha_tag:
+    description: "Tag SHA court calculé (ex: a1b2c3d)"
+    value: ${{ steps.meta.outputs.sha_tag }}
+  primary_image:
+    description: "Référence complète de l'image principale, sans tag (ex: ghcr.io/mairie360/my-api)"
+    value: ${{ steps.meta.outputs.primary_image }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Calculer les tags et références d'images
+      id: meta
+      shell: bash
+      run: |
+        set -euo pipefail
+        LEN="${{ inputs.sha_length }}"
+        SHA_TAG="${GITHUB_SHA:0:$LEN}"
+        REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+        {
+          echo "sha_tag=$SHA_TAG"
+          echo "primary_image=$REPO/${{ inputs.package_name }}"
+          echo "extra_image=$REPO/${{ inputs.extra_package_name }}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Connexion à GHCR
+      shell: bash
+      run: echo "${{ inputs.github_token }}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    # ------------------------------------------------------------------
+    # STAGE dev : build unique + push  dev-<sha> / dev-latest
+    # ------------------------------------------------------------------
+    - name: Set up Docker Buildx
+      if: inputs.stage == 'dev'
+      uses: docker/setup-buildx-action@v4
+
+    - name: Build & Push (dev) — image principale
+      if: inputs.stage == 'dev'
+      uses: docker/build-push-action@v7
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile }}
+        push: true
+        tags: |
+          ${{ steps.meta.outputs.primary_image }}:dev-${{ steps.meta.outputs.sha_tag }}
+          ${{ steps.meta.outputs.primary_image }}:dev-latest
+        build-args: ${{ inputs.build_args }}
+        secrets: ${{ inputs.build_secrets }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Build & Push (dev) — image secondaire
+      if: inputs.stage == 'dev' && inputs.extra_package_name != ''
+      uses: docker/build-push-action@v7
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.extra_dockerfile }}
+        push: true
+        tags: |
+          ${{ steps.meta.outputs.extra_image }}:dev-${{ steps.meta.outputs.sha_tag }}
+          ${{ steps.meta.outputs.extra_image }}:dev-latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    # ------------------------------------------------------------------
+    # STAGE staging : re-tag  dev-<sha>  ->  staging-<sha> / staging-latest
+    # ------------------------------------------------------------------
+    - name: Promotion vers Staging
+      if: inputs.stage == 'staging'
+      shell: bash
+      env:
+        SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        PRIMARY_IMAGE: ${{ steps.meta.outputs.primary_image }}
+        EXTRA_IMAGE: ${{ steps.meta.outputs.extra_image }}
+        HAS_EXTRA: ${{ inputs.extra_package_name != '' }}
+      run: |
+        set -euo pipefail
+        promote() {
+          img="$1"
+          docker pull "$img:dev-$SHA_TAG"
+          docker tag  "$img:dev-$SHA_TAG" "$img:staging-$SHA_TAG"
+          docker tag  "$img:dev-$SHA_TAG" "$img:staging-latest"
+          docker push "$img" --all-tags
+        }
+        promote "$PRIMARY_IMAGE"
+        [ "$HAS_EXTRA" = "true" ] && promote "$EXTRA_IMAGE" || true
+
+    # ------------------------------------------------------------------
+    # STAGE prod : re-tag  staging-<sha>  ->  <version> / latest
+    #              (uniquement si semantic-release a publié une version)
+    # ------------------------------------------------------------------
+    - name: Promotion vers Prod
+      if: inputs.stage == 'prod' && inputs.release_published == 'true'
+      shell: bash
+      env:
+        SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        VERSION: ${{ inputs.release_version }}
+        PRIMARY_IMAGE: ${{ steps.meta.outputs.primary_image }}
+        EXTRA_IMAGE: ${{ steps.meta.outputs.extra_image }}
+        HAS_EXTRA: ${{ inputs.extra_package_name != '' }}
+      run: |
+        set -euo pipefail
+        if [ -z "$VERSION" ]; then
+          echo "::error::release_published == 'true' mais release_version est vide" >&2
+          exit 1
+        fi
+        promote() {
+          img="$1"
+          docker pull "$img:staging-$SHA_TAG"
+          docker tag  "$img:staging-$SHA_TAG" "$img:$VERSION"
+          docker tag  "$img:staging-$SHA_TAG" "$img:latest"
+          docker push "$img" --all-tags
+        }
+        promote "$PRIMARY_IMAGE"
+        [ "$HAS_EXTRA" = "true" ] && promote "$EXTRA_IMAGE" || true
