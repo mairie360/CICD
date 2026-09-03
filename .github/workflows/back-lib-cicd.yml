@@ -169,9 +169,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
 
-      - name: Cleanup CICD Tools checkout
-        run: rm -rf cicd-repo
-
       - name: Setup Rust & Cargo Release
         uses: dtolnay/rust-toolchain@stable
 
