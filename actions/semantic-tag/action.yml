@@ -25,6 +25,6 @@ runs:
       with:
         extra_plugins: |
           semantic-release-cargo
-          conventional-changelog-conventionalcommits
+          conventional-changelog-conventionalcommits@7.0.2
       env:
         GITHUB_TOKEN: ${{ github.token }}
