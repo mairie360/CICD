@@ -121,6 +121,9 @@ jobs:
       - name: Run Rust Tests
         run: cargo test --release
 
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
       - name: Générer le rapport de couverture
         if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
         run: cargo llvm-cov --workspace --codecov --output-path codecov.json
