@@ -23,10 +23,8 @@ runs:
       id: semantic
       uses: cycjimmy/semantic-release-action@v6.0.0
       with:
-        config_file: release.config.js # Pointe vers notre config Rust
-        # [CHANGEMENT] Remplacement de l'ancienne étape "Install semantic-release-cargo"
-        # (qui faisait un 'npm install -g') par le paramètre natif extra_plugins de l'action.
         extra_plugins: |
           semantic-release-cargo
+          conventional-changelog-conventionalcommits
       env:
         GITHUB_TOKEN: ${{ github.token }}
