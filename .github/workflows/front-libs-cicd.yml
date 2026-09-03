@@ -253,8 +253,9 @@ jobs:
           fi
 
           git tag "$TAG"
-          # [CHANGEMENT] Pousse à la fois le commit de version et le tag vers la branche main de manière sécurisée
-          git push origin HEAD:main --tags
+          # Le commit de version reste attaché au tag : main est protégé et n'accepte
+          # que les modifications fusionnées via une pull request.
+          git push origin "$TAG"
 
       - name: Publish to GitHub Packages
         env:
