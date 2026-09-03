@@ -94,7 +94,10 @@ jobs:
   unit_test:
     name: Unit tests
     runs-on: ubuntu-latest
-    needs: build
+    # [CHANGEMENT] Dépend de `lint` et non de `build` : le job ne consomme pas l'artefact
+    # de build et recompile de toute façon en mode instrumenté. Il tourne donc en parallèle
+    # de `build`. Les tests unitaires ne sont exécutés qu'une seule fois, via `cargo llvm-cov`.
+    needs: lint
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
@@ -129,7 +132,9 @@ jobs:
 
   release-dev:
     if: github.ref == 'refs/heads/main'
-    needs: unit_test
+    # [CHANGEMENT] `build` ajouté explicitement : `unit_test` ne dépend plus de `build`,
+    # or ce job consomme l'artefact `api-assets`.
+    needs: [unit_test, build]
     environment: Dev
     runs-on: ubuntu-latest
     permissions:
