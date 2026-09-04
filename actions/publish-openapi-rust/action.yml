@@ -8,9 +8,13 @@ inputs:
   package_name:
     required: true
     description: "Nom du package à publier"
+  dist_tag:
+    required: false
+    description: "npm dist-tag à utiliser (ex: dev, staging, ou vide pour latest)"
+    default: "latest"
   token:
-    required: true
-    description: "Token d'authentification pour npm"
+      required: true
+      description: "Token d'authentification pour npm"
 
 runs:
   using: "composite"
@@ -64,4 +68,4 @@ runs:
 
         # 7. PUBLICATION : L'étape cruciale
         cd generated
-        npm publish --access restricted
+        npm publish --access restricted --tag ${{ inputs.dist_tag }}
