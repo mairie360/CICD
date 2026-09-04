@@ -216,11 +216,7 @@ jobs:
         run: |
           # Lance le compose. --exit-code-from security-scan fait échouer le job
           # si Newman échoue OU si ZAP détecte une vulnérabilité.
-          docker compose -f docker-compose.test.yml up --build --exit-code-from security-scan
-
-      - name: Clean up Docker Compose
-        if: always()
-        run: docker compose -f docker-compose.test.yml down -v
+          ./security_test.sh
 
   performance_isolated:
     if: github.ref == 'refs/heads/main'
@@ -245,11 +241,7 @@ jobs:
         run: |
           export TARGET_IMAGE="${{ steps.meta.outputs.image_tag }}"
           # --exit-code-from k6-perf-test fait échouer le job si k6 dépasse les seuils
-          docker compose -f docker-compose.test.yml up --build --exit-code-from k6-perf-test
-
-      - name: Clean up Docker Compose
-        if: always()
-        run: docker compose -f docker-compose.test.yml down -v
+          ./performance_test.sh
 
   release-staging:
     needs: [integration_and_security, integration_tests, performance_isolated]
