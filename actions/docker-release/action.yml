@@ -1,8 +1,8 @@
 name: "Docker Release"
 description: >
   Logique commune de release Docker partagée par les workflows API / BFF / frontend / database.
-  L'image est construite UNE SEULE FOIS au stage `dev` ; `staging` et `prod` ne font que
-  `docker pull` + `docker tag` + `docker push` (jamais de rebuild).
+  L'image est construite UNE SEULE FOIS au stage `dev`. Chaque étape suivante (`staging`, `prod`)
+  ajoute de nouveaux tags sur l'image existante (jamais de rebuild, jamais de suppression de tag).
 
 inputs:
   stage:
@@ -88,7 +88,7 @@ runs:
       run: echo "${{ inputs.github_token }}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
     # ------------------------------------------------------------------
-    # STAGE dev : build unique + push  dev-<sha> / dev-latest
+    # STAGE dev : build unique + push  dev-<sha> ET dev (tag mobile, facile à retrouver)
     # ------------------------------------------------------------------
     - name: Set up Docker Buildx
       if: inputs.stage == 'dev'
@@ -103,7 +103,7 @@ runs:
         push: true
         tags: |
           ${{ steps.meta.outputs.primary_image }}:dev-${{ steps.meta.outputs.sha_tag }}
-          ${{ steps.meta.outputs.primary_image }}:dev-latest
+          ${{ steps.meta.outputs.primary_image }}:dev
         build-args: ${{ inputs.build_args }}
         secrets: ${{ inputs.build_secrets }}
         cache-from: type=gha
@@ -118,12 +118,13 @@ runs:
         push: true
         tags: |
           ${{ steps.meta.outputs.extra_image }}:dev-${{ steps.meta.outputs.sha_tag }}
-          ${{ steps.meta.outputs.extra_image }}:dev-latest
+          ${{ steps.meta.outputs.extra_image }}:dev
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
     # ------------------------------------------------------------------
-    # STAGE staging : re-tag  dev-<sha>  ->  staging-<sha> / staging-latest
+    # STAGE staging : ajoute staging-<sha> ET staging (mobile) à l'image :dev existante
+    # Les tags dev-* restent inchangés, rien n'est supprimé.
     # ------------------------------------------------------------------
     - name: Promotion vers Staging
       if: inputs.stage == 'staging'
@@ -137,23 +138,23 @@ runs:
         set -euo pipefail
         promote() {
           img="$1"
-          docker pull "$img:dev-$SHA_TAG"
-          docker tag  "$img:dev-$SHA_TAG" "$img:staging-$SHA_TAG"
-          docker tag  "$img:dev-$SHA_TAG" "$img:staging-latest"
-          docker push "$img" --all-tags
+          docker pull "$img:dev"
+          docker tag  "$img:dev" "$img:staging-$SHA_TAG"
+          docker tag  "$img:dev" "$img:staging"
+          docker push "$img:staging-$SHA_TAG"
+          docker push "$img:staging"
         }
         promote "$PRIMARY_IMAGE"
         [ "$HAS_EXTRA" = "true" ] && promote "$EXTRA_IMAGE" || true
 
     # ------------------------------------------------------------------
-    # STAGE prod : re-tag  staging-<sha>  ->  <version> / latest
-    #              (uniquement si semantic-release a publié une version)
+    # STAGE prod : ajoute <version> ET latest à l'image :staging existante
+    # (uniquement si semantic-release a publié une version). Rien n'est supprimé.
     # ------------------------------------------------------------------
     - name: Promotion vers Prod
       if: inputs.stage == 'prod' && inputs.release_published == 'true'
       shell: bash
       env:
-        SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
         VERSION: ${{ inputs.release_version }}
         PRIMARY_IMAGE: ${{ steps.meta.outputs.primary_image }}
         EXTRA_IMAGE: ${{ steps.meta.outputs.extra_image }}
@@ -166,10 +167,11 @@ runs:
         fi
         promote() {
           img="$1"
-          docker pull "$img:staging-$SHA_TAG"
-          docker tag  "$img:staging-$SHA_TAG" "$img:$VERSION"
-          docker tag  "$img:staging-$SHA_TAG" "$img:latest"
-          docker push "$img" --all-tags
+          docker pull "$img:staging"
+          docker tag  "$img:staging" "$img:$VERSION"
+          docker tag  "$img:staging" "$img:latest"
+          docker push "$img:$VERSION"
+          docker push "$img:latest"
         }
         promote "$PRIMARY_IMAGE"
         [ "$HAS_EXTRA" = "true" ] && promote "$EXTRA_IMAGE" || true
