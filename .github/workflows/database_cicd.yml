@@ -98,19 +98,7 @@ jobs:
 
       - name: Run Database Tests via Docker Compose
         run: |
-          SHA_TAG=${{ needs.release-dev.outputs.sha_tag }}
-          REPO="ghcr.io/${{ github.repository_owner,, }}"
-
-          # On injecte les images de dev fraîches dans le compose de test
-          export DB_IMAGE="$REPO/${{ inputs.package_name }}:dev-$SHA_TAG"
-          export LIQUIBASE_IMAGE="$REPO/liquibase-migrations:dev-$SHA_TAG"
-
-          # Lance le compose et fait échouer le job si le conteneur de test plante
-          docker compose -f docker-compose.test.yml up --build --exit-code-from db-test
-
-      - name: Clean up Docker Compose
-        if: always()
-        run: docker compose -f docker-compose.test.yml down -v
+          ./test.sh
 
   release-staging:
     needs: database_tests
