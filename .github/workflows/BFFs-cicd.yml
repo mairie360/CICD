@@ -15,11 +15,45 @@ on:
       cicd_version:
         required: true
         type: string
+        description: "Ref (tag) du repo mairie360/CICD pour les actions composites"
+      npm_scope:
+        required: false
+        type: string
+        default: "@mairie360"
+        description: "Scope npm hébergé sur GitHub Packages"
+      openapi_spec_path:
+        required: false
+        type: string
+        default: "openapi-spec.json"
+        description: "Chemin de la spec OpenAPI après `npm run build` (relatif à la racine du repo)"
+      artifact_retention_days:
+        required: false
+        type: number
+        default: 30
+        description: "Rétention des artefacts, doit couvrir le délai d'approbation Staging/Prod"
+    outputs:
+      release_published:
+        description: "'true' si une nouvelle version a été publiée en prod"
+        value: ${{ jobs.release-prod.outputs.published }}
+      release_version:
+        description: "Version sémantique publiée en prod"
+        value: ${{ jobs.release-prod.outputs.version }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  # ==========================================================================
+  # CI
+  # ==========================================================================
   dependencies:
     name: Install dependencies
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v7
 
@@ -27,19 +61,22 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node_version }}
-          cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@mairie360'
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: ${{ inputs.npm_scope }}
 
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # [NOUVEAU] Job dédié à l'audit de sécurité des dépendances Node.js (SCA)
   security_audit:
     name: Security Audit (npm audit)
     runs-on: ubuntu-latest
     needs: dependencies
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v7
 
@@ -47,9 +84,9 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node_version }}
-          cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@mairie360'
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: ${{ inputs.npm_scope }}
 
       - run: npm ci
         env:
@@ -62,6 +99,10 @@ jobs:
     name: Lint code
     runs-on: ubuntu-latest
     needs: dependencies
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v7
 
@@ -69,7 +110,9 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node_version }}
-          cache: 'npm'
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: ${{ inputs.npm_scope }}
 
       - run: npm ci
         env:
@@ -81,28 +124,44 @@ jobs:
     name: Code Security Audit (Semgrep)
     runs-on: ubuntu-latest
     needs: dependencies
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
+      # returntocorp/semgrep-action est dépréciée : on utilise l'image officielle.
+      # --error fait échouer le job si Semgrep remonte au moins un finding.
       - name: Run Semgrep Security Scan
-        uses: returntocorp/semgrep-action@v1
-        with:
-          config: |
-            p/typescript
-            p/owasp-top-ten
-          generateImage: false
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/src" \
+            -w /src \
+            semgrep/semgrep:latest \
+            semgrep scan \
+              --config p/typescript \
+              --config p/owasp-top-ten \
+              --error
 
   build:
     name: Build & OpenAPI Spec
     runs-on: ubuntu-latest
-    needs: [lint, security_audit, security_sast] # Bloqué si l'audit de sécurité ou le linter échoue
+    needs: [lint, security_audit, security_sast]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      - name: Use Node.js
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node_version }}
-          cache: 'npm'
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: ${{ inputs.npm_scope }}
 
       - run: npm ci
         env:
@@ -110,25 +169,60 @@ jobs:
 
       - run: npm run build
 
-      - name: Upload Build & Spec
+      # La spec est copiée sous un nom fixe pour que son emplacement dans
+      # l'artefact ne dépende pas de l'arborescence du repo.
+      - name: Vérifier et isoler la spec OpenAPI
+        env:
+          SPEC_PATH: ${{ inputs.openapi_spec_path }}
+        run: |
+          set -euo pipefail
+          if [ ! -s "$SPEC_PATH" ]; then
+            echo "::error::Spec OpenAPI introuvable ou vide : '$SPEC_PATH' (input openapi_spec_path)"
+            exit 1
+          fi
+          if ! jq empty "$SPEC_PATH"; then
+            echo "::error::'$SPEC_PATH' n'est pas un JSON valide"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/openapi"
+          cp "$SPEC_PATH" "$RUNNER_TEMP/openapi/openapi-spec.json"
+
+      - name: Upload Build
         uses: actions/upload-artifact@v7
         with:
           name: bff-assets
-          path: |
-            dist/
-          retention-days: 1
+          path: dist/
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+          overwrite: true
+
+      - name: Upload OpenAPI Spec
+        uses: actions/upload-artifact@v7
+        with:
+          name: openapi-spec
+          path: ${{ runner.temp }}/openapi/openapi-spec.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+          overwrite: true
 
   test:
     name: Test Check
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      - name: Use Node.js
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node_version }}
-          cache: 'npm'
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: ${{ inputs.npm_scope }}
 
       - run: npm ci
         env:
@@ -136,18 +230,94 @@ jobs:
 
       - run: npm test
 
+  # ==========================================================================
+  # DEV : l'image est construite UNE SEULE FOIS ici.
+  # Staging et Prod ajoutent des tags sur le même digest, sans rebuild.
+  # ==========================================================================
   release-dev:
     name: Release Dev
     if: github.ref == 'refs/heads/main'
     needs: test
-    environment: Dev
     runs-on: ubuntu-latest
+    environment: Dev
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+    concurrency:
+      group: ${{ github.repository }}-release-dev
+      cancel-in-progress: false
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
 
+      - name: Calculer la référence de l'image
+        id: meta
+        env:
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: ${{ inputs.package_name }}
+        run: |
+          set -euo pipefail
+          echo "image=ghcr.io/${OWNER,,}/${PACKAGE,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Généré hors du contexte de build (RUNNER_TEMP) et monté comme secret
+      # BuildKit : absent des couches, du cache et de l'attestation de provenance.
+      - name: Générer le .npmrc de build
+        env:
+          NPM_SCOPE: ${{ inputs.npm_scope }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' \
+            "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
+            "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" \
+            > "$RUNNER_TEMP/docker-build.npmrc"
+
+      - name: Build & Push Image (Source of Truth)
+        id: build
+        uses: docker/build-push-action@v7
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:dev-${{ github.sha }}
+            ${{ steps.meta.outputs.image }}:dev-latest
+          secret-files: |
+            npmrc=${{ runner.temp }}/docker-build.npmrc
+          secret-envs: |
+            node_auth_token=NODE_AUTH_TOKEN
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
+      - name: Supprimer le .npmrc de build
+        if: always()
+        run: rm -f "$RUNNER_TEMP/docker-build.npmrc"
+
+      - name: Vérifier le digest publié
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Digest invalide renvoyé par build-push-action : '$DIGEST'"
+            exit 1
+          fi
+
+      # Récupérés APRÈS le build pour ne pas polluer le contexte Docker
+      # (sinon un `COPY . .` embarquerait cicd-repo/ dans l'image).
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
         with:
@@ -155,27 +325,11 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build & Push Image (Source of Truth)
-        uses: docker/build-push-action@v7
+      - name: Download OpenAPI Spec
+        uses: actions/download-artifact@v8
         with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:dev-latest
-          secrets: |
-            npmrc=<<EOF
-            @mairie360:registry=https://npm.pkg.github.com
-            //npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}
-            EOF
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          name: openapi-spec
+          path: .
 
       - name: Publish OpenAPI (Dev)
         uses: ./cicd-repo/actions/publish-openapi-typescript
@@ -189,38 +343,103 @@ jobs:
     name: Dynamic Security Tests (OWASP ZAP)
     runs-on: ubuntu-latest
     needs: release-dev
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # IMAGE_REF pointe sur le digest exact buildé par ce run
+      # (plus fiable que dev-latest si plusieurs pushs se suivent).
       - name: Run ZAP Security Scan via Docker Compose
-        run: ./security_test.sh
+        env:
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}@${{ needs.release-dev.outputs.digest }}
+        run: bash ./security_test.sh
 
   performance_tests:
     name: Isolated Performance Tests (k6)
     runs-on: ubuntu-latest
     needs: release-dev
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Run Performance Tests via Docker Compose
-        run: ./performance_test.sh
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      - name: Run Performance Tests via Docker Compose
+        env:
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}@${{ needs.release-dev.outputs.digest }}
+        run: bash ./performance_test.sh
+
+  # ==========================================================================
+  # STAGING : tags staging-<sha> et staging-latest sur le digest de dev
+  # ==========================================================================
   release-staging:
     name: Release Staging
-    needs: [security_tests, performance_tests]
+    needs: [release-dev, security_tests, performance_tests]
     runs-on: ubuntu-latest
     environment: Staging
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
+    concurrency:
+      group: ${{ github.repository }}-release-staging
+      cancel-in-progress: false
     steps:
-      - name: Download Spec
-        uses: actions/download-artifact@v8
-        with:
-          name: bff-assets
-          path: .
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # imagetools create copie le manifest côté registre : digest, multi-arch
+      # et attestations de provenance sont conservés (contrairement à pull/tag/push).
+      - name: Promote Image to Staging
+        env:
+          IMAGE: ${{ needs.release-dev.outputs.image }}
+          DIGEST: ${{ needs.release-dev.outputs.digest }}
+        run: |
+          set -euo pipefail
+          digest_of() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'
+          }
+
+          if [ -z "$IMAGE" ] || [ -z "$DIGEST" ]; then
+            echo "::error::Sorties de release-dev manquantes (image='$IMAGE', digest='$DIGEST')"
+            exit 1
+          fi
+
+          SOURCE="$IMAGE@$DIGEST"
+          docker buildx imagetools inspect "$SOURCE" > /dev/null
+
+          docker buildx imagetools create \
+            --tag "$IMAGE:staging-$GITHUB_SHA" \
+            --tag "$IMAGE:staging-latest" \
+            "$SOURCE"
+
+          PUSHED="$(digest_of "$IMAGE:staging-$GITHUB_SHA")"
+          if [ "$PUSHED" != "$DIGEST" ]; then
+            echo "::error::Digest staging ($PUSHED) différent du digest dev ($DIGEST)"
+            exit 1
+          fi
+          echo "Promu en staging : $IMAGE:staging-$GITHUB_SHA -> $DIGEST"
 
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
@@ -229,17 +448,11 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
-      - name: Promote Image to Staging
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
-          docker push $REPO/${{ inputs.package_name }} --all-tags
+      - name: Download OpenAPI Spec
+        uses: actions/download-artifact@v8
+        with:
+          name: openapi-spec
+          path: .
 
       - name: Publish OpenAPI (Staging)
         uses: ./cicd-repo/actions/publish-openapi-typescript
@@ -249,26 +462,28 @@ jobs:
           version: 0.0.0-staging.${{ github.sha }}
           spec_file: ./openapi-spec.json
 
+  # ==========================================================================
+  # PROD : tags <version> et latest, uniquement si semantic-release publie
+  # ==========================================================================
   release-prod:
     name: Release Prod
-    needs: release-staging
-    environment: Prod
+    needs: [release-dev, release-staging]
     runs-on: ubuntu-latest
+    environment: Prod
+    timeout-minutes: 20
     permissions:
       contents: write
       packages: write
+    concurrency:
+      group: ${{ github.repository }}-release-prod
+      cancel-in-progress: false
     outputs:
-      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
+      published: ${{ steps.set_tag.outputs.new_release_published }}
+      version: ${{ steps.set_tag.outputs.new_release_version }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-
-      - name: Download Spec
-        uses: actions/download-artifact@v8
-        with:
-          name: bffs-assets # Corrigé si nécessaire selon le nom de l'artefact uploadé
-          path: .
 
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
@@ -283,23 +498,65 @@ jobs:
 
       - name: Log in to GHCR
         if: steps.set_tag.outputs.new_release_published == 'true'
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Set up Docker Buildx
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        uses: docker/setup-buildx-action@v4
 
       - name: Promote Image to Prod
         if: steps.set_tag.outputs.new_release_published == 'true'
+        env:
+          IMAGE: ${{ needs.release-dev.outputs.image }}
+          DIGEST: ${{ needs.release-dev.outputs.digest }}
+          VERSION: ${{ steps.set_tag.outputs.new_release_version }}
         run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          TAG=${{ steps.set_tag.outputs.new_release_version }}
-          docker pull $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
-          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
-          docker push $REPO/${{ inputs.package_name }} --all-tags
+          set -euo pipefail
+          digest_of() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'
+          }
+
+          if [ -z "$VERSION" ]; then
+            echo "::error::new_release_published == 'true' mais new_release_version est vide"
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::'$VERSION' n'est pas un tag Docker valide"
+            exit 1
+          fi
+
+          # Garde-fou : on ne promeut en prod que ce qui est réellement en staging.
+          STAGED="$(digest_of "$IMAGE:staging-$GITHUB_SHA")"
+          if [ "$STAGED" != "$DIGEST" ]; then
+            echo "::error::$IMAGE:staging-$GITHUB_SHA ($STAGED) ne correspond pas au digest dev ($DIGEST)"
+            exit 1
+          fi
+
+          docker buildx imagetools create \
+            --tag "$IMAGE:$VERSION" \
+            --tag "$IMAGE:latest" \
+            "$IMAGE@$DIGEST"
+
+          PUSHED="$(digest_of "$IMAGE:$VERSION")"
+          if [ "$PUSHED" != "$DIGEST" ]; then
+            echo "::error::Digest prod ($PUSHED) différent du digest attendu ($DIGEST)"
+            exit 1
+          fi
+          echo "Promu en prod : $IMAGE:$VERSION -> $DIGEST"
+
+      # Téléchargée après semantic-release pour ne pas ajouter de fichier
+      # non suivi dans l'arbre de travail pendant le calcul de version.
+      - name: Download OpenAPI Spec
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: openapi-spec
+          path: .
 
       - name: Publish OpenAPI (Prod)
         if: steps.set_tag.outputs.new_release_published == 'true'
-        env:
-          TAG: ${{ steps.set_tag.outputs.TAG }}
         uses: ./cicd-repo/actions/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}
