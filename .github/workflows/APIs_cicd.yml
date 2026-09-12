@@ -16,12 +16,13 @@ on:
       cicd_version:
         required: true
         type: string
-    secrets:
-      POSTMAN_API_KEY:
-        required: true
-      # [NOUVEAU] Requis pour l'upload de couverture vers Codecov (aligné sur back-lib-cicd.yml)
-      CODECOV_TOKEN:
-        required: true
+  secrets:
+    POSTMAN_API_KEY:
+      required: true
+    CODECOV_TOKEN:
+      required: true
+    N8N_WEBHOOK_SECRET:
+      required: true
 
 jobs:
   dependencies:
@@ -339,3 +340,32 @@ jobs:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ steps.set_tag.outputs.new_release_version }}
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs:
+      - dependencies
+      - lint
+      - build
+      - unit_test
+      - release-dev
+      - integration_tests
+      - integration_and_security
+      - performance_isolated
+      - release-staging
+      - release-prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify n8n
+        run: |
+          curl -X POST https://n8n.mairie360-eip.fr/webhook/cicd-failure \
+            -H "Content-Type: application/json" \
+            -H "X-Auth-Header: ${{ secrets.N8N_WEBHOOK_SECRET }}" \
+            -d '{
+              "repo": "${{ github.repository }}",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "run_id": "${{ github.run_id }}",
+              "workflow": "${{ github.workflow }}"
+            }'
