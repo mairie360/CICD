@@ -16,13 +16,13 @@ on:
       cicd_version:
         required: true
         type: string
-  secrets:
-    POSTMAN_API_KEY:
-      required: true
-    CODECOV_TOKEN:
-      required: true
-    N8N_WEBHOOK_SECRET:
-      required: true
+    secrets:
+      POSTMAN_API_KEY:
+        required: true
+      CODECOV_TOKEN:
+        required: true
+      N8N_WEBHOOK_SECRET:
+        required: true
 
 jobs:
   dependencies:
