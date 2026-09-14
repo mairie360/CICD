@@ -8,6 +8,8 @@ on:
         type: string
         description: "Ref (tag) du repo mairie360/CICD pour les actions composites"
     secrets:
+      CODECOV_TOKEN:
+        required: true
       N8N_WEBHOOK_SECRET:
         required: true
 
@@ -88,6 +90,14 @@ jobs:
 
       - run: npm ci
       - run: npm test
+
+      - name: Upload Coverage to Codecov
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/coverage-final.json
+          fail_ci_if_error: true
 
   security:
     name: Security & Quality Checks

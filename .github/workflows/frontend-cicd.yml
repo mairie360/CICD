@@ -16,6 +16,8 @@ on:
         required: true
         type: string
     secrets:
+      CODECOV_TOKEN:
+        required: true
       N8N_WEBHOOK_SECRET:
         required: true
 
@@ -127,6 +129,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: npm test --if-present
+
+      - name: Upload Coverage to Codecov
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/coverage-final.json
+          fail_ci_if_error: false
 
   release-dev:
     if: github.ref == 'refs/heads/main'

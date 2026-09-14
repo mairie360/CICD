@@ -32,6 +32,8 @@ on:
         default: 30
         description: "Rétention des artefacts, doit couvrir le délai d'approbation Staging/Prod"
     secrets:
+      CODECOV_TOKEN:
+        required: true
       N8N_WEBHOOK_SECRET:
         required: true
     outputs:
@@ -232,6 +234,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: npm test
+
+      - name: Upload Coverage to Codecov
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/coverage-final.json
+          fail_ci_if_error: true
 
   # ==========================================================================
   # DEV : l'image est construite UNE SEULE FOIS ici.
