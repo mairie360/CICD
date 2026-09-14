@@ -15,6 +15,9 @@ on:
       cicd_version:
         required: true
         type: string
+    secrets:
+      N8N_WEBHOOK_SECRET:
+        required: true
 
 jobs:
   dependencies:
@@ -242,3 +245,32 @@ jobs:
           docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
           docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs:
+      - dependencies
+      - lint
+      - security_audit
+      - build
+      - test
+      - release-dev
+      - security_tests
+      - performance_tests
+      - release-staging
+      - release-prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify n8n
+        run: |
+          curl -X POST https://n8n.mairie360-eip.fr/webhook/cicd-failure \
+            -H "Content-Type: application/json" \
+            -H "X-Auth-Header: ${{ secrets.N8N_WEBHOOK_SECRET }}" \
+            -d '{
+              "repo": "${{ github.repository }}",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "run_id": "${{ github.run_id }}",
+              "workflow": "${{ github.workflow }}"
+            }'

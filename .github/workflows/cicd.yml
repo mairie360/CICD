@@ -38,3 +38,22 @@ jobs:
             @semantic-release/github
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify n8n
+        run: |
+          curl -X POST https://n8n.mairie360-eip.fr/webhook/cicd-failure \
+            -H "Content-Type: application/json" \
+            -H "X-Auth-Header: ${{ secrets.N8N_WEBHOOK_SECRET }}" \
+            -d '{
+              "repo": "${{ github.repository }}",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "run_id": "${{ github.run_id }}",
+              "workflow": "${{ github.workflow }}"
+            }'
