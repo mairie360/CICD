@@ -369,12 +369,31 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      # docker-compose-security.yml monte ./.npmrc comme secret BuildKit pour
+      # que le service bff-user puisse installer les packages @mairie360/* :
+      # ce fichier n'existe pas après un simple checkout (il est gitignored).
+      - name: Générer le .npmrc de build
+        env:
+          NPM_SCOPE: ${{ inputs.npm_scope }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' \
+            "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
+            '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+            > .npmrc
+
       # IMAGE_REF pointe sur le digest exact buildé par ce run
       # (plus fiable que dev-latest si plusieurs pushs se suivent).
       - name: Run ZAP Security Scan via Docker Compose
         env:
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}@${{ needs.release-dev.outputs.digest }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash ./security_test.sh
+
+      - name: Supprimer le .npmrc de build
+        if: always()
+        run: rm -f .npmrc
 
   performance_tests:
     name: Isolated Performance Tests (k6)
@@ -393,10 +412,29 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      # docker-compose-performance.yml monte ./.npmrc comme secret BuildKit pour
+      # que le service bff-user puisse installer les packages @mairie360/* :
+      # ce fichier n'existe pas après un simple checkout (il est gitignored).
+      - name: Générer le .npmrc de build
+        env:
+          NPM_SCOPE: ${{ inputs.npm_scope }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' \
+            "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
+            '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+            > .npmrc
+
       - name: Run Performance Tests via Docker Compose
         env:
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}@${{ needs.release-dev.outputs.digest }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash ./performance_test.sh
+
+      - name: Supprimer le .npmrc de build
+        if: always()
+        run: rm -f .npmrc
 
   # ==========================================================================
   # STAGING : tags staging-<sha> et staging-latest sur le digest de dev
