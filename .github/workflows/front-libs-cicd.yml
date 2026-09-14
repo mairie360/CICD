@@ -165,10 +165,9 @@ jobs:
 
   package:
     name: Package Publish
-    needs: test
+    needs: [test, security]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: write
       packages: write
