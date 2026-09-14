@@ -200,81 +200,26 @@ jobs:
       - name: Build package
         run: npm run build
 
-      - name: Bump patch version from latest GitHub tag
-        id: bump
-        shell: bash
-        run: |
-          LATEST_VERSION=$(
-            git ls-remote --tags --refs origin 'v*' \
-              | sed -E 's#.*refs/tags/v?([0-9]+\.[0-9]+\.[0-9]+)$#\1#; t; d' \
-              | sort -V \
-              | tail -n 1
-          )
+      # [CHANGEMENT] Remplacement du bump de patch arbitraire par semantic-release :
+      # la version est désormais calculée à partir des commits conventionnels
+      # (feat/fix/BREAKING CHANGE), comme pour les APIs et BFFs.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
 
-          if [ -z "$LATEST_VERSION" ]; then
-            LATEST_VERSION="0.0.0"
-          fi
+      - name: Calculate & Create Tag
+        id: set_tag
+        uses: ./cicd-repo/actions/semantic-tag
 
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
-          PATCH=$((PATCH + 1))
-
-          if [ "$PATCH" -ge 10 ]; then
-            PATCH=0
-            MINOR=$((MINOR + 1))
-          fi
-
-          if [ "$MINOR" -ge 10 ]; then
-            MINOR=0
-            MAJOR=$((MAJOR + 1))
-          fi
-
-          VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          TAG="v${VERSION}"
-
-          npm version "$VERSION" --no-git-tag-version --allow-same-version
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Commit version and create git tag
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          VERSION="${{ steps.bump.outputs.version }}"
-          TAG="${{ steps.bump.outputs.tag }}"
-
-          if [ -z "$TAG" ]; then
-            echo "::error::Release tag is empty"
-            exit 1
-          fi
-
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $TAG already exists on origin"
-            exit 1
-          fi
-
-          git add package.json
-          if [ -f package-lock.json ]; then
-            git add package-lock.json
-          fi
-          if [ -f npm-shrinkwrap.json ]; then
-            git add npm-shrinkwrap.json
-          fi
-
-          if git diff --cached --quiet; then
-            echo "No version files changed; skipping release commit"
-          else
-            git commit -m "chore(release): $VERSION [skip ci]"
-          fi
-
-          git tag "$TAG"
-          # Le commit de version reste attaché au tag : main est protégé et n'accepte
-          # que les modifications fusionnées via une pull request.
-          git push origin "$TAG"
+      - name: Set package version
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        run: npm version "${{ steps.set_tag.outputs.new_release_version }}" --no-git-tag-version --allow-same-version
 
       - name: Publish to GitHub Packages
+        if: steps.set_tag.outputs.new_release_published == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: npm publish --access public
