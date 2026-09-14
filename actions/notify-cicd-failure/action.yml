@@ -1,0 +1,24 @@
+name: Notify n8n on CI/CD Failure
+description: Send a failure notification to n8n webhook
+
+inputs:
+  n8n_webhook_secret:
+    description: Secret token for n8n webhook authentication
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Notify n8n
+      shell: bash
+      run: |
+        curl -X POST https://n8n.mairie360-eip.fr/webhook/cicd-failure \
+          -H "Content-Type: application/json" \
+          -H "X-Auth-Header: ${{ inputs.n8n_webhook_secret }}" \
+          -d '{
+            "repo": "${{ github.repository }}",
+            "branch": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "run_id": "${{ github.run_id }}",
+            "workflow": "${{ github.workflow }}"
+          }'

@@ -2,6 +2,16 @@ name: Reusable CI/CD Pipeline
 
 on:
   workflow_call:
+    inputs:
+      cicd_version:
+        required: true
+        type: string
+        description: "Ref (tag) du repo mairie360/CICD pour les actions composites"
+    secrets:
+      CODECOV_TOKEN:
+        required: true
+      N8N_WEBHOOK_SECRET:
+        required: true
 
 permissions:
   contents: read
@@ -81,6 +91,14 @@ jobs:
       - run: npm ci
       - run: npm test
 
+      - name: Upload Coverage to Codecov
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          fail_ci_if_error: true
+
   security:
     name: Security & Quality Checks
     runs-on: ubuntu-latest
@@ -157,10 +175,9 @@ jobs:
 
   package:
     name: Package Publish
-    needs: test
+    needs: [test, security]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: write
       packages: write
@@ -261,3 +278,28 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: npm publish --access public
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs:
+      - dependencies
+      - lint
+      - build
+      - test
+      - security
+      - storybook
+      - package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Notify n8n
+        uses: ./cicd-repo/actions/notify-cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

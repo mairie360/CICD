@@ -31,6 +31,11 @@ on:
         type: number
         default: 30
         description: "Rétention des artefacts, doit couvrir le délai d'approbation Staging/Prod"
+    secrets:
+      CODECOV_TOKEN:
+        required: true
+      N8N_WEBHOOK_SECRET:
+        required: true
     outputs:
       release_published:
         description: "'true' si une nouvelle version a été publiée en prod"
@@ -229,6 +234,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: npm test
+
+      - name: Upload Coverage to Codecov
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          fail_ci_if_error: true
 
   # ==========================================================================
   # DEV : l'image est construite UNE SEULE FOIS ici.
@@ -563,3 +576,32 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ steps.set_tag.outputs.new_release_version }}
           spec_file: ./openapi-spec.json
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs:
+      - dependencies
+      - security_audit
+      - lint
+      - security_sast
+      - build
+      - test
+      - release-dev
+      - security_tests
+      - performance_tests
+      - release-staging
+      - release-prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Notify n8n
+        uses: ./cicd-repo/actions/notify-cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

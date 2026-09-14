@@ -15,6 +15,11 @@ on:
       cicd_version:
         required: true
         type: string
+    secrets:
+      CODECOV_TOKEN:
+        required: true
+      N8N_WEBHOOK_SECRET:
+        required: true
 
 jobs:
   dependencies:
@@ -124,6 +129,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: npm test --if-present
+
+      - name: Upload Coverage to Codecov
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          fail_ci_if_error: false
 
   release-dev:
     if: github.ref == 'refs/heads/main'
@@ -242,3 +255,31 @@ jobs:
           docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
           docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
           docker push $REPO/${{ inputs.package_name }} --all-tags
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs:
+      - dependencies
+      - lint
+      - security_audit
+      - build
+      - test
+      - release-dev
+      - security_tests
+      - performance_tests
+      - release-staging
+      - release-prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Notify n8n
+        uses: ./cicd-repo/actions/notify-cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

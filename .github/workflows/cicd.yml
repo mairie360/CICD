@@ -38,3 +38,17 @@ jobs:
             @semantic-release/github
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Notify n8n
+        uses: ./actions/notify-cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

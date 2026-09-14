@@ -12,6 +12,8 @@ on:
     secrets:
       GH_PAT:
         required: true
+      N8N_WEBHOOK_SECRET:
+        required: true
 
 jobs:
   tests:
@@ -179,3 +181,26 @@ jobs:
           docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:$TAG
           docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:latest
           docker push $REPO/liquibase-migrations --all-tags
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs:
+      - tests
+      - release-dev
+      - database_tests
+      - release-staging
+      - release-prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Notify n8n
+        uses: ./cicd-repo/actions/notify-cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}
