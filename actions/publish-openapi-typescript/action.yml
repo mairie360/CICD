@@ -1,5 +1,5 @@
 name: 'Publish OpenAPI from TypeScript'
-description: 'Extrait le contrat d un BFF TS, compile et publie les types'
+description: 'Génère le client orval depuis le contrat d’un BFF TS et le publie (même format que publish-openapi-rust)'
 
 inputs:
   version:
@@ -15,20 +15,83 @@ inputs:
   token:
     required: true
     description: 'Token d authentification GitHub'
+  spec_file:
+    required: true
+    description: 'Chemin du contrat OpenAPI (JSON) exporté par le BFF'
 
 runs:
   using: "composite"
   steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+
     - shell: bash
+      env:
+        OWNER: ${{ github.repository_owner }}
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        VERSION: ${{ inputs.version }}
+        DIST_TAG: ${{ inputs.dist_tag }}
+        SPEC_FILE: ${{ inputs.spec_file }}
+        NODE_AUTH_TOKEN: ${{ inputs.token }}
       run: |
-        # [CHANGEMENT] Ajout de 'set -e' pour stopper net le script en cas d'erreur
-        # et éviter des échecs silencieux lors de la préparation du package.
-        set -e
+        set -euo pipefail
 
-        ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
+        ORG=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+        SAFE_NAME=$(echo "$PACKAGE_NAME" | tr '[:upper:]' '[:lower:]')
 
-        rm -rf ./dist_pkg
-        mkdir -p ./dist_pkg
+        if [ ! -s "$SPEC_FILE" ]; then
+          echo "::error::Contrat OpenAPI introuvable ou vide : '$SPEC_FILE'"
+          exit 1
+        fi
+        SPEC_PATH=$(realpath "$SPEC_FILE")
+        OUT_DIR="$PWD/generated"
 
-        echo "Dossier de staging initialisé pour : @${ORG}/${SAFE_NAME}-openapi"
+        # 1. Nettoyer tout ancien build pour éviter les résidus
+        rm -rf "$OUT_DIR"
+
+        # 2. Générer le client avec la même config orval que les APIs Rust
+        #    (hors du repo pour ne pas entrer en conflit avec une config locale).
+        cat > "$RUNNER_TEMP/orval.config.cjs" <<EOF
+        module.exports = {
+          mairie360: {
+            input: "${SPEC_PATH}",
+            output: {
+              mode: "split",
+              target: "${OUT_DIR}/endpoints",
+              schemas: "${OUT_DIR}/model",
+              client: "axios",
+              mock: false,
+            },
+          },
+        };
+        EOF
+        npx -y orval --config "$RUNNER_TEMP/orval.config.cjs"
+
+        # 3. Créer le package.json directement DANS generated
+        cat > "$OUT_DIR/package.json" <<EOF
+        {
+          "name": "@${ORG}/${SAFE_NAME}-openapi",
+          "version": "${VERSION}",
+          "main": "./index.ts",
+          "types": "./index.ts",
+          "dependencies": {
+            "axios": "^1.0.0"
+          },
+          "publishConfig": {
+            "registry": "https://npm.pkg.github.com"
+          }
+        }
+        EOF
+
+        # 4. Configuration NPM locale au dossier de publication
+        #    (le token reste dans l'env, npm résout ${NODE_AUTH_TOKEN} au publish)
+        printf '%s\n' \
+          "@${ORG}:registry=https://npm.pkg.github.com" \
+          '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+          > "$OUT_DIR/.npmrc"
+
+        # 5. Publication
+        cd "$OUT_DIR"
+        npm publish --access restricted --tag "$DIST_TAG"
