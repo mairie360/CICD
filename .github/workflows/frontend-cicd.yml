@@ -262,15 +262,14 @@ jobs:
       - release-prod
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       - name: Notify n8n
-        run: |
-          curl -X POST https://n8n.mairie360-eip.fr/webhook/cicd-failure \
-            -H "Content-Type: application/json" \
-            -H "X-Auth-Header: ${{ secrets.N8N_WEBHOOK_SECRET }}" \
-            -d '{
-              "repo": "${{ github.repository }}",
-              "branch": "${{ github.ref_name }}",
-              "commit": "${{ github.sha }}",
-              "run_id": "${{ github.run_id }}",
-              "workflow": "${{ github.workflow }}"
-            }'
+        uses: ./cicd-repo/actions/notify-cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}
