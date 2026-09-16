@@ -1,5 +1,5 @@
 name: "Publish OpenAPI from Rust"
-description: "Extrait le contrat d’une API Rust et publie les types TS"
+description: "Extrait le contrat d’une API Rust et publie le paquet TypeScript"
 
 inputs:
   version:
@@ -19,53 +19,39 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # [CHANGEMENT] Ajout de l'action setup-node pour s'assurer d'avoir un environnement
-    # Node.js propre et stable avant d'exécuter des commandes npm/npx.
     - name: Setup Node.js
       uses: actions/setup-node@v7
       with:
         node-version: "24"
 
-    - shell: bash
+    - name: Extraire le contrat et générer le paquet TypeScript
+      shell: bash
+      env:
+        OWNER: ${{ github.repository_owner }}
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        VERSION: ${{ inputs.version }}
+        GENERATE: ${{ github.action_path }}/../openapi-package/generate.sh
       run: |
-        # [CHANGEMENT] Ajout de 'set -e' pour faire échouer le workflow immédiatement
-        # en cas d'erreur dans le script bash (évite les publications partielles).
-        set -e
-
-        ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
-
-        # 1. Nettoyer tout ancien build pour éviter les résidus
-        rm -rf ./generated
-        mkdir -p ./generated
-
-        # 2. Générer le JSON depuis Rust
+        set -euo pipefail
+        ORG=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+        SAFE_NAME=$(echo "$PACKAGE_NAME" | tr '[:upper:]' '[:lower:]')
+        # Le contrat vient de l'API elle-même ; la configuration orval est celle du script partagé,
+        # pas l'orval.config.js du dépôt, pour que tous les paquets aient le même contenu.
         cargo open_api > openapi.json
+        bash "$GENERATE" openapi.json "$PWD/generated" "@${ORG}/${SAFE_NAME}-openapi" "$VERSION"
 
-        # [CHANGEMENT] Suppression du 'npm install orval -D' à chaque run qui ralentit l'action.
-        # Utilisation de 'npx -y orval' pour exécuter l'outil proprement sans installation locale superflue.
-        npx -y orval
-
-        # 5. Créer le package.json directement DANS generated
-        cat <<EOF > generated/package.json
-        {
-          "name": "@${ORG}/${SAFE_NAME}-openapi",
-          "version": "${{ inputs.version }}",
-          "main": "./index.ts",
-          "types": "./index.ts",
-          "dependencies": {
-            "axios": "^1.0.0"
-          },
-          "publishConfig": {
-            "registry": "https://npm.pkg.github.com"
-          }
-        }
-        EOF
-
-        # 6. Configuration NPM locale au dossier de publication
-        echo "@${ORG}:registry=https://npm.pkg.github.com" > generated/.npmrc
-        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> generated/.npmrc
-
-        # 7. PUBLICATION : L'étape cruciale
+    - name: Publier le paquet
+      shell: bash
+      env:
+        OWNER: ${{ github.repository_owner }}
+        DIST_TAG: ${{ inputs.dist_tag }}
+        NODE_AUTH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        ORG=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+        printf '%s\n' \
+          "@${ORG}:registry=https://npm.pkg.github.com" \
+          '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+          > "$PWD/generated/.npmrc"
         cd generated
-        npm publish --access restricted --tag ${{ inputs.dist_tag }}
+        npm publish --access restricted --tag "$DIST_TAG"

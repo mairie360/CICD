@@ -1,5 +1,5 @@
 name: 'Publish OpenAPI from TypeScript'
-description: 'Génère le client orval depuis le contrat d’un BFF TS et le publie (même format que publish-openapi-rust)'
+description: 'Génère le paquet TypeScript depuis le contrat d’un BFF TS et le publie (même format que publish-openapi-rust)'
 
 inputs:
   version:
@@ -27,71 +27,34 @@ runs:
       with:
         node-version: "24"
 
-    - shell: bash
+    - name: Générer le paquet TypeScript
+      shell: bash
       env:
         OWNER: ${{ github.repository_owner }}
         PACKAGE_NAME: ${{ inputs.package_name }}
         VERSION: ${{ inputs.version }}
-        DIST_TAG: ${{ inputs.dist_tag }}
         SPEC_FILE: ${{ inputs.spec_file }}
+        GENERATE: ${{ github.action_path }}/../openapi-package/generate.sh
+      run: |
+        set -euo pipefail
+        ORG=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+        SAFE_NAME=$(echo "$PACKAGE_NAME" | tr '[:upper:]' '[:lower:]')
+        bash "$GENERATE" "$SPEC_FILE" "$PWD/generated" "@${ORG}/${SAFE_NAME}-openapi" "$VERSION"
+
+    - name: Publier le paquet
+      shell: bash
+      env:
+        OWNER: ${{ github.repository_owner }}
+        DIST_TAG: ${{ inputs.dist_tag }}
         NODE_AUTH_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
-
         ORG=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-        SAFE_NAME=$(echo "$PACKAGE_NAME" | tr '[:upper:]' '[:lower:]')
-
-        if [ ! -s "$SPEC_FILE" ]; then
-          echo "::error::Contrat OpenAPI introuvable ou vide : '$SPEC_FILE'"
-          exit 1
-        fi
-        SPEC_PATH=$(realpath "$SPEC_FILE")
-        OUT_DIR="$PWD/generated"
-
-        # 1. Nettoyer tout ancien build pour éviter les résidus
-        rm -rf "$OUT_DIR"
-
-        # 2. Générer le client avec la même config orval que les APIs Rust
-        #    (hors du repo pour ne pas entrer en conflit avec une config locale).
-        cat > "$RUNNER_TEMP/orval.config.cjs" <<EOF
-        module.exports = {
-          mairie360: {
-            input: "${SPEC_PATH}",
-            output: {
-              mode: "split",
-              target: "${OUT_DIR}/endpoints",
-              schemas: "${OUT_DIR}/model",
-              client: "axios",
-              mock: false,
-            },
-          },
-        };
-        EOF
-        npx -y orval --config "$RUNNER_TEMP/orval.config.cjs"
-
-        # 3. Créer le package.json directement DANS generated
-        cat > "$OUT_DIR/package.json" <<EOF
-        {
-          "name": "@${ORG}/${SAFE_NAME}-openapi",
-          "version": "${VERSION}",
-          "main": "./index.ts",
-          "types": "./index.ts",
-          "dependencies": {
-            "axios": "^1.0.0"
-          },
-          "publishConfig": {
-            "registry": "https://npm.pkg.github.com"
-          }
-        }
-        EOF
-
-        # 4. Configuration NPM locale au dossier de publication
-        #    (le token reste dans l'env, npm résout ${NODE_AUTH_TOKEN} au publish)
+        # Configuration NPM locale au dossier de publication
+        # (le token reste dans l'env, npm résout ${NODE_AUTH_TOKEN} au publish)
         printf '%s\n' \
           "@${ORG}:registry=https://npm.pkg.github.com" \
           '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
-          > "$OUT_DIR/.npmrc"
-
-        # 5. Publication
-        cd "$OUT_DIR"
+          > "$PWD/generated/.npmrc"
+        cd generated
         npm publish --access restricted --tag "$DIST_TAG"
