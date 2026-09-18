@@ -180,6 +180,8 @@ jobs:
 
       - name: Run ZAP Security Scan via Docker Compose
         run: ./security_test.sh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   performance_tests:
     name: Isolated Performance Tests (k6)
@@ -191,6 +193,8 @@ jobs:
 
       - name: Run Performance Tests via Docker Compose
         run: ./performance_test.sh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-staging:
     needs: [security_tests, performance_tests]
