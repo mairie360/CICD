@@ -245,7 +245,7 @@ jobs:
 
   # ==========================================================================
   # DEV : l'image est construite UNE SEULE FOIS ici.
-  # Staging et Prod ajoutent des tags sur le même digest, sans rebuild.
+  # Staging et Prod ajoutent des tags sur la même image (dev -> staging -> prod), sans rebuild.
   # ==========================================================================
   release-dev:
     name: Release Dev
@@ -261,27 +261,23 @@ jobs:
       group: ${{ github.repository }}-release-dev
       cancel-in-progress: false
     outputs:
-      image: ${{ steps.meta.outputs.image }}
-      digest: ${{ steps.build.outputs.digest }}
+      image: ${{ steps.release.outputs.primary_image }}
+      sha_tag: ${{ steps.release.outputs.sha_tag }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Calculer la référence de l'image
-        id: meta
-        env:
-          OWNER: ${{ github.repository_owner }}
-          PACKAGE: ${{ inputs.package_name }}
-        run: |
-          set -euo pipefail
-          echo "image=ghcr.io/${OWNER,,}/${PACKAGE,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      # [CHANGEMENT] Checkout nécessaire avant le build pour pouvoir appeler
+      # l'action composite locale : contrairement au commentaire précédent,
+      # `cicd-repo/` finit donc dans le contexte de build (`COPY . .`), mais
+      # seulement dans le stage builder intermédiaire (jamais copié dans
+      # l'image runtime finale des Dockerfile multi-stage). Même compromis
+      # que APIs_cicd.yml, qui appelle déjà `docker-release` de cette façon.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
 
       # Généré hors du contexte de build (RUNNER_TEMP) et monté comme secret
       # BuildKit : absent des couches, du cache et de l'attestation de provenance.
@@ -297,46 +293,28 @@ jobs:
             "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" \
             > "$RUNNER_TEMP/docker-build.npmrc"
 
-      - name: Build & Push Image (Source of Truth)
-        id: build
-        uses: docker/build-push-action@v7
+      # [CHANGEMENT] Logique Docker (build unique + push dev-<sha> / dev)
+      # centralisée dans l'action composite partagée `docker-release`, comme
+      # dans APIs_cicd.yml / frontend-cicd.yml. Le mécanisme à deux secrets
+      # (fichier .npmrc + variable NODE_AUTH_TOKEN, jamais combinés dans un
+      # même artefact) est préservé via `build_secret_files`/`build_secret_envs`.
+      - name: Build & Push Image (Dev)
+        id: release
+        uses: ./cicd-repo/actions/docker-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          context: .
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:dev-${{ github.sha }}
-            ${{ steps.meta.outputs.image }}:dev-latest
-          secret-files: |
+          stage: dev
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          build_secret_files: |
             npmrc=${{ runner.temp }}/docker-build.npmrc
-          secret-envs: |
+          build_secret_envs: |
             node_auth_token=NODE_AUTH_TOKEN
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Supprimer le .npmrc de build
         if: always()
         run: rm -f "$RUNNER_TEMP/docker-build.npmrc"
-
-      - name: Vérifier le digest publié
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::Digest invalide renvoyé par build-push-action : '$DIGEST'"
-            exit 1
-          fi
-
-      # Récupérés APRÈS le build pour ne pas polluer le contexte Docker
-      # (sinon un `COPY . .` embarquerait cicd-repo/ dans l'image).
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
 
       - name: Download OpenAPI Spec
         uses: actions/download-artifact@v8
@@ -384,11 +362,11 @@ jobs:
             '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
             > .npmrc
 
-      # IMAGE_REF pointe sur le digest exact buildé par ce run
+      # IMAGE_REF pointe sur le tag dev-<sha_tag> exact buildé par ce run
       # (plus fiable que dev-latest si plusieurs pushs se suivent).
       - name: Run ZAP Security Scan via Docker Compose
         env:
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}@${{ needs.release-dev.outputs.digest }}
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash ./security_test.sh
 
@@ -429,7 +407,7 @@ jobs:
 
       - name: Run Performance Tests via Docker Compose
         env:
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}@${{ needs.release-dev.outputs.digest }}
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash ./performance_test.sh
 
@@ -438,7 +416,7 @@ jobs:
         run: rm -f .npmrc
 
   # ==========================================================================
-  # STAGING : tags staging-<sha> et staging-latest sur le digest de dev
+  # STAGING : tags staging-<sha_tag> et staging sur l'image de dev
   # ==========================================================================
   release-staging:
     name: Release Staging
@@ -453,52 +431,21 @@ jobs:
       group: ${{ github.repository }}-release-staging
       cancel-in-progress: false
     steps:
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      # imagetools create copie le manifest côté registre : digest, multi-arch
-      # et attestations de provenance sont conservés (contrairement à pull/tag/push).
-      - name: Promote Image to Staging
-        env:
-          IMAGE: ${{ needs.release-dev.outputs.image }}
-          DIGEST: ${{ needs.release-dev.outputs.digest }}
-        run: |
-          set -euo pipefail
-          digest_of() {
-            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'
-          }
-
-          if [ -z "$IMAGE" ] || [ -z "$DIGEST" ]; then
-            echo "::error::Sorties de release-dev manquantes (image='$IMAGE', digest='$DIGEST')"
-            exit 1
-          fi
-
-          SOURCE="$IMAGE@$DIGEST"
-          docker buildx imagetools inspect "$SOURCE" > /dev/null
-
-          docker buildx imagetools create \
-            --tag "$IMAGE:staging-$GITHUB_SHA" \
-            --tag "$IMAGE:staging-latest" \
-            "$SOURCE"
-
-          PUSHED="$(digest_of "$IMAGE:staging-$GITHUB_SHA")"
-          if [ "$PUSHED" != "$DIGEST" ]; then
-            echo "::error::Digest staging ($PUSHED) différent du digest dev ($DIGEST)"
-            exit 1
-          fi
-          echo "Promu en staging : $IMAGE:staging-$GITHUB_SHA -> $DIGEST"
-
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
+
+      # [CHANGEMENT] Re-tag dev -> staging centralisé dans l'action composite
+      # `docker-release`, comme APIs_cicd.yml / frontend-cicd.yml.
+      - name: Promote Image to Staging
+        uses: ./cicd-repo/actions/docker-release
+        with:
+          stage: staging
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download OpenAPI Spec
         uses: actions/download-artifact@v8
@@ -549,55 +496,15 @@ jobs:
         id: set_tag
         uses: ./cicd-repo/actions/semantic-tag
 
-      - name: Log in to GHCR
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      - name: Set up Docker Buildx
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        uses: docker/setup-buildx-action@v4
-
+      # [CHANGEMENT] Re-tag staging -> <version> / latest centralisé dans `docker-release`.
       - name: Promote Image to Prod
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        env:
-          IMAGE: ${{ needs.release-dev.outputs.image }}
-          DIGEST: ${{ needs.release-dev.outputs.digest }}
-          VERSION: ${{ steps.set_tag.outputs.new_release_version }}
-        run: |
-          set -euo pipefail
-          digest_of() {
-            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'
-          }
-
-          if [ -z "$VERSION" ]; then
-            echo "::error::new_release_published == 'true' mais new_release_version est vide"
-            exit 1
-          fi
-          if [[ ! "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo "::error::'$VERSION' n'est pas un tag Docker valide"
-            exit 1
-          fi
-
-          # Garde-fou : on ne promeut en prod que ce qui est réellement en staging.
-          STAGED="$(digest_of "$IMAGE:staging-$GITHUB_SHA")"
-          if [ "$STAGED" != "$DIGEST" ]; then
-            echo "::error::$IMAGE:staging-$GITHUB_SHA ($STAGED) ne correspond pas au digest dev ($DIGEST)"
-            exit 1
-          fi
-
-          docker buildx imagetools create \
-            --tag "$IMAGE:$VERSION" \
-            --tag "$IMAGE:latest" \
-            "$IMAGE@$DIGEST"
-
-          PUSHED="$(digest_of "$IMAGE:$VERSION")"
-          if [ "$PUSHED" != "$DIGEST" ]; then
-            echo "::error::Digest prod ($PUSHED) différent du digest attendu ($DIGEST)"
-            exit 1
-          fi
-          echo "Promu en prod : $IMAGE:$VERSION -> $DIGEST"
+        uses: ./cicd-repo/actions/docker-release
+        with:
+          stage: prod
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          release_published: ${{ steps.set_tag.outputs.new_release_published }}
+          release_version: ${{ steps.set_tag.outputs.new_release_version }}
 
       # Téléchargée après semantic-release pour ne pas ajouter de fichier
       # non suivi dans l'arbre de travail pendant le calcul de version.

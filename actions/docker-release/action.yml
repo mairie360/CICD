@@ -29,7 +29,15 @@ inputs:
     required: false
     default: ""
   build_secrets:
-    description: "secrets multi-lignes transmis à docker/build-push-action (ex: npmrc=<<EOF ... EOF)"
+    description: "secrets multi-lignes (valeurs inline) transmis à docker/build-push-action (ex: npmrc=<<EOF ... EOF)"
+    required: false
+    default: ""
+  build_secret_files:
+    description: "secret-files multi-lignes (id=path) transmis à docker/build-push-action (ex: npmrc=<runner-temp>/.npmrc, cas BFF)"
+    required: false
+    default: ""
+  build_secret_envs:
+    description: "secret-envs multi-lignes (id=ENV_VAR) transmis à docker/build-push-action (ex: node_auth_token=NODE_AUTH_TOKEN, cas BFF)"
     required: false
     default: ""
 
@@ -106,6 +114,8 @@ runs:
           ${{ steps.meta.outputs.primary_image }}:dev
         build-args: ${{ inputs.build_args }}
         secrets: ${{ inputs.build_secrets }}
+        secret-files: ${{ inputs.build_secret_files }}
+        secret-envs: ${{ inputs.build_secret_envs }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
