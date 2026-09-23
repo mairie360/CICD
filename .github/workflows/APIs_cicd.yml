@@ -134,6 +134,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # [NOUVEAU] Exposed so the test jobs below run against the exact `dev-<sha_tag>`
+    # image built here (same shape as BFFs-cicd.yml).
+    outputs:
+      image: ${{ steps.release.outputs.primary_image }}
+      sha_tag: ${{ steps.release.outputs.sha_tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -169,30 +174,55 @@ jobs:
           version: 0.0.0-dev-${{ steps.release.outputs.sha_tag }}
           dist_tag: dev
 
+  # [CHANGEMENT] The three test jobs below no longer rebuild the API from source: they pull
+  # the `dev-<sha_tag>` image published by `release-dev` (the one that gets promoted to
+  # staging and prod) and hand it to the compose stacks through `IMAGE_REF`. The consumer's
+  # `*_test.sh` scripts only build a local image when `IMAGE_REF` is empty (local usage).
   integration_tests:
     if: github.ref == 'refs/heads/main'
     name: Integration tests
     runs-on: ubuntu-latest
     needs: release-dev
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       # [CHANGEMENT] Integration tests are owned by the consumer repo: `integration_test.sh`
       # (same shape as `security_test.sh`) starts `docker-compose-integration.yml`, waits for
       # the test-runner service and returns its exit code. No external service is involved.
       - name: Run integration tests via Docker Compose
+        env:
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
         run: ./integration_test.sh
 
   integration_and_security:
     if: github.ref == 'refs/heads/main'
+    name: Dynamic Security Tests (OWASP ZAP)
     needs: release-dev
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Build and run tests via Docker Compose
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Run ZAP Security Scan via Docker Compose
+        env:
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
         run: |
           # Starts the security stack; the job fails when ZAP reports a vulnerability.
           ./security_test.sh
@@ -202,24 +232,25 @@ jobs:
     name: Isolated Performance Test
     runs-on: ubuntu-latest
     needs: release-dev
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Calculate Tags
-        id: meta
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          echo "image_tag=$REPO/${{ inputs.package_name }}:dev-$SHA_TAG" >> $GITHUB_OUTPUT
-
       - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      # [CHANGEMENT] `TARGET_IMAGE` (recomputed locally, never read by any compose file) is
+      # replaced by `IMAGE_REF`, taken from the `release-dev` outputs like the other test jobs.
       - name: Run Performance Tests via Docker Compose
+        env:
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
         run: |
-          export TARGET_IMAGE="${{ steps.meta.outputs.image_tag }}"
-          # --exit-code-from k6-perf-test fait échouer le job si k6 dépasse les seuils
+          # `--exit-code-from k6-perf-test` fails the job when k6 exceeds its thresholds.
           ./performance_test.sh
 
   release-staging:
