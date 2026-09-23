@@ -3,12 +3,8 @@ name: APIs CICD
 on:
   workflow_call:
     inputs:
-      postman_collection:
-        required: true
-        type: string
-      postman_environment:
-        required: true
-        type: string
+      # [CHANGEMENT] `postman_collection` / `postman_environment` removed: integration tests
+      # now run a collection committed in the consumer repo (see `integration_tests`).
       package_name:
         required: false
         type: string
@@ -17,8 +13,6 @@ on:
         required: true
         type: string
     secrets:
-      POSTMAN_API_KEY:
-        required: true
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
@@ -179,31 +173,21 @@ jobs:
 
   integration_tests:
     if: github.ref == 'refs/heads/main'
-    name: Postman Tests
+    name: Integration tests (newman)
     runs-on: ubuntu-latest
     needs: release-dev
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Build and start services
-        run: docker compose up -d --build
-
-      - name: Install Postman CLI
-        run: curl -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
-
-      - name: Login to Postman CLI
-        run: postman login --with-api-key ${{ secrets.POSTMAN_API_KEY }}
-
-      - name: Run Postman tests
-        run: |
-          postman collection run "${{ inputs.postman_collection }}" \
-            -e "${{ inputs.postman_environment }}" \
-            --bail
-
-      - name: Tear down
-        if: always()
-        run: docker compose down
+      # [CHANGEMENT] The Postman CLI (`postman login` + `postman collection run <id>`) is gone:
+      # it needed `POSTMAN_API_KEY` and a call to api.getpostman.com on every run. The consumer
+      # repo now commits its collection under `tests/postman/` and runs it with the
+      # `postman/newman` image from `docker-compose-integration.yml`; `integration_test.sh`
+      # (same shape as `security_test.sh`) waits for the `newman` service and returns its
+      # exit code, so no external API is involved.
+      - name: Run integration tests via Docker Compose
+        run: ./integration_test.sh
 
   integration_and_security:
     if: github.ref == 'refs/heads/main'
