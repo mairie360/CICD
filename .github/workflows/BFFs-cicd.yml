@@ -348,6 +348,16 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      # [NOUVEAU] MAIR-194: exposes the shared OpenAPI coverage gate
+      # (`cicd-repo/tests/zap/zap_hooks.py`) to the consumer's compose stack, which
+      # mounts it into the ZAP container and passes it with `--hook`.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       # docker-compose-security.yml monte ./.npmrc comme secret BuildKit pour
       # que le service bff-user puisse installer les packages @mairie360/* :
       # ce fichier n'existe pas après un simple checkout (il est gitignored).
@@ -390,6 +400,16 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # [NOUVEAU] MAIR-194: exposes the shared OpenAPI coverage gate
+      # (`cicd-repo/tests/k6/coverage.js`) to the consumer's compose stack, which mounts
+      # it into the k6 container next to `openapi.json` and imports it from `load-test.js`.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
 
       # docker-compose-performance.yml monte ./.npmrc comme secret BuildKit pour
       # que le service bff-user puisse installer les packages @mairie360/* :
