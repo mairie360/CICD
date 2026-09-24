@@ -220,11 +220,22 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      # [NOUVEAU] MAIR-194: exposes the shared OpenAPI coverage gate
+      # (`cicd-repo/tests/zap/zap_hooks.py`) to the consumer's compose stack, which
+      # mounts it into the ZAP container and passes it with `--hook`.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       - name: Run ZAP Security Scan via Docker Compose
         env:
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
         run: |
-          # Starts the security stack; the job fails when ZAP reports a vulnerability.
+          # Starts the security stack; the job fails when ZAP reports a vulnerability
+          # or when an operation of openapi.json was not reached (coverage gate).
           ./security_test.sh
 
   performance_isolated:
@@ -244,13 +255,24 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      # [NOUVEAU] MAIR-194: exposes the shared OpenAPI coverage gate
+      # (`cicd-repo/tests/k6/coverage.js`) to the consumer's compose stack, which mounts
+      # it into the k6 container next to `openapi.json` and imports it from `load-test.js`.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
       # [CHANGEMENT] `TARGET_IMAGE` (recomputed locally, never read by any compose file) is
       # replaced by `IMAGE_REF`, taken from the `release-dev` outputs like the other test jobs.
       - name: Run Performance Tests via Docker Compose
         env:
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
         run: |
-          # `--exit-code-from k6-perf-test` fails the job when k6 exceeds its thresholds.
+          # `--exit-code-from k6-perf-test` fails the job when k6 exceeds its thresholds,
+          # including the `operations_uncovered` one of the coverage gate.
           ./performance_test.sh
 
   release-staging:

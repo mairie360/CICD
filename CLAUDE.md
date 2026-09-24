@@ -8,9 +8,11 @@ Centralized CI/CD for the **mairie360** GitHub org (project "Mairie360"). It con
 
 - **Reusable workflows** in `.github/workflows/*_cicd.yml` (`on: workflow_call`), consumed by the org's application repos.
 - **Composite actions** in `actions/*/action.yml`, invoked by those reusable workflows.
+- **Shared test files** in `tests/` (`zap/zap_hooks.py`, `k6/coverage.js`): the OpenAPI coverage
+  gate mounted by the consumers' ZAP / k6 compose stacks (see "OpenAPI coverage gate" below).
 - This repo's own release pipeline (`.github/workflows/cicd.yml` + `.releaserc.json`), plus Renovate automation.
 
-There is nothing to build, run, or unit-test locally. Changes are validated by the downstream repos that call these workflows. If you want static validation, run [`actionlint`](https://github.com/rhysd/actionlint) against `.github/workflows/` and `actions/`.
+There is nothing to build, run, or unit-test locally. Changes are validated by the downstream repos that call these workflows. If you want static validation, run [`actionlint`](https://github.com/rhysd/actionlint) against `.github/workflows/` and `actions/`. The two files under `tests/` can be exercised by hand: `python3` with a fake `zap` object for the hook, `docker run grafana/k6` for the module.
 
 Dependency automation is delegated: `renovate.json` only does `"extends": ["github>mairie360/renovate-config"]`, so the actual Renovate rules live in the org's `mairie360/renovate-config` repo, not here.
 
@@ -60,6 +62,26 @@ These are live bugs in the workflows — don't copy the pattern, and fix in plac
 - **`publish-openapi-typescript`** only creates a staging directory — it compiles and publishes nothing. Any BFF relying on OpenAPI type publishing gets a silent no-op.
 - **Cross-repo drift (`Devops/Deploiment`)**: `docker-release` pushes mobile tags `dev` / `staging` (plus `<version>` / `latest` in prod), not the `dev-latest` / `staging-latest` the Argo CD umbrella chart's `dev`/`staging` instance `values.yaml` still pin for every image. This has been silently stale for the APIs since the `APIs_cicd.yml` pilot (their `dev-latest`/`staging-latest` tags stopped being pushed then); migrating `BFFs-cicd.yml` and `frontend-cicd.yml` to `docker-release` extends the same drift to every BFF and front. `Deploiment`'s values files need `dev-latest`/`staging-latest` → `dev`/`staging` before those environments will pick up new images again.
 
+## OpenAPI coverage gate (`tests/`, MAIR-194)
+
+`openapi.json` is the coverage reference of the ZAP and k6 stacks. `tests/zap/zap_hooks.py` is a
+`zap-api-scan.py` hook file (`--hook`): in `zap_pre_shutdown` it downloads the spec from the `-t`
+target (or `OPENAPI_COVERAGE_SPEC`), pages through `core/view/messages`, maps each request to an
+operation (literal paths win over templated ones, `servers` base paths are stripped) and prints a
+per-operation report; `pre_exit` then exits 1 when an operation was never reached or when a
+non-public operation only got 401/403. "Public" follows OpenAPI semantics: `security: []` on the
+operation, or no `security` anywhere (then the auth rule is disabled with a warning). Standard
+library only, it must run in the stock `zaproxy/zap-stable` image. `tests/k6/coverage.js` is a k6
+module: `createCoverage(handlers)` throws at init when the handler keys (`"METHOD /path"`) and the
+spec's operations differ, `run()` calls every handler once per iteration, `request()` tags each
+request with `op`, and the `operations_uncovered` / `operation_handler_errors` counters carry the
+`count==0` thresholds. The ZAP and k6 jobs of `APIs_cicd.yml` / `BFFs-cicd.yml` check out
+`cicd-repo/` so consumer compose files can mount `./cicd-repo/tests/...`; locally the consumers'
+`*_test.sh` clone it at the pinned `cicd_version`. The consumer-side wiring (compose mounts,
+`--hook`, `load-test.js` handlers, `security` in the spec) is documented in `README.md`; changing
+the hook's report format, the handler key format or the counter names is a breaking change for
+every consumer.
+
 ## Node version drift
 
 No shared Node version. `cicd.yml`, `front-libs-cicd.yml`, and both composite actions pin `24`; `BFFs-cicd.yml` defaults to `20`; `frontend-cicd.yml` defaults to `23`. When adding a workflow, prefer `24` unless the stack needs otherwise.
@@ -76,9 +98,9 @@ No shared Node version. `cicd.yml`, `front-libs-cicd.yml`, and both composite ac
 
 | Workflow | Stack | Extra behavior |
 |---|---|---|
-| `APIs_cicd.yml` | Rust API | `cargo audit`, `cargo clippy -D warnings`; coverage via the downstream **`cargo cov` alias** (must run tests, enforce the threshold, and emit `codecov.json`) + Codecov upload (main / PR-to-main, `CODECOV_TOKEN` is a **required** secret); `unit_test` needs only `lint` and runs in parallel with `build` (so `release-dev` needs both); integration tests via the downstream `./integration_test.sh` (Docker Compose, no external service), publishes OpenAPI (rust). Uses `docker-release` for all three release stages; `release-dev` exposes `image` / `sha_tag` outputs and the three test jobs (`integration_tests`, `integration_and_security`, `performance_isolated`) log in to GHCR and export `IMAGE_REF=<image>:dev-<sha_tag>` so the compose stacks test the published image instead of rebuilding from `development.Dockerfile`. |
+| `APIs_cicd.yml` | Rust API | `cargo audit`, `cargo clippy -D warnings`; coverage via the downstream **`cargo cov` alias** (must run tests, enforce the threshold, and emit `codecov.json`) + Codecov upload (main / PR-to-main, `CODECOV_TOKEN` is a **required** secret); `unit_test` needs only `lint` and runs in parallel with `build` (so `release-dev` needs both); integration tests via the downstream `./integration_test.sh` (Docker Compose, no external service), publishes OpenAPI (rust). Uses `docker-release` for all three release stages; `release-dev` exposes `image` / `sha_tag` outputs and the three test jobs (`integration_tests`, `integration_and_security`, `performance_isolated`) log in to GHCR and export `IMAGE_REF=<image>:dev-<sha_tag>` so the compose stacks test the published image instead of rebuilding from `development.Dockerfile`. The ZAP and k6 jobs also check out `cicd-repo/` for the OpenAPI coverage gate files. |
 | `back-lib-cicd.yml` | Rust library | `cargo audit` + `cargo deny check advisories licenses`, `cargo lint_check` (a cargo alias the repo must define), Codecov upload, `cargo publish` to crates.io, commits version bump to `main` |
-| `BFFs-cicd.yml` | Node/TS BFF | `npm audit --audit-level=high`, Semgrep (`p/typescript`, `p/owasp-top-ten`), Docker build with GH Packages `.npmrc` secret, publishes OpenAPI (typescript). Uses `docker-release` for all three release stages; `security_tests`/`performance_tests` target `<image>:dev-<sha_tag>`. |
+| `BFFs-cicd.yml` | Node/TS BFF | `npm audit --audit-level=high`, Semgrep (`p/typescript`, `p/owasp-top-ten`), Docker build with GH Packages `.npmrc` secret, publishes OpenAPI (typescript). Uses `docker-release` for all three release stages; `security_tests`/`performance_tests` target `<image>:dev-<sha_tag>` and check out `cicd-repo/` for the OpenAPI coverage gate files. |
 | `frontend-cicd.yml` | Next.js | `npm audit`, `npm run build`, Docker image only (no npm publish). Uses `docker-release` for all three release stages. |
 | `front-libs-cicd.yml` | npm component library | Publishes to GitHub Packages via manual git-tag bump (`vMAJOR.MINOR.PATCH`, rolls at 10), deploys Storybook to GitHub Pages when `src/` changed |
 | `database_cicd.yml` | DB + Liquibase | runs `./test.sh`, builds two images (`<package_name>` and `liquibase-migrations` from `./liquibase/Dockerfile`), migration/integrity tests |
@@ -87,7 +109,7 @@ No shared Node version. `cicd.yml`, `front-libs-cicd.yml`, and both composite ac
 
 ## What downstream repos must provide
 
-Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.test.yml` exposing services named `security-scan` (ZAP), `k6-perf-test` or `db-test` (jobs use `--exit-code-from <that service>`); for `APIs_cicd.yml`, an `integration_test.sh` (same shape as `security_test.sh`) driving a `docker-compose-integration.yml` whose test-runner service exercises the API and sets the exit code; for `APIs_cicd.yml` and `BFFs-cicd.yml`, compose stacks whose service under test reads `${IMAGE_REF}` (no `build:` block) and `*_test.sh` scripts that build a local image and export `IMAGE_REF` themselves when the variable is empty; `test.sh` (database); npm scripts `lint` / `build` / `test` / `typecheck` / `build-storybook`; cargo commands `cargo open_api` and the `cargo lint_check` alias (plus the `cargo cov` alias for `APIs_cicd.yml`, which must emit `codecov.json` and enforce the coverage threshold itself); an `openapi-spec.json` / `openapi.json` at repo root for OpenAPI publishing.
+Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.test.yml` exposing services named `security-scan` (ZAP), `k6-perf-test` or `db-test` (jobs use `--exit-code-from <that service>`); for `APIs_cicd.yml`, an `integration_test.sh` (same shape as `security_test.sh`) driving a `docker-compose-integration.yml` whose test-runner service exercises the API and sets the exit code; for `APIs_cicd.yml` and `BFFs-cicd.yml`, compose stacks whose service under test reads `${IMAGE_REF}` (no `build:` block), `*_test.sh` scripts that build a local image and export `IMAGE_REF` themselves when the variable is empty and clone `cicd-repo/` at the pinned `cicd_version` when it is absent, a ZAP service that mounts `cicd-repo/tests/zap/zap_hooks.py` and passes it with `--hook`, and a `load-test.js` built on `cicd-repo/tests/k6/coverage.js` with one handler per operation of `openapi.json`; `test.sh` (database); npm scripts `lint` / `build` / `test` / `typecheck` / `build-storybook`; cargo commands `cargo open_api` and the `cargo lint_check` alias (plus the `cargo cov` alias for `APIs_cicd.yml`, which must emit `codecov.json` and enforce the coverage threshold itself); an `openapi-spec.json` / `openapi.json` at repo root for OpenAPI publishing.
 
 ## Conventions
 
