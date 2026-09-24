@@ -1,0 +1,3 @@
+# Python bytecode (created when tests/zap/zap_hooks.py is run or imported locally)
+__pycache__/
+*.pyc
