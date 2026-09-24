@@ -3,12 +3,6 @@ name: APIs CICD
 on:
   workflow_call:
     inputs:
-      postman_collection:
-        required: true
-        type: string
-      postman_environment:
-        required: true
-        type: string
       package_name:
         required: false
         type: string
@@ -17,8 +11,6 @@ on:
         required: true
         type: string
     secrets:
-      POSTMAN_API_KEY:
-        required: true
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
@@ -179,31 +171,18 @@ jobs:
 
   integration_tests:
     if: github.ref == 'refs/heads/main'
-    name: Postman Tests
+    name: Integration tests
     runs-on: ubuntu-latest
     needs: release-dev
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Build and start services
-        run: docker compose up -d --build
-
-      - name: Install Postman CLI
-        run: curl -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
-
-      - name: Login to Postman CLI
-        run: postman login --with-api-key ${{ secrets.POSTMAN_API_KEY }}
-
-      - name: Run Postman tests
-        run: |
-          postman collection run "${{ inputs.postman_collection }}" \
-            -e "${{ inputs.postman_environment }}" \
-            --bail
-
-      - name: Tear down
-        if: always()
-        run: docker compose down
+      # [CHANGEMENT] Integration tests are owned by the consumer repo: `integration_test.sh`
+      # (same shape as `security_test.sh`) starts `docker-compose-integration.yml`, waits for
+      # the test-runner service and returns its exit code. No external service is involved.
+      - name: Run integration tests via Docker Compose
+        run: ./integration_test.sh
 
   integration_and_security:
     if: github.ref == 'refs/heads/main'
@@ -215,8 +194,7 @@ jobs:
 
       - name: Build and run tests via Docker Compose
         run: |
-          # Lance le compose. --exit-code-from security-scan fait échouer le job
-          # si Newman échoue OU si ZAP détecte une vulnérabilité.
+          # Starts the security stack; the job fails when ZAP reports a vulnerability.
           ./security_test.sh
 
   performance_isolated:
