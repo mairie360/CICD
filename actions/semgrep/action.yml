@@ -1,0 +1,163 @@
+name: "Semgrep SAST"
+description: >
+  Runs a Semgrep static analysis (SAST) scan of the checked-out repository with a pinned Semgrep
+  image. Fails the job on findings (configurable), always writes a SARIF report, uploads it as a
+  workflow artifact and, when enabled, to GitHub code scanning.
+  The caller must have checked out the repository to scan (`actions/checkout`) beforehand.
+
+inputs:
+  config:
+    description: >
+      Semgrep rulesets / config files, separated by spaces or newlines
+      (e.g. "p/rust p/secrets"). Each entry is passed as one `--config`.
+    required: true
+  paths:
+    description: "Targets to scan, relative to the workspace, separated by spaces or newlines"
+    required: false
+    default: "."
+  exclude:
+    description: >
+      Path patterns to skip, separated by spaces or newlines (one `--exclude` each).
+      `cicd-repo` is excluded by default because the reusable workflows check this repo out
+      inside the workspace.
+    required: false
+    default: "cicd-repo"
+  fail_on_findings:
+    description: >
+      'true' fails the job when Semgrep reports at least one finding (`--error`).
+      'false' only reports them (warning annotation + SARIF). Semgrep crashes always fail the job.
+    required: false
+    default: "true"
+  upload_sarif:
+    description: >
+      'true' uploads the SARIF report to GitHub code scanning. The calling job must be granted
+      `security-events: write` (and `actions: read` on private repos); leave 'false' otherwise.
+    required: false
+    default: "false"
+  sarif_category:
+    description: "Code scanning category, to keep several Semgrep uploads of one repo apart"
+    required: false
+    default: "semgrep"
+  artifact_name:
+    description: "Name of the workflow artifact holding the SARIF report ('' disables the upload)"
+    required: false
+    default: "semgrep-sarif"
+  image:
+    description: >
+      Semgrep image, pinned by version AND digest so a scan is reproducible.
+      Bump both together (the digest is the one of the multi-arch `semgrep/semgrep:<version>` tag).
+    required: false
+    default: "semgrep/semgrep:1.177.0@sha256:acaac22ffc7b7cc5926de0751b223bce0b2491c33d18422fa72f632c78d81198"
+
+outputs:
+  findings:
+    description: "Number of findings reported by Semgrep"
+    value: ${{ steps.scan.outputs.findings }}
+  exit_code:
+    description: "Raw Semgrep exit code (0 = clean, 1 = findings, other = Semgrep error)"
+    value: ${{ steps.scan.outputs.exit_code }}
+  sarif_file:
+    description: "Absolute path of the SARIF report on the runner"
+    value: ${{ steps.scan.outputs.sarif_file }}
+
+runs:
+  using: "composite"
+  steps:
+    # The scan itself never fails the step: its exit code is recorded so the SARIF report is
+    # uploaded first, and the verdict is applied by the last step.
+    # Inputs go through env vars (never `${{ }}` inside the script) to avoid shell injection.
+    - name: Run Semgrep scan
+      id: scan
+      shell: bash
+      env:
+        SEMGREP_IMAGE: ${{ inputs.image }}
+        SEMGREP_CONFIG: ${{ inputs.config }}
+        SEMGREP_PATHS: ${{ inputs.paths }}
+        SEMGREP_EXCLUDE: ${{ inputs.exclude }}
+      run: |
+        set -uo pipefail
+        set -f  # no glob expansion when splitting exclude patterns
+
+        out_dir="$RUNNER_TEMP/semgrep"
+        mkdir -p "$out_dir"
+
+        args=()
+        read -r -d '' -a configs <<< "$SEMGREP_CONFIG" || true
+        if [ "${#configs[@]}" -eq 0 ]; then
+          echo "::error::Semgrep: the 'config' input is empty"
+          exit 1
+        fi
+        for c in "${configs[@]}"; do args+=(--config "$c"); done
+        read -r -d '' -a excludes <<< "$SEMGREP_EXCLUDE" || true
+        for e in "${excludes[@]}"; do args+=(--exclude "$e"); done
+        read -r -d '' -a targets <<< "$SEMGREP_PATHS" || true
+        [ "${#targets[@]}" -eq 0 ] && targets=(.)
+
+        docker run --rm \
+          -v "${GITHUB_WORKSPACE}:/src" \
+          -v "${out_dir}:/out" \
+          -w /src \
+          "$SEMGREP_IMAGE" \
+          semgrep scan \
+            "${args[@]}" \
+            --metrics=off \
+            --disable-version-check \
+            --error \
+            --sarif-output=/out/semgrep.sarif \
+            "${targets[@]}"
+        code=$?
+
+        findings=0
+        has_sarif=false
+        if [ -s "$out_dir/semgrep.sarif" ]; then
+          has_sarif=true
+          findings=$(jq '[.runs[].results[]] | length' "$out_dir/semgrep.sarif" 2>/dev/null || echo 0)
+        fi
+        {
+          echo "exit_code=$code"
+          echo "has_sarif=$has_sarif"
+          echo "findings=$findings"
+          echo "sarif_file=$out_dir/semgrep.sarif"
+        } >> "$GITHUB_OUTPUT"
+        echo "Semgrep exit code: $code, findings: $findings"
+
+    - name: Upload SARIF report (artifact)
+      if: inputs.artifact_name != '' && steps.scan.outputs.has_sarif == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ${{ steps.scan.outputs.sarif_file }}
+        if-no-files-found: warn
+        retention-days: 14
+
+    - name: Upload SARIF report (code scanning)
+      if: inputs.upload_sarif == 'true' && steps.scan.outputs.has_sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif_file }}
+        category: ${{ inputs.sarif_category }}
+
+    - name: Apply Semgrep verdict
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        FINDINGS: ${{ steps.scan.outputs.findings }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+      run: |
+        set -euo pipefail
+        case "$EXIT_CODE" in
+          0)
+            echo "Semgrep: no findings."
+            ;;
+          1)
+            if [ "$FAIL_ON_FINDINGS" = "true" ]; then
+              echo "::error title=Semgrep::$FINDINGS finding(s), see the scan log above or the SARIF report"
+              exit 1
+            fi
+            echo "::warning title=Semgrep::$FINDINGS finding(s) (non-blocking: fail_on_findings is false), see the scan log above or the SARIF report"
+            ;;
+          *)
+            echo "::error title=Semgrep::Semgrep failed with exit code ${EXIT_CODE:-unknown}"
+            exit 1
+            ;;
+        esac

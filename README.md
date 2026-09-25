@@ -19,6 +19,58 @@ jobs:
 The jobs that need something from this repo check it out at that same `cicd_version` into
 `cicd-repo/` at the root of the consumer checkout.
 
+## Semgrep SAST (`actions/semgrep`)
+
+Every stack workflow has a `security_sast` job ("Code Security Audit (Semgrep)") that calls the
+`semgrep` composite action. The action runs a pinned image
+(`semgrep/semgrep:<version>@sha256:<digest>`, input `image`), writes a SARIF report and uploads
+it as the `semgrep-sarif` workflow artifact. Its verdict comes from the Semgrep exit code: findings
+fail the job when `fail_on_findings` is `true`, and only raise a warning annotation when it is
+`false`. A Semgrep crash always fails the job. The `build` job (`release-dev` for the database, the
+publish jobs for front libs) waits for it.
+
+| Workflow | Default rulesets (`semgrep_config`) | Blocking by default (`semgrep_fail_on_findings`) |
+| --- | --- | --- |
+| `BFFs-cicd.yml` | `p/typescript p/owasp-top-ten p/nodejs p/expressjs p/secrets p/dockerfile p/github-actions` | yes (unchanged) |
+| `APIs_cicd.yml` | `p/rust p/secrets p/dockerfile p/github-actions` | no, report-only |
+| `back-lib-cicd.yml` | `p/rust p/secrets p/github-actions` | no, report-only |
+| `frontend-cicd.yml` | `p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions` | no, report-only |
+| `front-libs-cicd.yml` | `p/typescript p/react p/secrets p/github-actions` | no, report-only |
+| `database_cicd.yml` | `p/secrets p/dockerfile p/github-actions` | no, report-only |
+
+The Semgrep registry has no SQL/PostgreSQL ruleset (`p/sql` and `p/postgres` do not exist), and
+`p/nextjs` is currently empty, so neither is used.
+
+A consumer repo can override both inputs:
+
+```yaml
+jobs:
+  ci:
+    uses: mairie360/CICD/.github/workflows/APIs_cicd.yml@vX.Y.Z
+    with:
+      cicd_version: vX.Y.Z
+      semgrep_fail_on_findings: true           # opt in once the repo is clean
+      semgrep_config: "p/rust p/secrets"       # optional, replaces the default list
+    secrets: inherit
+```
+
+**Rollout.** On the stacks it newly covers, the scan starts report-only because it already finds
+issues on `main` in almost every repo (for example Dockerfiles without `USER`, consumer workflows
+using `secrets: inherit`, third-party actions pinned by tag). Fix each finding, or justify it with an
+inline `# nosemgrep: <rule-id>` comment that says why, then set `semgrep_fail_on_findings: true` in
+the repo. Once every repo of a stack is clean, flip that workflow's default to `true`.
+
+**Code scanning.** The action can also upload the SARIF to GitHub code scanning
+(`upload_sarif: 'true'`), but the reusable workflows keep it off. That job would need
+`security-events: write`, and a reusable workflow job cannot ask for more than its caller grants.
+Every consumer `cicd.yml` sets a top-level `permissions:` block without it, so asking for it would
+make those callers fail at startup. To enable it, grant `security-events: write` in the consumer
+callers first, then turn the upload on in the workflows.
+
+**Bumping Semgrep.** Update the `image` default in `actions/semgrep/action.yml`, and update the
+version tag and the digest together. The digest is the one of the multi-arch tag
+(`docker buildx imagetools inspect semgrep/semgrep:<version>`).
+
 ## OpenAPI coverage gate (ZAP + k6)
 
 `openapi.json` is the contract of every API and BFF. Two shared files turn it into a coverage
