@@ -116,3 +116,7 @@ Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.te
 - Commit messages: Conventional Commits (angular) — `feat:`, `fix:`, `perf:`, `chore(deps):`, breaking via `!` or footer. This drives every semantic-release version bump.
 - Pin third-party actions by major tag (`@v7`); the org's own refs use `inputs.cicd_version`.
 - French is used in comments and step names throughout; `# [CHANGEMENT]` / `# [NOUVEAU]` mark deliberate deviations from a previous version — keep annotating significant changes the same way.
+
+## Pull request reviewers
+
+Every PR requests a review from the whole team, minus its author: `CarolinHugo`, `LAURETbenjamin`, `MathTek` and `Quentintnrl` (`gh pr create … --reviewer CarolinHugo,LAURETbenjamin,MathTek`). `.github/CODEOWNERS` makes GitHub request them automatically as well.
