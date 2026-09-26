@@ -7,6 +7,16 @@ on:
         required: true
         type: string
         description: "Ref (tag) du repo mairie360/CICD pour les actions composites"
+      semgrep_config:
+        required: false
+        type: string
+        default: "p/typescript p/react p/secrets p/github-actions"
+        description: "Semgrep rulesets (space-separated) run by the SAST job"
+      semgrep_fail_on_findings:
+        required: false
+        type: boolean
+        default: false
+        description: "Fail the pipeline on Semgrep findings (report-only by default until the existing findings are triaged, see README)"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -120,9 +130,32 @@ jobs:
         # S'assure que le projet compile ses types sans erreur (si un script 'typecheck' existe)
         run: npm run typecheck --if-present
 
+  # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
+  security_sast:
+    name: Code Security Audit (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout CICD repo
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run Semgrep Security Scan
+        uses: ./cicd-repo/actions/semgrep
+        with:
+          config: ${{ inputs.semgrep_config }}
+          fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
+
   storybook:
     name: Storybook Chain
-    needs: security
+    needs: [security, security_sast]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
@@ -175,7 +208,7 @@ jobs:
 
   package:
     name: Package Publish
-    needs: [test, security]
+    needs: [test, security, security_sast]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -233,6 +266,7 @@ jobs:
       - build
       - test
       - security
+      - security_sast
       - storybook
       - package
     runs-on: ubuntu-latest
