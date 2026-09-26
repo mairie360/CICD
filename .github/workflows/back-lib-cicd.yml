@@ -205,9 +205,11 @@ jobs:
           GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
 
       - name: Setup Rust & Cargo Release
+        if: steps.set_tag.outputs.new_release_published == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Publish to Cargo
+        if: steps.set_tag.outputs.new_release_published == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           NEW_VERSION: ${{ steps.set_tag.outputs.new_release_version }}
@@ -216,6 +218,7 @@ jobs:
           cargo publish --allow-dirty
 
       - name: Commit version bump
+        if: steps.set_tag.outputs.new_release_published == 'true'
         env:
           NEW_VERSION: ${{ steps.set_tag.outputs.new_release_version }}
         run: |
