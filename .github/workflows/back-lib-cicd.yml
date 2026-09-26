@@ -221,13 +221,24 @@ jobs:
         if: steps.set_tag.outputs.new_release_published == 'true'
         env:
           NEW_VERSION: ${{ steps.set_tag.outputs.new_release_version }}
+          GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+        # `main` only accepts changes through a pull request, so the bump goes
+        # through a short-lived branch that is squash-merged right away. The
+        # `[skip ci]` subject keeps the merge from starting another release.
         run: |
+          BRANCH="chore/release-bump-$NEW_VERSION"
+          SUBJECT="chore(release): bump version to $NEW_VERSION [skip ci]"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock
           if ! git diff --cached --quiet; then
-            git commit -m "chore(release): bump version to $NEW_VERSION [skip ci]"
-            git push origin HEAD:main
+            git switch -c "$BRANCH"
+            git commit -m "$SUBJECT"
+            git push origin "$BRANCH"
+            PR_URL=$(gh pr create --base main --head "$BRANCH" \
+              --title "chore(release): bump version to $NEW_VERSION" \
+              --body "Automatic version bump after publishing $NEW_VERSION to crates.io.")
+            gh pr merge "$PR_URL" --squash --delete-branch --subject "$SUBJECT" --body ""
           fi
 
   notify-cicd-failure:
