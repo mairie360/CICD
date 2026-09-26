@@ -6,6 +6,16 @@ on:
       cicd_version:
         required: true
         type: string
+      semgrep_config:
+        required: false
+        type: string
+        default: "p/rust p/secrets p/github-actions"
+        description: "Semgrep rulesets (space-separated) run by the SAST job"
+      semgrep_fail_on_findings:
+        required: false
+        type: boolean
+        default: false
+        description: "Fail the pipeline on Semgrep findings (report-only by default until the existing findings are triaged, see README)"
     secrets:
       CARGO_REGISTRY_TOKEN:
         required: true
@@ -82,10 +92,33 @@ jobs:
       - name: Run lint check
         run: cargo lint_check
 
+  # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
+  security_sast:
+    name: Code Security Audit (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout CICD repo
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run Semgrep Security Scan
+        uses: ./cicd-repo/actions/semgrep
+        with:
+          config: ${{ inputs.semgrep_config }}
+          fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
+
   build:
     name: Build Release
     runs-on: ubuntu-latest
-    needs: [lint, security_audit] # Bloqué si l'audit de sécurité échoue
+    needs: [lint, security_audit, security_sast] # Bloqué si l'audit de sécurité échoue
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
@@ -203,6 +236,7 @@ jobs:
     needs:
       - dependencies
       - security_audit
+      - security_sast
       - lint
       - build
       - unit_test

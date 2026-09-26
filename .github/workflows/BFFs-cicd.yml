@@ -31,6 +31,16 @@ on:
         type: number
         default: 30
         description: "Rétention des artefacts, doit couvrir le délai d'approbation Staging/Prod"
+      semgrep_config:
+        required: false
+        type: string
+        default: "p/typescript p/owasp-top-ten p/nodejs p/expressjs p/secrets p/dockerfile p/github-actions"
+        description: "Semgrep rulesets (space-separated) run by the SAST job"
+      semgrep_fail_on_findings:
+        required: false
+        type: boolean
+        default: true
+        description: "Fail the pipeline on Semgrep findings (blocking SAST)"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -135,19 +145,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # returntocorp/semgrep-action est dépréciée : on utilise l'image officielle.
-      # --error fait échouer le job si Semgrep remonte au moins un finding.
+      - name: Checkout CICD repo
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      # [CHANGEMENT] MAIR-230: shared `semgrep` composite action (pinned image) instead of the
+      # inline `semgrep/semgrep:latest` run. Still blocking by default; the previous rulesets
+      # (p/typescript, p/owasp-top-ten) are kept and extended (0 new findings on the BFFs' main).
       - name: Run Semgrep Security Scan
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/src" \
-            -w /src \
-            semgrep/semgrep:latest \
-            semgrep scan \
-              --config p/typescript \
-              --config p/owasp-top-ten \
-              --error
+        uses: ./cicd-repo/actions/semgrep
+        with:
+          config: ${{ inputs.semgrep_config }}
+          fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
 
   build:
     name: Build & OpenAPI Spec

@@ -15,6 +15,16 @@ on:
       cicd_version:
         required: true
         type: string
+      semgrep_config:
+        required: false
+        type: string
+        default: "p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions"
+        description: "Semgrep rulesets (space-separated) run by the SAST job"
+      semgrep_fail_on_findings:
+        required: false
+        type: boolean
+        default: false
+        description: "Fail the pipeline on Semgrep findings (report-only by default until the existing findings are triaged, see README)"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -90,10 +100,33 @@ jobs:
       - name: Run npm audit (Block on High/Critical)
         run: npm audit --audit-level=high
 
+  # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
+  security_sast:
+    name: Code Security Audit (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout CICD repo
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run Semgrep Security Scan
+        uses: ./cicd-repo/actions/semgrep
+        with:
+          config: ${{ inputs.semgrep_config }}
+          fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
+
   build:
     name: Build Check (Next.js)
     runs-on: ubuntu-latest
-    needs: [lint, security_audit]
+    needs: [lint, security_audit, security_sast]
     steps:
       - uses: actions/checkout@v7
 
@@ -263,6 +296,7 @@ jobs:
       - dependencies
       - lint
       - security_audit
+      - security_sast
       - build
       - test
       - release-dev

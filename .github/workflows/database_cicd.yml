@@ -9,6 +9,16 @@ on:
       cicd_version:
         required: true
         type: string
+      semgrep_config:
+        required: false
+        type: string
+        default: "p/secrets p/dockerfile p/github-actions"
+        description: "Semgrep rulesets (space-separated) run by the SAST job"
+      semgrep_fail_on_findings:
+        required: false
+        type: boolean
+        default: false
+        description: "Fail the pipeline on Semgrep findings (report-only by default until the existing findings are triaged, see README)"
     secrets:
       GH_PAT:
         required: true
@@ -35,9 +45,32 @@ jobs:
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
+  security_sast:
+    name: Code Security Audit (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout CICD repo
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run Semgrep Security Scan
+        uses: ./cicd-repo/actions/semgrep
+        with:
+          config: ${{ inputs.semgrep_config }}
+          fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
+
   release-dev:
     name: Release to Dev
-    needs: tests
+    needs: [tests, security_sast]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: Dev
@@ -196,6 +229,7 @@ jobs:
     if: failure()
     needs:
       - tests
+      - security_sast
       - release-dev
       - database_tests
       - release-staging
