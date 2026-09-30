@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Lint workflows
-        uses: docker://rhysd/actionlint:1.7.7
+        uses: docker://rhysd/actionlint:1.7.12
         with:
           # Pre-existing shellcheck info/style findings (unquoted variables, etc.) are ignored
           # until they are cleaned up; every other actionlint/shellcheck finding fails the job.
