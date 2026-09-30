@@ -1,34 +1,40 @@
 name: Docker Build Temporary Manual
+description: Build and push an image from a non-main ref (manual escape hatch, refuses to run on main)
 
-on:
-  workflow_call:
-    inputs:
-      package_name:
-        description: 'Name of the package group'
-        required: true
-        type: string
+inputs:
+  package_name:
+    description: 'Name of the package group'
+    required: true
+  github_token:
+    description: 'Token used to log in to GHCR (needs packages: write)'
+    required: true
 
-permissions:
-  contents: read
-  packages: write
-
-run:
-  using: "composite"
+runs:
+  using: composite
   steps:
     - name: Check branch
       if: github.ref == 'refs/heads/main'
+      shell: bash
       run: |
-        echo "This workflow cannot be run on the main branch."
+        echo "This action cannot be run on the main branch."
         exit 1
 
     - name: Checkout repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Log in to GitHub Container Registry
-      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github_token }}
 
-    - name: Build Docker image
-      run: docker build -t ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.sha }} .
-
-    - name: Push Docker image
-      run: docker push ghcr.io/${{ github.repository_owner }}/${{ inputs.package_name }}:${{ github.ref_name }}-${{ github.sha }}
+    - name: Build and push Docker image
+      shell: bash
+      env:
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        REF_NAME: ${{ github.ref_name }}
+      run: |
+        IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${PACKAGE_NAME}:${REF_NAME//\//-}-${GITHUB_SHA}"
+        docker build -t "$IMAGE" .
+        docker push "$IMAGE"

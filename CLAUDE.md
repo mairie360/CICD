@@ -52,13 +52,12 @@ Key invariants:
 - Deploy jobs gated on `if: github.ref == 'refs/heads/main'`. Note: in `APIs_cicd.yml` only `release-dev` (and the test jobs) carry the explicit `if`; `release-staging` / `release-prod` are gated **transitively** — their `needs` chain is main-only, so they skip off-main because a skipped dependency skips its dependents. Keep that chain intact if you reorder jobs.
 - GitHub **Environments** (`Dev`, `Staging`, `Prod`, `Release`, and the misc `release`/`releasee` in `front-libs`) hold the approval gates and environment-scoped secrets. Environment names are load-bearing strings.
 - Image registry is GHCR: `ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/<package_name>`. The `,,` lowercases the owner — this is **bash** parameter expansion and only works inside `run:` blocks, not in `${{ }}` expressions.
-- Short SHA convention: the `docker-release` action uniformizes the SHA tag at 7 chars (`sha_length` input) for every stack it's wired into, computed once in `steps.meta` and reused for `dev-`/`staging-` tags at every stage — no more per-job `${GITHUB_SHA::7}` recomputation to keep in sync. `database_cicd.yml`, not yet migrated, still does its own (buggy, see below).
+- Short SHA convention: the `docker-release` action uniformizes the SHA tag at 7 chars (`sha_length` input) for every stack it's wired into, computed once in `steps.meta` and reused for `dev-`/`staging-` tags at every stage — no more per-job `${GITHUB_SHA::7}` recomputation to keep in sync. `database_cicd.yml`, not yet migrated, still does its own.
 
 ## Known landmines (unfixed as of this branch)
 
 These are live bugs in the workflows — don't copy the pattern, and fix in place if you touch the job:
 
-- **`database_cicd.yml`** `database_tests` references `needs.release-dev.outputs.sha_tag`, but `release-dev` declares no `outputs:` block — the value is always empty. Same job uses `${{ github.repository_owner,, }}` inside `${{ }}`; bash `,,` lowercasing does **not** work there (only in `run:` blocks), so `REPO` gets a mixed-case owner. Not migrated to `docker-release` yet, so it doesn't benefit from the fix described above.
 - **`publish-openapi-typescript`** only creates a staging directory — it compiles and publishes nothing. Any BFF relying on OpenAPI type publishing gets a silent no-op.
 - **Cross-repo drift (`Devops/Deploiment`)**: `docker-release` pushes mobile tags `dev` / `staging` (plus `<version>` / `latest` in prod), not the `dev-latest` / `staging-latest` the Argo CD umbrella chart's `dev`/`staging` instance `values.yaml` still pin for every image. This has been silently stale for the APIs since the `APIs_cicd.yml` pilot (their `dev-latest`/`staging-latest` tags stopped being pushed then); migrating `BFFs-cicd.yml` and `frontend-cicd.yml` to `docker-release` extends the same drift to every BFF and front. `Deploiment`'s values files need `dev-latest`/`staging-latest` → `dev`/`staging` before those environments will pick up new images again.
 
@@ -84,7 +83,7 @@ every consumer.
 
 ## Node version drift
 
-No shared Node version. `cicd.yml`, `front-libs-cicd.yml`, and both composite actions pin `24`; `BFFs-cicd.yml` defaults to `20`; `frontend-cicd.yml` defaults to `23`. When adding a workflow, prefer `24` unless the stack needs otherwise.
+No shared Node input. `cicd.yml`, `front-libs-cicd.yml`, and both composite actions pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
 
 ## Composite actions (`actions/`)
 
@@ -93,7 +92,7 @@ No shared Node version. `cicd.yml`, `front-libs-cicd.yml`, and both composite ac
 - **`semgrep`** (MAIR-230) — SAST with a Semgrep image pinned by **version + digest** (input `image`; the org's "major tag" pinning rule does not apply here, bump tag and digest together). Inputs: `config` (space/newline-separated rulesets, one `--config` each), `paths`, `exclude` (defaults to `cicd-repo`, which every workflow checks out inside the workspace), `fail_on_findings` (default `'true'`), `upload_sarif` (default `'false'`, needs `security-events: write`), `sarif_category`, `artifact_name` (`semgrep-sarif`). The scan step never fails by itself: it records the exit code, the SARIF is uploaded (artifact, optionally code scanning), then a last step applies the verdict (exit 1 → findings, fail or warn; any other non-zero → Semgrep error, always fails). Outputs `findings`, `exit_code`, `sarif_file`. Called by the `security_sast` job of **every** stack workflow through the `semgrep_config` / `semgrep_fail_on_findings` workflow inputs (per-stack defaults and the rollout are in `README.md`). Code-scanning upload stays off in the workflows: consumer callers declare top-level `permissions:` without `security-events`, and a nested job cannot request more than its caller grants (startup failure).
 - **`publish-openapi-rust`** — `cargo open_api > openapi.json` → `npx -y orval` → publishes `@<org>/<package_name>-openapi` to `npm.pkg.github.com`.
 - **`publish-openapi-typescript`** — same intent for TS BFFs; currently a **stub** (only stages a directory, does not publish). Treat as incomplete.
-- **`docker/docker_manual_build`** — manual/off-main image build escape hatch; refuses to run on `main`. **Currently malformed**: the file mixes reusable-workflow syntax (`on: workflow_call`, top-level `permissions:`) with composite-action syntax and uses `run:` where a composite needs `runs:`. It is neither a valid composite action nor a valid workflow as written — fix the shape before relying on it.
+- **`docker/docker_manual_build`** — manual/off-main image build escape hatch; refuses to run on `main`. Composite action taking `package_name` and `github_token`; the caller must pass the token explicitly (composites cannot read `secrets`).
 
 ## Per-stack workflow notes
 

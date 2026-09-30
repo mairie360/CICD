@@ -10,7 +10,7 @@ on:
       node_version:
         required: false
         type: string
-        default: "20"
+        default: "24"
         description: "Version de Node.js"
       cicd_version:
         required: true
