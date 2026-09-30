@@ -36,6 +36,7 @@ publish jobs for front libs) waits for it.
 | `back-lib-cicd.yml` | `p/rust p/secrets p/github-actions` | no, report-only |
 | `frontend-cicd.yml` | `p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions` | no, report-only |
 | `front-libs-cicd.yml` | `p/typescript p/react p/secrets p/github-actions` | no, report-only |
+| `bffs-lib-cicd.yml` | `p/typescript p/nodejs p/expressjs p/secrets p/github-actions` | no, report-only |
 | `database_cicd.yml` | `p/secrets p/dockerfile p/github-actions` | no, report-only |
 
 The Semgrep registry has no SQL/PostgreSQL ruleset (`p/sql` and `p/postgres` do not exist), and
