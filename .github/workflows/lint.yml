@@ -1,0 +1,38 @@
+name: Lint workflows
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Lint workflows
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          # Pre-existing shellcheck info/style findings (unquoted variables, etc.) are ignored
+          # until they are cleaned up; every other actionlint/shellcheck finding fails the job.
+          args: -color -ignore SC2086 -ignore SC2016 -ignore SC2129
+
+      - name: Check composite actions are valid YAML with a runs block
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = 0
+          for f in sorted(glob.glob("actions/**/action.yml", recursive=True)):
+              doc = yaml.safe_load(open(f))
+              if "runs" not in doc or "on" in doc or True in doc:
+                  print(f"::error file={f}::not a valid composite action (missing runs: or workflow-only keys)")
+                  bad = 1
+          sys.exit(bad)
+          PY

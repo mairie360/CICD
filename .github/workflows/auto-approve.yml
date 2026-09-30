@@ -1,13 +1,15 @@
 name: Auto Approve Renovate
 on: pull_request_target
 
+permissions: {}
+
 jobs:
   auto-approve:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-      contents: write
-    if: github.actor == 'renovate[bot]'
+    # Trust the PR author (immutable for the PR's lifetime), not the actor that triggered the event.
+    if: github.event.pull_request.user.login == 'renovate[bot]'
     steps:
       - uses: hmarr/auto-approve-action@v4
         with:

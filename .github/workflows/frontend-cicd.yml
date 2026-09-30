@@ -9,7 +9,7 @@ on:
       node_version:
         required: false
         type: string
-        default: "23"
+        default: "24"
       # [CHANGEMENT] Ajout de l'input cicd_version pour récupérer dynamiquement
       # l'action partagée de release, comme dans les autres workflows centralisés.
       cicd_version:
