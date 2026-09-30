@@ -7,7 +7,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    name: Lint workflows
+    uses: ./.github/workflows/lint.yml
+    permissions:
+      contents: read
+
   release:
+    needs: lint
     runs-on: ubuntu-latest
     environment: Release
     permissions:
@@ -42,7 +49,7 @@ jobs:
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
-    needs: release
+    needs: [lint, release]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository

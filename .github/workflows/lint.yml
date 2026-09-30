@@ -2,9 +2,8 @@ name: Lint workflows
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+  # Called by cicd.yml so that a release depends on the lint result (no separate push trigger).
+  workflow_call:
 
 permissions:
   contents: read
