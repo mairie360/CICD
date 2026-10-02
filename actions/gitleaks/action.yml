@@ -1,0 +1,63 @@
+name: "Gitleaks"
+description: >
+  Scans the commits added by the current push or pull request for leaked secrets with a pinned
+  Gitleaks image (the gitleaks-action needs a paid license on organizations). Only the new commits
+  are scanned, so a secret already in the history does not fail every later build: rotate it,
+  then add its fingerprint to a `.gitleaksignore` at the root of the calling repo.
+  The caller must check the repository out with `fetch-depth: 0`.
+
+inputs:
+  fail_on_findings:
+    description: "'true' fails the job when a secret is found, 'false' only reports it"
+    required: false
+    default: "true"
+  image:
+    description: "Gitleaks image, pinned by version AND digest. Bump both together."
+    required: false
+    default: "zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run Gitleaks
+      shell: bash
+      env:
+        GITLEAKS_IMAGE: ${{ inputs.image }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PUSH_BEFORE: ${{ github.event.before }}
+      run: |
+        set -uo pipefail
+        zero=0000000000000000000000000000000000000000
+        if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
+          base="$PR_BASE_SHA"
+        else
+          base="$PUSH_BEFORE"
+        fi
+        # New branch, force push or unknown event: fall back to the last commit only.
+        if [ -n "$base" ] && [ "$base" != "$zero" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+          log_opts="$base..$GITHUB_SHA"
+        else
+          log_opts="-1 $GITHUB_SHA"
+        fi
+        echo "Scanning commits: $log_opts"
+
+        exit_code=1
+        [ "$FAIL_ON_FINDINGS" = "true" ] || exit_code=0
+        # Same uid as the checkout, otherwise git refuses the repo ("dubious ownership").
+        docker run --rm \
+          --user "$(id -u):$(id -g)" \
+          -v "$GITHUB_WORKSPACE:/repo" \
+          -w /repo \
+          "$GITLEAKS_IMAGE" \
+          git /repo \
+            --log-opts="$log_opts" \
+            --redact \
+            --no-banner \
+            --exit-code "$exit_code"
+        code=$?
+        if [ "$code" -ne 0 ]; then
+          echo "::error title=Gitleaks::secret(s) found in the new commits (or Gitleaks failed, exit code $code): rotate them first, see the log above"
+        fi
+        exit "$code"

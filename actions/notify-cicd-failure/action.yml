@@ -9,16 +9,27 @@ inputs:
 runs:
   using: composite
   steps:
+    # Context values and the secret go through env vars and the JSON is built by jq: a forged
+    # branch or workflow name can neither run shell code nor break the payload (MAIR-416).
     - name: Notify n8n
       shell: bash
+      env:
+        N8N_WEBHOOK_SECRET: ${{ inputs.n8n_webhook_secret }}
+        REPO: ${{ github.repository }}
+        BRANCH: ${{ github.ref_name }}
+        COMMIT: ${{ github.sha }}
+        RUN_ID: ${{ github.run_id }}
+        WORKFLOW: ${{ github.workflow }}
       run: |
-        curl -X POST https://n8n.mairie360-eip.fr/webhook/cicd-failure \
+        set -euo pipefail
+        jq -n \
+          --arg repo "$REPO" \
+          --arg branch "$BRANCH" \
+          --arg commit "$COMMIT" \
+          --arg run_id "$RUN_ID" \
+          --arg workflow "$WORKFLOW" \
+          '{repo: $repo, branch: $branch, commit: $commit, run_id: $run_id, workflow: $workflow}' |
+        curl -sS -X POST https://n8n.mairie360-eip.fr/webhook/cicd-failure \
           -H "Content-Type: application/json" \
-          -H "X-Auth-Header: ${{ inputs.n8n_webhook_secret }}" \
-          -d '{
-            "repo": "${{ github.repository }}",
-            "branch": "${{ github.ref_name }}",
-            "commit": "${{ github.sha }}",
-            "run_id": "${{ github.run_id }}",
-            "workflow": "${{ github.workflow }}"
-          }'
+          -H @<(printf 'X-Auth-Header: %s\n' "$N8N_WEBHOOK_SECRET") \
+          --data-binary @-

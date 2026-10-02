@@ -94,13 +94,15 @@ jobs:
 
   # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
   security_sast:
-    name: Code Security Audit (Semgrep)
+    name: Code Security Audit (Semgrep, Gitleaks)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Gitleaks scans the commits of the push / PR
 
       - name: Checkout CICD repo
         uses: actions/checkout@v7
@@ -114,6 +116,10 @@ jobs:
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
+
+      # [NOUVEAU] MAIR-416: secret scan of the new commits.
+      - name: Run Gitleaks Secret Scan
+        uses: ./cicd-repo/actions/gitleaks
 
   build:
     name: Build Release

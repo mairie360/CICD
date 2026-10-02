@@ -21,7 +21,7 @@ The jobs that need something from this repo check it out at that same `cicd_vers
 
 ## Semgrep SAST (`actions/semgrep`)
 
-Every stack workflow has a `security_sast` job ("Code Security Audit (Semgrep)") that calls the
+Every stack workflow has a `security_sast` job ("Code Security Audit (Semgrep, Gitleaks)") that calls the
 `semgrep` composite action. The action runs a pinned image
 (`semgrep/semgrep:<version>@sha256:<digest>`, input `image`), writes a SARIF report and uploads
 it as the `semgrep-sarif` workflow artifact. Its verdict comes from the Semgrep exit code: findings
@@ -31,13 +31,13 @@ publish jobs for front libs) waits for it.
 
 | Workflow | Default rulesets (`semgrep_config`) | Blocking by default (`semgrep_fail_on_findings`) |
 | --- | --- | --- |
-| `BFFs-cicd.yml` | `p/typescript p/owasp-top-ten p/nodejs p/expressjs p/secrets p/dockerfile p/github-actions` | yes (unchanged) |
-| `APIs_cicd.yml` | `p/rust p/secrets p/dockerfile p/github-actions` | no, report-only |
+| `BFFs-cicd.yml` | `p/typescript p/owasp-top-ten p/nodejs p/expressjs p/secrets p/dockerfile p/github-actions` | yes |
+| `APIs_cicd.yml` | `p/rust p/secrets p/dockerfile p/github-actions` | yes (since MAIR-416) |
 | `back-lib-cicd.yml` | `p/rust p/secrets p/github-actions` | no, report-only |
-| `frontend-cicd.yml` | `p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions` | no, report-only |
+| `frontend-cicd.yml` | `p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions` | yes (since MAIR-416) |
 | `front-libs-cicd.yml` | `p/typescript p/react p/secrets p/github-actions` | no, report-only |
 | `bffs-lib-cicd.yml` | `p/typescript p/nodejs p/expressjs p/secrets p/github-actions` | no, report-only |
-| `database_cicd.yml` | `p/secrets p/dockerfile p/github-actions` | no, report-only |
+| `database_cicd.yml` | `p/secrets p/dockerfile p/github-actions` | yes (since MAIR-416) |
 
 The Semgrep registry has no SQL/PostgreSQL ruleset (`p/sql` and `p/postgres` do not exist), and
 `p/nextjs` is currently empty, so neither is used.
@@ -50,16 +50,17 @@ jobs:
     uses: mairie360/CICD/.github/workflows/APIs_cicd.yml@vX.Y.Z
     with:
       cicd_version: vX.Y.Z
-      semgrep_fail_on_findings: true           # opt in once the repo is clean
+      semgrep_fail_on_findings: false          # temporary opt-out while the findings are triaged
       semgrep_config: "p/rust p/secrets"       # optional, replaces the default list
     secrets: inherit
 ```
 
-**Rollout.** On the stacks it newly covers, the scan starts report-only because it already finds
-issues on `main` in almost every repo (for example Dockerfiles without `USER`, consumer workflows
-using `secrets: inherit`, third-party actions pinned by tag). Fix each finding, or justify it with an
-inline `# nosemgrep: <rule-id>` comment that says why, then set `semgrep_fail_on_findings: true` in
-the repo. Once every repo of a stack is clean, flip that workflow's default to `true`.
+**Rollout.** Every stack that ships an image (APIs, BFFs, fronts, database) blocks on findings by
+default since MAIR-416; the libraries are still report-only. The scan already finds issues on
+`main` in many repos (for example Dockerfiles without `USER`, consumer workflows using
+`secrets: inherit`, third-party actions pinned by tag). Fix each finding, or justify it with an
+inline `# nosemgrep: <rule-id>` comment that says why. A repo that cannot be cleaned before it bumps
+`cicd_version` sets `semgrep_fail_on_findings: false` explicitly, and removes it once clean.
 
 **Code scanning.** The action can also upload the SARIF to GitHub code scanning
 (`upload_sarif: 'true'`), but the reusable workflows keep it off. That job would need
@@ -71,6 +72,62 @@ callers first, then turn the upload on in the workflows.
 **Bumping Semgrep.** Update the `image` default in `actions/semgrep/action.yml`, and update the
 version tag and the digest together. The digest is the one of the multi-arch tag
 (`docker buildx imagetools inspect semgrep/semgrep:<version>`).
+
+## Gitleaks (`actions/gitleaks`)
+
+The `security_sast` job of every workflow also runs Gitleaks (pinned
+`zricethezav/gitleaks:<version>@sha256:<digest>` image, not the `gitleaks-action`, which needs a
+paid license on organizations). It only scans the commits the run adds: `base..head` of a pull
+request, `before..after` of a push, the last commit for a new branch. A secret already in the
+history therefore does not fail every later build: rotate it first, then add its fingerprint to a
+`.gitleaksignore` at the root of the repo. The job checks the repo out with `fetch-depth: 0`.
+
+## Image release (`actions/docker-release`, MAIR-416)
+
+`APIs_cicd.yml`, `BFFs-cicd.yml`, `frontend-cicd.yml` and `database_cicd.yml` release their images
+through the same action:
+
+| Stage | What happens | Tags written |
+| --- | --- | --- |
+| `dev` | single build with an SBOM and a `mode=max` provenance attestation, push as `dev-<sha>` only, Trivy scan of that digest, cosign keyless signature, then the mobile tag | `dev-<sha>`, `dev` |
+| `staging` | resolves the digest of `dev-<sha>` (the commit of this run, never the mobile `dev`), checks it equals the digest `release-dev` built, verifies the cosign signature, re-tags that digest | `staging-<sha>`, `staging` |
+| `prod` | same from `staging-<sha>`, only when semantic-release published a version | `<version>`, `latest` |
+
+Re-tagging uses `docker buildx imagetools create`, which copies the manifest index server side: the
+digest, and so the signature, SBOM and provenance attached to it, are the same in every
+environment. The mobile tags (`dev`, `staging`, `latest`) are only written for humans and Argo CD,
+never read by the pipeline, so an approval that waits for hours still promotes the image of its
+own commit, the one ZAP and k6 tested.
+
+**Trivy.** Pinned `aquasec/trivy:<version>@sha256:<digest>` image (input `trivy_image`), not
+`aquasecurity/trivy-action`, whose tags were rewritten during the March 2026 compromise. Fixable
+`HIGH`/`CRITICAL` vulnerabilities fail the `release-dev` job: the image keeps its `dev-<sha>` tag
+but never gets `dev` and is never promoted. Accept a risk with a `.trivyignore` at the root of the
+repo (one CVE id per line, with a comment saying why and until when); opt out temporarily with
+`image_scan_fail_on_findings: false`.
+
+**Signature.** `cosign sign` uses the GitHub OIDC token of `release-dev`, so that job needs
+`id-token: write`, and the consumer caller must grant it (see the migration below). Check an image
+by hand with:
+
+```bash
+cosign verify ghcr.io/mairie360/<package>:<tag> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/mairie360/CICD/\.github/workflows/'
+```
+
+### Migrating a consumer to the MAIR-416 release
+
+- **Every image repo:** add `id-token: write` to the `permissions:` block of `.github/workflows/cicd.yml`
+  (fronts already have it). Without it the run fails at startup.
+- **Fronts:** the npm token is now a BuildKit secret. Replace `ARG NODE_AUTH_TOKEN` and the
+  `.npmrc` written from it with
+  `RUN --mount=type=secret,id=node_auth_token,env=NODE_AUTH_TOKEN …` (same as the BFFs). A front
+  must also define an `npm test` script (`--if-present` is gone).
+- **Database:** the mobile tags are now `dev` / `staging` instead of `dev-latest` /
+  `staging-latest`.
+- **APIs, fronts, database:** Semgrep and Trivy now block; set `semgrep_fail_on_findings: false` /
+  `image_scan_fail_on_findings: false`, or add a `.trivyignore`, while the findings are fixed.
 
 ## OpenAPI coverage gate (ZAP + k6)
 

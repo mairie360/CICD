@@ -1,187 +1,378 @@
 name: "Docker Release"
 description: >
-  Logique commune de release Docker partagée par les workflows API / BFF / frontend / database.
-  L'image est construite UNE SEULE FOIS au stage `dev`. Chaque étape suivante (`staging`, `prod`)
-  ajoute de nouveaux tags sur l'image existante (jamais de rebuild, jamais de suppression de tag).
+  Docker release lifecycle shared by the API / BFF / frontend / database workflows.
+  The image is built ONCE, at the `dev` stage: pushed as `dev-<sha>` with an SBOM and a provenance
+  attestation, scanned with Trivy, signed with cosign (keyless), and only then tagged `dev`.
+  `staging` and `prod` never rebuild: they resolve the digest of the immutable tag of the SAME
+  commit (`dev-<sha>`, then `staging-<sha>`), verify its signature and add their tags to that
+  digest. The mobile tags (`dev`, `staging`, `latest`) are only written, never read.
 
 inputs:
   stage:
-    description: "Étape de release : dev | staging | prod"
+    description: "Release stage: dev | staging | prod"
     required: true
   package_name:
-    description: "Nom de base de l'image principale (sans le registre `ghcr.io/<owner>/` ni le tag)"
+    description: "Base name of the primary image (without the `ghcr.io/<owner>/` registry nor the tag)"
     required: true
   github_token:
-    description: "Token pour l'authentification GHCR (passer `secrets.GITHUB_TOKEN`)"
+    description: "Token used to authenticate to GHCR (pass `secrets.GITHUB_TOKEN`)"
     required: true
 
-  # --- Build : utilisés uniquement quand stage == dev ---
+  # --- Build: only used when stage == dev ---
   context:
-    description: "Contexte de build Docker"
+    description: "Docker build context"
     required: false
     default: "."
   dockerfile:
-    description: "Chemin du Dockerfile de l'image principale"
+    description: "Dockerfile of the primary image"
     required: false
     default: "Dockerfile"
   build_args:
-    description: "build-args multi-lignes transmis à docker/build-push-action (ex: NODE_AUTH_TOKEN=...)"
+    description: >
+      Multi-line build-args passed to docker/build-push-action. Never put a secret here: build
+      args end up in the image history, the build cache and the provenance attestation.
     required: false
     default: ""
   build_secrets:
-    description: "secrets multi-lignes (valeurs inline) transmis à docker/build-push-action (ex: npmrc=<<EOF ... EOF)"
+    description: "Multi-line secrets (inline values) passed to docker/build-push-action (e.g. npmrc=<<EOF ... EOF)"
     required: false
     default: ""
   build_secret_files:
-    description: "secret-files multi-lignes (id=path) transmis à docker/build-push-action (ex: npmrc=<runner-temp>/.npmrc, cas BFF)"
+    description: "Multi-line secret-files (id=path) passed to docker/build-push-action (e.g. npmrc=<runner-temp>/.npmrc, BFF case)"
     required: false
     default: ""
   build_secret_envs:
-    description: "secret-envs multi-lignes (id=ENV_VAR) transmis à docker/build-push-action (ex: node_auth_token=NODE_AUTH_TOKEN, cas BFF)"
+    description: "Multi-line secret-envs (id=ENV_VAR) passed to docker/build-push-action (e.g. node_auth_token=NODE_AUTH_TOKEN)"
     required: false
     default: ""
 
-  # --- Image secondaire optionnelle (ex: `liquibase-migrations` pour la stack database) ---
+  # --- Optional secondary image (e.g. `liquibase-migrations` for the database stack) ---
   extra_package_name:
-    description: "Nom de base d'une seconde image à construire / promouvoir en parallèle (optionnel)"
+    description: "Base name of a second image built / promoted alongside the primary one (optional)"
     required: false
     default: ""
   extra_dockerfile:
-    description: "Dockerfile de l'image secondaire"
+    description: "Dockerfile of the secondary image"
     required: false
     default: "Dockerfile"
 
-  # --- Prod uniquement : sorties de l'action `semantic-tag`, appelée en amont dans le job ---
+  # --- Image scan (dev only) ---
+  scan:
+    description: "'true' scans the freshly built image(s) with Trivy before they get the `dev` tag"
+    required: false
+    default: "true"
+  scan_fail_on_findings:
+    description: >
+      'true' fails the job (the image keeps its `dev-<sha>` tag but never gets `dev` and is never
+      promoted) when Trivy finds a fixable vulnerability of `scan_severity`. 'false' only reports.
+      Accepted risks go in a `.trivyignore` file at the root of the calling repo.
+    required: false
+    default: "true"
+  scan_severity:
+    description: "Comma-separated Trivy severities that count as findings"
+    required: false
+    default: "HIGH,CRITICAL"
+  trivy_image:
+    description: >
+      Trivy image, pinned by version AND digest (do not use aquasecurity/trivy-action, whose tags
+      were rewritten during the March 2026 compromise). Bump both together.
+    required: false
+    default: "aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969"
+
+  # --- Signature ---
+  sign:
+    description: >
+      'true' signs the image(s) with cosign keyless at the dev stage, and verifies that signature
+      before every promotion. The calling job needs `id-token: write`.
+    required: false
+    default: "true"
+  signer_identity_regexp:
+    description: "Certificate identity (signing workflow) accepted when verifying a signature before a promotion"
+    required: false
+    default: '^https://github\.com/mairie360/CICD/\.github/workflows/[^@]+@.+$'
+
+  # --- staging / prod: digest handed over by the previous stage ---
+  expected_digest:
+    description: >
+      Digest of the primary image returned by the previous stage (`digest` output). When set, the
+      promotion fails if the source tag (`dev-<sha>` / `staging-<sha>`) no longer points to it.
+    required: false
+    default: ""
+  expected_extra_digest:
+    description: "Same as `expected_digest`, for the secondary image"
+    required: false
+    default: ""
+
+  # --- Prod only: outputs of the `semantic-tag` action, called earlier in the job ---
   release_published:
-    description: "'true' si semantic-release a publié une nouvelle version"
+    description: "'true' when semantic-release published a new version"
     required: false
     default: "false"
   release_version:
-    description: "Version sémantique calculée (ex: 1.4.0)"
+    description: "Computed semantic version (e.g. 1.4.0)"
     required: false
     default: ""
 
   sha_length:
-    description: "Longueur du SHA court utilisé dans les tags `dev-` / `staging-` (uniformisé pour tous les stages)"
+    description: "Length of the short SHA used in the `dev-` / `staging-` tags (same for every stage)"
     required: false
     default: "7"
 
 outputs:
   sha_tag:
-    description: "Tag SHA court calculé (ex: a1b2c3d)"
+    description: "Computed short SHA tag (e.g. a1b2c3d)"
     value: ${{ steps.meta.outputs.sha_tag }}
   primary_image:
-    description: "Référence complète de l'image principale, sans tag (ex: ghcr.io/mairie360/my-api)"
+    description: "Full reference of the primary image, without tag (e.g. ghcr.io/mairie360/my-api)"
     value: ${{ steps.meta.outputs.primary_image }}
+  digest:
+    description: "Digest of the primary image built (dev) or promoted (staging / prod)"
+    value: ${{ steps.digest.outputs.digest }}
+  extra_digest:
+    description: "Digest of the secondary image built or promoted ('' without secondary image)"
+    value: ${{ steps.digest.outputs.extra_digest }}
 
 runs:
   using: "composite"
   steps:
-    - name: Calculer les tags et références d'images
+    # Inputs reach the scripts through env vars, never `${{ }}` inside `run:` (shell injection).
+    - name: Compute tags and image references
       id: meta
       shell: bash
+      env:
+        STAGE: ${{ inputs.stage }}
+        LEN: ${{ inputs.sha_length }}
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        EXTRA_PACKAGE_NAME: ${{ inputs.extra_package_name }}
       run: |
         set -euo pipefail
-        LEN="${{ inputs.sha_length }}"
-        SHA_TAG="${GITHUB_SHA:0:$LEN}"
+        case "$STAGE" in
+          dev|staging|prod) ;;
+          *) echo "::error::docker-release: unknown stage '$STAGE' (dev | staging | prod)"; exit 1 ;;
+        esac
         REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
         {
-          echo "sha_tag=$SHA_TAG"
-          echo "primary_image=$REPO/${{ inputs.package_name }}"
-          echo "extra_image=$REPO/${{ inputs.extra_package_name }}"
+          echo "sha_tag=${GITHUB_SHA:0:$LEN}"
+          echo "primary_image=$REPO/$PACKAGE_NAME"
+          if [ -n "$EXTRA_PACKAGE_NAME" ]; then echo "extra_image=$REPO/$EXTRA_PACKAGE_NAME"; fi
         } >> "$GITHUB_OUTPUT"
 
-    - name: Connexion à GHCR
+    - name: Log in to GHCR
       shell: bash
-      run: echo "${{ inputs.github_token }}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      env:
+        GHCR_TOKEN: ${{ inputs.github_token }}
+      run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    - name: Install cosign
+      if: inputs.sign == 'true' && (inputs.stage != 'prod' || inputs.release_published == 'true')
+      uses: sigstore/cosign-installer@v4
 
     # ------------------------------------------------------------------
-    # STAGE dev : build unique + push  dev-<sha> ET dev (tag mobile, facile à retrouver)
+    # STAGE dev: single build, pushed as dev-<sha> only, then scan + sign,
+    # and only then the mobile `dev` tag.
     # ------------------------------------------------------------------
     - name: Set up Docker Buildx
       if: inputs.stage == 'dev'
       uses: docker/setup-buildx-action@v4
 
-    - name: Build & Push (dev) — image principale
+    - name: Build & Push (dev) - primary image
+      id: build
       if: inputs.stage == 'dev'
       uses: docker/build-push-action@v7
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
         push: true
-        tags: |
-          ${{ steps.meta.outputs.primary_image }}:dev-${{ steps.meta.outputs.sha_tag }}
-          ${{ steps.meta.outputs.primary_image }}:dev
+        tags: ${{ steps.meta.outputs.primary_image }}:dev-${{ steps.meta.outputs.sha_tag }}
         build-args: ${{ inputs.build_args }}
         secrets: ${{ inputs.build_secrets }}
         secret-files: ${{ inputs.build_secret_files }}
         secret-envs: ${{ inputs.build_secret_envs }}
+        provenance: mode=max
+        sbom: true
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-    - name: Build & Push (dev) — image secondaire
+    - name: Build & Push (dev) - secondary image
+      id: build_extra
       if: inputs.stage == 'dev' && inputs.extra_package_name != ''
       uses: docker/build-push-action@v7
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.extra_dockerfile }}
         push: true
-        tags: |
-          ${{ steps.meta.outputs.extra_image }}:dev-${{ steps.meta.outputs.sha_tag }}
-          ${{ steps.meta.outputs.extra_image }}:dev
+        tags: ${{ steps.meta.outputs.extra_image }}:dev-${{ steps.meta.outputs.sha_tag }}
+        provenance: mode=max
+        sbom: true
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-    # ------------------------------------------------------------------
-    # STAGE staging : ajoute staging-<sha> ET staging (mobile) à l'image :dev existante
-    # Les tags dev-* restent inchangés, rien n'est supprimé.
-    # ------------------------------------------------------------------
-    - name: Promotion vers Staging
-      if: inputs.stage == 'staging'
+    # dev: the digests come from the build. staging / prod: they are resolved from the immutable
+    # tag of the same commit, never from a mobile tag that another run may have moved meanwhile.
+    - name: Resolve image digests
+      id: digest
+      if: inputs.stage != 'prod' || inputs.release_published == 'true'
       shell: bash
       env:
+        STAGE: ${{ inputs.stage }}
         SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
         PRIMARY_IMAGE: ${{ steps.meta.outputs.primary_image }}
         EXTRA_IMAGE: ${{ steps.meta.outputs.extra_image }}
-        HAS_EXTRA: ${{ inputs.extra_package_name != '' }}
+        BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+        BUILT_EXTRA_DIGEST: ${{ steps.build_extra.outputs.digest }}
+        EXPECTED_DIGEST: ${{ inputs.expected_digest }}
+        EXPECTED_EXTRA_DIGEST: ${{ inputs.expected_extra_digest }}
       run: |
         set -euo pipefail
-        promote() {
-          img="$1"
-          docker pull "$img:dev"
-          docker tag  "$img:dev" "$img:staging-$SHA_TAG"
-          docker tag  "$img:dev" "$img:staging"
-          docker push "$img:staging-$SHA_TAG"
-          docker push "$img:staging"
+        resolve() {  # <image> <built digest> <expected digest>
+          local img="$1" built="$2" expected="$3" src digest
+          if [ "$STAGE" = "dev" ]; then
+            digest="$built"
+          else
+            if [ "$STAGE" = "staging" ]; then src="dev-$SHA_TAG"; else src="staging-$SHA_TAG"; fi
+            digest=$(docker buildx imagetools inspect "$img:$src" --format '{{json .Manifest}}' | jq -r '.digest')
+            if [ -n "$expected" ] && [ "$digest" != "$expected" ]; then
+              echo "::error title=docker-release::$img:$src points to $digest, expected $expected (tag rewritten since the previous stage)" >&2
+              return 1
+            fi
+          fi
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error title=docker-release::could not resolve the digest of $img (got '$digest')" >&2
+            return 1
+          fi
+          echo "$digest"
         }
-        promote "$PRIMARY_IMAGE"
-        [ "$HAS_EXTRA" = "true" ] && promote "$EXTRA_IMAGE" || true
+        primary=$(resolve "$PRIMARY_IMAGE" "$BUILT_DIGEST" "$EXPECTED_DIGEST")
+        echo "digest=$primary" >> "$GITHUB_OUTPUT"
+        echo "$PRIMARY_IMAGE@$primary"
+        if [ -n "$EXTRA_IMAGE" ]; then
+          extra=$(resolve "$EXTRA_IMAGE" "$BUILT_EXTRA_DIGEST" "$EXPECTED_EXTRA_DIGEST")
+          echo "extra_digest=$extra" >> "$GITHUB_OUTPUT"
+          echo "$EXTRA_IMAGE@$extra"
+        fi
 
-    # ------------------------------------------------------------------
-    # STAGE prod : ajoute <version> ET latest à l'image :staging existante
-    # (uniquement si semantic-release a publié une version). Rien n'est supprimé.
-    # ------------------------------------------------------------------
-    - name: Promotion vers Prod
-      if: inputs.stage == 'prod' && inputs.release_published == 'true'
+    - name: Scan image(s) with Trivy
+      if: inputs.stage == 'dev' && inputs.scan == 'true'
       shell: bash
       env:
-        VERSION: ${{ inputs.release_version }}
-        PRIMARY_IMAGE: ${{ steps.meta.outputs.primary_image }}
-        EXTRA_IMAGE: ${{ steps.meta.outputs.extra_image }}
+        TRIVY_IMAGE: ${{ inputs.trivy_image }}
+        SEVERITY: ${{ inputs.scan_severity }}
+        FAIL_ON_FINDINGS: ${{ inputs.scan_fail_on_findings }}
+        GHCR_TOKEN: ${{ inputs.github_token }}
+        PRIMARY_REF: ${{ steps.meta.outputs.primary_image }}@${{ steps.digest.outputs.digest }}
+        EXTRA_REF: ${{ steps.meta.outputs.extra_image }}@${{ steps.digest.outputs.extra_digest }}
+        HAS_EXTRA: ${{ inputs.extra_package_name != '' }}
+      run: |
+        set -uo pipefail
+        exit_code=1
+        [ "$FAIL_ON_FINDINGS" = "true" ] || exit_code=0
+        ignore_args=()
+        if [ -f "$GITHUB_WORKSPACE/.trivyignore" ]; then
+          ignore_args=(--ignorefile /src/.trivyignore)
+        fi
+        refs=("$PRIMARY_REF")
+        [ "$HAS_EXTRA" = "true" ] && refs+=("$EXTRA_REF")
+        status=0
+        for ref in "${refs[@]}"; do
+          echo "::group::Trivy $ref"
+          docker run --rm \
+            -e TRIVY_USERNAME="$GITHUB_ACTOR" \
+            -e TRIVY_PASSWORD="$GHCR_TOKEN" \
+            -v "$GITHUB_WORKSPACE:/src:ro" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image \
+              --scanners vuln \
+              --severity "$SEVERITY" \
+              --ignore-unfixed \
+              --no-progress \
+              --skip-version-check \
+              --exit-code "$exit_code" \
+              "${ignore_args[@]}" \
+              "$ref"
+          code=$?
+          echo "::endgroup::"
+          if [ "$code" -ne 0 ]; then
+            echo "::error title=Trivy::$ref has fixable $SEVERITY vulnerabilities (or the scan failed, exit code $code)"
+            status=1
+          fi
+        done
+        if [ "$status" -eq 0 ] && [ "$FAIL_ON_FINDINGS" != "true" ]; then
+          echo "::notice title=Trivy::report-only scan (scan_fail_on_findings is false), see the log above"
+        fi
+        exit "$status"
+
+    - name: Sign image(s) with cosign (keyless)
+      if: inputs.stage == 'dev' && inputs.sign == 'true'
+      shell: bash
+      env:
+        PRIMARY_REF: ${{ steps.meta.outputs.primary_image }}@${{ steps.digest.outputs.digest }}
+        EXTRA_REF: ${{ steps.meta.outputs.extra_image }}@${{ steps.digest.outputs.extra_digest }}
         HAS_EXTRA: ${{ inputs.extra_package_name != '' }}
       run: |
         set -euo pipefail
-        if [ -z "$VERSION" ]; then
-          echo "::error::release_published == 'true' mais release_version est vide" >&2
-          exit 1
-        fi
-        promote() {
-          img="$1"
-          docker pull "$img:staging"
-          docker tag  "$img:staging" "$img:$VERSION"
-          docker tag  "$img:staging" "$img:latest"
-          docker push "$img:$VERSION"
-          docker push "$img:latest"
+        cosign sign --yes "$PRIMARY_REF"
+        if [ "$HAS_EXTRA" = "true" ]; then cosign sign --yes "$EXTRA_REF"; fi
+
+    - name: Verify signature(s) before promotion
+      if: inputs.stage != 'dev' && inputs.sign == 'true' && (inputs.stage == 'staging' || inputs.release_published == 'true')
+      shell: bash
+      env:
+        IDENTITY: ${{ inputs.signer_identity_regexp }}
+        PRIMARY_REF: ${{ steps.meta.outputs.primary_image }}@${{ steps.digest.outputs.digest }}
+        EXTRA_REF: ${{ steps.meta.outputs.extra_image }}@${{ steps.digest.outputs.extra_digest }}
+        HAS_EXTRA: ${{ inputs.extra_package_name != '' }}
+      run: |
+        set -euo pipefail
+        verify() {
+          cosign verify "$1" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "$IDENTITY" \
+            --certificate-github-workflow-sha "$GITHUB_SHA" \
+            > /dev/null
+          echo "Signature OK: $1"
         }
-        promote "$PRIMARY_IMAGE"
-        [ "$HAS_EXTRA" = "true" ] && promote "$EXTRA_IMAGE" || true
+        verify "$PRIMARY_REF"
+        if [ "$HAS_EXTRA" = "true" ]; then verify "$EXTRA_REF"; fi
+
+    # ------------------------------------------------------------------
+    # Tagging: every stage only adds tags to the resolved digest, nothing is deleted.
+    # `imagetools create` copies the manifest index server side, so the digest (and therefore
+    # the signature, SBOM and provenance attached to it) is preserved.
+    #   dev     -> dev
+    #   staging -> staging-<sha>, staging
+    #   prod    -> <version>, latest   (only when semantic-release published a version)
+    # ------------------------------------------------------------------
+    - name: Tag image(s)
+      if: inputs.stage != 'prod' || inputs.release_published == 'true'
+      shell: bash
+      env:
+        STAGE: ${{ inputs.stage }}
+        SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        VERSION: ${{ inputs.release_version }}
+        PRIMARY_IMAGE: ${{ steps.meta.outputs.primary_image }}
+        PRIMARY_DIGEST: ${{ steps.digest.outputs.digest }}
+        EXTRA_IMAGE: ${{ steps.meta.outputs.extra_image }}
+        EXTRA_DIGEST: ${{ steps.digest.outputs.extra_digest }}
+      run: |
+        set -euo pipefail
+        case "$STAGE" in
+          dev)     tags=(dev) ;;
+          staging) tags=("staging-$SHA_TAG" staging) ;;
+          prod)
+            if [ -z "$VERSION" ]; then
+              echo "::error::release_published == 'true' but release_version is empty" >&2
+              exit 1
+            fi
+            tags=("$VERSION" latest)
+            ;;
+        esac
+        promote() {  # <image> <digest>
+          local args=()
+          for t in "${tags[@]}"; do args+=(-t "$1:$t"); done
+          docker buildx imagetools create "${args[@]}" "$1@$2"
+          echo "$1@$2 -> ${tags[*]}"
+        }
+        promote "$PRIMARY_IMAGE" "$PRIMARY_DIGEST"
+        if [ -n "$EXTRA_IMAGE" ]; then
+          promote "$EXTRA_IMAGE" "$EXTRA_DIGEST"
+        fi
