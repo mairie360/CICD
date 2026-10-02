@@ -17,8 +17,13 @@ on:
       semgrep_fail_on_findings:
         required: false
         type: boolean
-        default: false
-        description: "Fail the pipeline on Semgrep findings (report-only by default until the existing findings are triaged, see README)"
+        default: true
+        description: "Fail the pipeline on Semgrep findings (blocking SAST, MAIR-416)"
+      image_scan_fail_on_findings:
+        required: false
+        type: boolean
+        default: true
+        description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the images (accepted risks go in .trivyignore)"
     secrets:
       N8N_WEBHOOK_SECRET:
         required: true
@@ -45,13 +50,15 @@ jobs:
 
   # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
   security_sast:
-    name: Code Security Audit (Semgrep)
+    name: Code Security Audit (Semgrep, Gitleaks)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Gitleaks scans the commits of the push / PR
 
       - name: Checkout CICD repo
         uses: actions/checkout@v7
@@ -66,6 +73,15 @@ jobs:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
 
+      # [NOUVEAU] MAIR-416: secret scan of the new commits.
+      - name: Run Gitleaks Secret Scan
+        uses: ./cicd-repo/actions/gitleaks
+
+  # [CHANGEMENT] MAIR-416: the three release jobs go through the shared `docker-release` action
+  # like the other stacks (the `database` image plus `liquibase-migrations` as secondary image):
+  # SBOM/provenance, Trivy scan and cosign signature at dev, promotion by digest of the same
+  # commit afterwards. The mobile tags become `dev` / `staging` (formerly `dev-latest` /
+  # `staging-latest`); the `dev-<sha>` / `staging-<sha>` / `<version>` / `latest` tags are kept.
   release-dev:
     name: Release to Dev
     needs: [tests, security_sast]
@@ -75,87 +91,65 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # cosign keyless signature
+    outputs:
+      digest: ${{ steps.release.outputs.digest }}
+      extra_digest: ${{ steps.release.outputs.extra_digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
+      # Inside the build context, but neither Dockerfile copies the whole context.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
 
-      - name: Calculate Tags
-        id: meta
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          echo "db_repo=$REPO/${{ inputs.package_name }}" >> "$GITHUB_OUTPUT"
-          echo "liq_repo=$REPO/liquibase-migrations" >> "$GITHUB_OUTPUT"
-          echo "sha_tag=$SHA_TAG" >> "$GITHUB_OUTPUT"
-
-      # [CHANGEMENT] Ajout du cache GHA pour l'image de la DB afin de réutiliser les couches construites.
-      - name: Build & Push DB Image
-        uses: docker/build-push-action@v7
+      - name: Build & Push Images (Dev)
+        id: release
+        uses: ./cicd-repo/actions/docker-release
         with:
-          context: .
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.db_repo }}:dev-${{ steps.meta.outputs.sha_tag }}
-            ${{ steps.meta.outputs.db_repo }}:dev-latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # [CHANGEMENT] Ajout du cache GHA pour l'image Liquibase.
-      - name: Build & Push Liquibase Image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./liquibase/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.liq_repo }}:dev-${{ steps.meta.outputs.sha_tag }}
-            ${{ steps.meta.outputs.liq_repo }}:dev-latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          stage: dev
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_package_name: liquibase-migrations
+          extra_dockerfile: ./liquibase/Dockerfile
+          scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
   release-staging:
+    name: Release to Staging
     needs: release-dev
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.release.outputs.digest }}
+      extra_digest: ${{ steps.release.outputs.extra_digest }}
     steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
 
       - name: Promote Images to Staging
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-
-          # Promotion de l'image DB
-          docker pull $REPO/${{ inputs.package_name }}:dev-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:dev-$SHA_TAG $REPO/${{ inputs.package_name }}:staging-latest
-          docker push $REPO/${{ inputs.package_name }} --all-tags
-
-          # Promotion de l'image Liquibase
-          docker pull $REPO/liquibase-migrations:dev-$SHA_TAG
-          docker tag $REPO/liquibase-migrations:dev-$SHA_TAG $REPO/liquibase-migrations:staging-$SHA_TAG
-          docker tag $REPO/liquibase-migrations:dev-$SHA_TAG $REPO/liquibase-migrations:staging-latest
-          docker push $REPO/liquibase-migrations --all-tags
+        id: release
+        uses: ./cicd-repo/actions/docker-release
+        with:
+          stage: staging
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_package_name: liquibase-migrations
+          expected_digest: ${{ needs.release-dev.outputs.digest }}
+          expected_extra_digest: ${{ needs.release-dev.outputs.extra_digest }}
 
   release-prod:
+    name: Release to Prod
     needs: release-staging
     runs-on: ubuntu-latest
     environment: Prod
@@ -176,40 +170,23 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      # [CHANGEMENT] Correction de la syntaxe de l'action : nettoyage des doublons 'env' / 'with'
-      # et suppression du paramètre 'cicd_path' obsolète pour cette action composite.
       - name: Calculate & Create Tag
         id: set_tag
         uses: ./cicd-repo/actions/semantic-tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to GHCR
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Promote Images to Prod
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        run: |
-          SHA_TAG=${GITHUB_SHA::7}
-          REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          TAG=${{ steps.set_tag.outputs.new_release_version }}
-
-          # Pull et Tag final pour la DB
-          docker pull $REPO/${{ inputs.package_name }}:staging-$SHA_TAG
-          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:$TAG
-          docker tag $REPO/${{ inputs.package_name }}:staging-$SHA_TAG $REPO/${{ inputs.package_name }}:latest
-          docker push $REPO/${{ inputs.package_name }} --all-tags
-
-          # Pull et Tag final pour Liquibase
-          docker pull $REPO/liquibase-migrations:staging-$SHA_TAG
-          docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:$TAG
-          docker tag $REPO/liquibase-migrations:staging-$SHA_TAG $REPO/liquibase-migrations:latest
-          docker push $REPO/liquibase-migrations --all-tags
+        uses: ./cicd-repo/actions/docker-release
+        with:
+          stage: prod
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_package_name: liquibase-migrations
+          expected_digest: ${{ needs.release-staging.outputs.digest }}
+          expected_extra_digest: ${{ needs.release-staging.outputs.extra_digest }}
+          release_published: ${{ steps.set_tag.outputs.new_release_published }}
+          release_version: ${{ steps.set_tag.outputs.new_release_version }}
 
   notify-cicd-failure:
     name: Notify n8n on failure

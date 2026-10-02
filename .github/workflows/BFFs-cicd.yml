@@ -41,6 +41,11 @@ on:
         type: boolean
         default: true
         description: "Fail the pipeline on Semgrep findings (blocking SAST)"
+      image_scan_fail_on_findings:
+        required: false
+        type: boolean
+        default: true
+        description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the image (accepted risks go in .trivyignore)"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -136,7 +141,7 @@ jobs:
       - run: npm run lint
 
   security_sast:
-    name: Code Security Audit (Semgrep)
+    name: Code Security Audit (Semgrep, Gitleaks)
     runs-on: ubuntu-latest
     needs: dependencies
     timeout-minutes: 20
@@ -144,6 +149,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Gitleaks scans the commits of the push / PR
 
       - name: Checkout CICD repo
         uses: actions/checkout@v7
@@ -160,6 +167,10 @@ jobs:
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
+
+      # [NOUVEAU] MAIR-416: secret scan of the new commits.
+      - name: Run Gitleaks Secret Scan
+        uses: ./cicd-repo/actions/gitleaks
 
   build:
     name: Build & OpenAPI Spec
@@ -269,12 +280,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # [NOUVEAU] MAIR-416: cosign keyless signature
     concurrency:
       group: ${{ github.repository }}-release-dev
       cancel-in-progress: false
     outputs:
       image: ${{ steps.release.outputs.primary_image }}
       sha_tag: ${{ steps.release.outputs.sha_tag }}
+      digest: ${{ steps.release.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
 
@@ -323,6 +336,7 @@ jobs:
             npmrc=${{ runner.temp }}/docker-build.npmrc
           build_secret_envs: |
             node_auth_token=NODE_AUTH_TOKEN
+          scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
       - name: Supprimer le .npmrc de build
         if: always()
@@ -462,6 +476,8 @@ jobs:
     concurrency:
       group: ${{ github.repository }}-release-staging
       cancel-in-progress: false
+    outputs:
+      digest: ${{ steps.release.outputs.digest }}
     steps:
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
@@ -470,14 +486,16 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      # [CHANGEMENT] Re-tag dev -> staging centralisé dans l'action composite
-      # `docker-release`, comme APIs_cicd.yml / frontend-cicd.yml.
+      # [CHANGEMENT] MAIR-416: promotes the digest of `dev-<sha>` (the tested image, checked
+      # against release-dev's digest and signature), never the mobile `dev` tag.
       - name: Promote Image to Staging
+        id: release
         uses: ./cicd-repo/actions/docker-release
         with:
           stage: staging
           package_name: ${{ inputs.package_name }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          expected_digest: ${{ needs.release-dev.outputs.digest }}
 
       - name: Download OpenAPI Spec
         uses: actions/download-artifact@v8
@@ -528,11 +546,13 @@ jobs:
         id: set_tag
         uses: ./cicd-repo/actions/semantic-tag
 
-      # [CHANGEMENT] Re-tag staging -> <version> / latest centralisé dans `docker-release`.
+      # [CHANGEMENT] MAIR-416: promotes the digest of `staging-<sha>` (checked against
+      # release-staging's digest and signature) to <version> / latest.
       - name: Promote Image to Prod
         uses: ./cicd-repo/actions/docker-release
         with:
           stage: prod
+          expected_digest: ${{ needs.release-staging.outputs.digest }}
           package_name: ${{ inputs.package_name }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release_published: ${{ steps.set_tag.outputs.new_release_published }}

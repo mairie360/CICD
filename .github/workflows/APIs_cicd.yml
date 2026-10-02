@@ -18,8 +18,13 @@ on:
       semgrep_fail_on_findings:
         required: false
         type: boolean
-        default: false
-        description: "Fail the pipeline on Semgrep findings (report-only by default until the existing findings are triaged, see README)"
+        default: true
+        description: "Fail the pipeline on Semgrep findings (blocking SAST, MAIR-416)"
+      image_scan_fail_on_findings:
+        required: false
+        type: boolean
+        default: true
+        description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the image (accepted risks go in .trivyignore)"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -70,13 +75,15 @@ jobs:
 
   # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
   security_sast:
-    name: Code Security Audit (Semgrep)
+    name: Code Security Audit (Semgrep, Gitleaks)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Gitleaks scans the commits of the push / PR
 
       - name: Checkout CICD repo
         uses: actions/checkout@v7
@@ -90,6 +97,10 @@ jobs:
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
+
+      # [NOUVEAU] MAIR-416: secret scan of the new commits.
+      - name: Run Gitleaks Secret Scan
+        uses: ./cicd-repo/actions/gitleaks
 
   build:
     name: Build Project & Spec
@@ -167,11 +178,14 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # [NOUVEAU] MAIR-416: cosign keyless signature
     # [NOUVEAU] Exposed so the test jobs below run against the exact `dev-<sha_tag>`
-    # image built here (same shape as BFFs-cicd.yml).
+    # image built here (same shape as BFFs-cicd.yml), and so the promotions check that
+    # they promote this very digest.
     outputs:
       image: ${{ steps.release.outputs.primary_image }}
       sha_tag: ${{ steps.release.outputs.sha_tag }}
+      digest: ${{ steps.release.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -189,8 +203,8 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      # [CHANGEMENT] Logique Docker (build unique + push dev-<sha> / dev-latest)
-      # centralisée dans l'action composite partagée `docker-release`.
+      # [CHANGEMENT] Single build + push dev-<sha>, SBOM/provenance, Trivy scan, cosign
+      # signature, then the `dev` tag: all in the shared `docker-release` action (MAIR-416).
       - name: Build & Push image (Dev)
         id: release
         uses: ./cicd-repo/actions/docker-release
@@ -198,6 +212,7 @@ jobs:
           stage: dev
           package_name: ${{ inputs.package_name }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
       - name: Publish OpenAPI
         uses: ./cicd-repo/actions/publish-openapi-rust
@@ -309,12 +324,14 @@ jobs:
           ./performance_test.sh
 
   release-staging:
-    needs: [integration_and_security, integration_tests, performance_isolated]
+    needs: [release-dev, integration_and_security, integration_tests, performance_isolated]
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.release.outputs.digest }}
     steps:
       - name: Download Spec
         uses: actions/download-artifact@v8
@@ -332,8 +349,8 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      # [CHANGEMENT] Re-tag dev -> staging centralisé dans l'action composite `docker-release`.
-      # Ajoute au passage le tag `staging-latest` (auparavant absent pour la stack API).
+      # [CHANGEMENT] MAIR-416: promotes the digest of `dev-<sha>` (the tested image, checked
+      # against release-dev's digest and signature), never the mobile `dev` tag.
       - name: Promote image to Staging
         id: release
         uses: ./cicd-repo/actions/docker-release
@@ -341,6 +358,7 @@ jobs:
           stage: staging
           package_name: ${{ inputs.package_name }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          expected_digest: ${{ needs.release-dev.outputs.digest }}
 
       - name: Publish OpenAPI
         uses: ./cicd-repo/actions/publish-openapi-rust
@@ -383,13 +401,14 @@ jobs:
         id: set_tag
         uses: ./cicd-repo/actions/semantic-tag
 
-      # [CHANGEMENT] Re-tag staging -> <version> / latest centralisé dans `docker-release`.
-      # La promotion ne s'exécute que si semantic-release a publié une nouvelle version
-      # (garde-fou porté par l'action via `release_published`).
+      # [CHANGEMENT] MAIR-416: promotes the digest of `staging-<sha>` (checked against
+      # release-staging's digest and signature) to <version> / latest, only when
+      # semantic-release published a new version (`release_published`).
       - name: Promote image to Prod
         uses: ./cicd-repo/actions/docker-release
         with:
           stage: prod
+          expected_digest: ${{ needs.release-staging.outputs.digest }}
           package_name: ${{ inputs.package_name }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release_published: ${{ steps.set_tag.outputs.new_release_published }}
