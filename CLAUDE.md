@@ -118,7 +118,7 @@ Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.te
 ## Conventions
 
 - Commit messages: Conventional Commits (angular) — `feat:`, `fix:`, `perf:`, `chore(deps):`, breaking via `!` or footer. This drives every semantic-release version bump.
-- Pin third-party actions by major tag (`@v7`); the org's own refs use `inputs.cicd_version`.
+- Pin third-party actions by major tag (`@v7`); the org's own refs use `inputs.cicd_version`. Exception: actions that publish no floating major tag (e.g. `sigstore/cosign-installer`, only `vX.Y.Z`) are pinned by full version, since `@vN` fails to resolve at job start.
 - French is used in comments and step names throughout; `# [CHANGEMENT]` / `# [NOUVEAU]` mark deliberate deviations from a previous version — keep annotating significant changes the same way.
 
 ## Pull request reviewers
