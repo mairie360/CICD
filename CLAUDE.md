@@ -39,7 +39,7 @@ Every stack workflow, `front-libs-cicd.yml` included, now takes `cicd_version` a
 Pipeline shape, roughly identical across `APIs_cicd`, `BFFs-cicd`, `frontend-cicd`, `database_cicd`:
 
 ```
-dependencies → (lint, security_audit, security_sast) → build → test
+dependencies → (lint, security_audit, security_sast) → build ∥ test   (unit tests only need lint, run in parallel with build)
   → release-dev        (no environment)      build once + SBOM/provenance → dev-<sha_tag> → Trivy → cosign sign → dev
   → security_tests (OWASP ZAP)  + performance_tests (k6)   [run in parallel, main only]
   → release-staging    (environment: Staging) verify + RE-TAG digest of dev-<sha_tag> → staging-<sha_tag> / staging

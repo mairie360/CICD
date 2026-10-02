@@ -157,7 +157,8 @@ jobs:
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-    needs: build
+    # [CHANGEMENT] Runs in parallel with `build` (tests do not use its output).
+    needs: lint
     steps:
       - uses: actions/checkout@v7
 
@@ -185,7 +186,7 @@ jobs:
 
   release-dev:
     if: github.ref == 'refs/heads/main'
-    needs: test
+    needs: [build, test]
     runs-on: ubuntu-latest
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
     # is released to dev right away. Staging and Prod keep their environments.
