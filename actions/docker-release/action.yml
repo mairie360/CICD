@@ -165,7 +165,8 @@ runs:
 
     - name: Install cosign
       if: inputs.sign == 'true' && (inputs.stage != 'prod' || inputs.release_published == 'true')
-      uses: sigstore/cosign-installer@v4
+      # No floating major tag upstream (only vX.Y.Z), so pin the full version.
+      uses: sigstore/cosign-installer@v4.1.2
 
     # ------------------------------------------------------------------
     # STAGE dev: single build, pushed as dev-<sha> only, then scan + sign,
