@@ -87,7 +87,8 @@ jobs:
     needs: [tests, security_sast]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: Dev
+    # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
+    # is released to dev right away. Staging and Prod keep their environments.
     permissions:
       contents: read
       packages: write

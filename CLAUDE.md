@@ -40,7 +40,7 @@ Pipeline shape, roughly identical across `APIs_cicd`, `BFFs-cicd`, `frontend-cic
 
 ```
 dependencies → (lint, security_audit, security_sast) → build → test
-  → release-dev        (environment: Dev)    build once + SBOM/provenance → dev-<sha_tag> → Trivy → cosign sign → dev
+  → release-dev        (no environment)      build once + SBOM/provenance → dev-<sha_tag> → Trivy → cosign sign → dev
   → security_tests (OWASP ZAP)  + performance_tests (k6)   [run in parallel, main only]
   → release-staging    (environment: Staging) verify + RE-TAG digest of dev-<sha_tag> → staging-<sha_tag> / staging
   → release-prod       (environment: Prod)    semantic-tag → verify + RE-TAG digest of staging-<sha_tag> → <semver> / latest
@@ -51,7 +51,7 @@ Key invariants:
 - **Images are built exactly once** (in `release-dev`). Staging and prod "releases" only add tags to an existing digest (`docker buildx imagetools create`, via the shared `docker-release` action, on all four stack workflows) — never rebuild. Preserve this; rebuilding per-environment is a regression.
 - **Promotion is by digest of the run's own commit** (MAIR-416): staging resolves `dev-<sha>`, prod resolves `staging-<sha>`, each checked against the digest the previous job exposes as its `digest` output (`expected_digest`) and against its cosign signature. Never promote from a mobile tag (`dev`, `staging`, `latest`): an approval can wait for hours while another commit moves it.
 - Deploy jobs gated on `if: github.ref == 'refs/heads/main'`. Note: in `APIs_cicd.yml` only `release-dev` (and the test jobs) carry the explicit `if`; `release-staging` / `release-prod` are gated **transitively** — their `needs` chain is main-only, so they skip off-main because a skipped dependency skips its dependents. Keep that chain intact if you reorder jobs.
-- GitHub **Environments** (`Dev`, `Staging`, `Prod`, `Release`, and the misc `release`/`releasee` in `front-libs`) hold the approval gates and environment-scoped secrets. Environment names are load-bearing strings.
+- GitHub **Environments** (`Staging`, `Prod`, `Release`, and the misc `release`/`releasee` in `front-libs`) hold the approval gates and environment-scoped secrets. Environment names are load-bearing strings. `release-dev` has no environment on purpose (MAIR-416): every commit on `main` goes to dev without approval; keep env-scoped secrets out of it.
 - Image registry is GHCR: `ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/<package_name>`. The `,,` lowercases the owner — this is **bash** parameter expansion and only works inside `run:` blocks, not in `${{ }}` expressions.
 - Short SHA convention: the `docker-release` action uniformizes the SHA tag at 7 chars (`sha_length` input) for every stack it's wired into, computed once in `steps.meta` and reused for `dev-`/`staging-` tags at every stage — no more per-job `${GITHUB_SHA::7}` recomputation to keep in sync.
 
