@@ -3,16 +3,19 @@
 version: 1
 target: http://projects-front:5000
 
+# Same JWT_SECRET / JWT_TIMEOUT as the services of the test stack.
 session:
-  login_url: http://core-api:3000/auth/login
+  jwt_secret: b"secret"
+  jwt_timeout: 3600
 
+# Ids from the seed (init-test.sql).
 users:
   admin:
-    email: admin@mairie360.test
-    password: admin-password
+    id: 1
+    role: admin
   agent:
-    email: agent@mairie360.test
-    password: agent-password
+    id: 2
+    role: user
 
 criteria:
   # 1.4-1.9: no CAPTCHA, chart, image of text or figure caption.

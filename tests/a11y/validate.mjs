@@ -32,7 +32,12 @@ const LOCATOR_KEYS = schema.$defs.locator.oneOf.map((branch) => branch.required[
 const STATE_PATH = /^\/states\/\d+$/;
 
 function format(error, prefix = "") {
-  const value = error.keyword === "enum" ? ` (got ${JSON.stringify(error.data)})` : "";
+  const value =
+    error.keyword === "enum"
+      ? ` (got ${JSON.stringify(error.data)})`
+      : error.keyword === "additionalProperties"
+        ? ` ("${error.params.additionalProperty}")`
+        : "";
   return `${prefix}${error.instancePath}: ${error.message}${value}`.replace(/^:/, "/:");
 }
 

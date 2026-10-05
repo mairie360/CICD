@@ -26,14 +26,20 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "login_url"
+        "jwt_secret"
       ],
-      "description": "How the engine opens a session for a seed user: POST {email, password, device_info} to login_url, read the Authorization header, set it as the cookie on the target origin.",
+      "description": "How the engine opens a session for a seed user: it signs an HS256 JWT {sub, role, exp} with the stack's JWT_SECRET, like the static token of the ZAP stacks, and sets it as the session cookie on the target origin.",
       "properties": {
-        "login_url": {
+        "jwt_secret": {
           "type": "string",
-          "pattern": "^https?://",
-          "description": "Login endpoint reachable from the test runner, e.g. http://core-api:3000/auth/login."
+          "minLength": 1,
+          "description": "JWT_SECRET of the test stack, verbatim (e.g. b\"secret\"). Test-only value."
+        },
+        "jwt_timeout": {
+          "type": "integer",
+          "minimum": 60,
+          "default": 3600,
+          "description": "Token lifetime in seconds (JWT_TIMEOUT of the stack)."
         },
         "cookie": {
           "type": "string",
@@ -45,7 +51,7 @@
     "users": {
       "type": "object",
       "minProperties": 1,
-      "description": "Seed users, keyed by the name states refer to with `as` (one per role that changes what the page shows). Test data from the seed, never real credentials.",
+      "description": "Seed users, keyed by the name states refer to with `as` (one per role that changes what the page shows). The id must exist in the seed: the APIs check that the user exists.",
       "propertyNames": {
         "pattern": "^[a-z][a-z0-9-]*$"
       },
@@ -53,15 +59,18 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "email",
-          "password"
+          "id",
+          "role"
         ],
         "properties": {
-          "email": {
-            "type": "string"
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "User id in the seed, used as the `sub` claim."
           },
-          "password": {
-            "type": "string"
+          "role": {
+            "type": "string",
+            "description": "`role` claim, e.g. user or admin."
           }
         }
       }

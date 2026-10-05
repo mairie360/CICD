@@ -90,7 +90,7 @@ own scope in a `rgaa.yaml` at their root (applicable criteria, transverse ones i
 page states or Storybook stories to capture); never add a front-specific file here.
 `tests/a11y/` is a Node package (`npm ci` there, `node_modules/` is git-ignored):
 `rgaa.schema.json` (format, MAIR-316; the 106 criterion ids are an enum, a step is exactly one
-action, a locator one of `role`/`label`/`text`/`test_id`/`selector`), `validate.mjs` (CLI +
+action, a locator one of `role`/`label`/`text`/`test_id`/`selector`; sessions are HS256 JWTs `{sub, role, exp}` the engine signs with the stack's `jwt_secret`, no login call), `validate.mjs` (CLI +
 `loadScope()` for the engine; it reports steps and states itself because the schema `oneOf`s
 give unreadable errors), `validate.test.mjs` (`node --test`) and `examples/`, all run by the
 `a11y` job of `lint.yml`. Changing the format is a breaking change for every front: bump

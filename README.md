@@ -302,8 +302,8 @@ test engine that plays the scope (MAIR-317 to MAIR-319); no front-specific file 
 | `version` | `1` |
 | `target` | URL of the front in the test stack (`http://settings-front:5000`), or of the Storybook for `lib-components` |
 | `criteria` | applicable criteria, transverse ones (12.1 to 12.5) included. A criterion that is not listed is not applicable: give the reason in a YAML comment |
-| `session` | `login_url` of the login endpoint (`POST {email, password, device_info}`, token read from the `Authorization` header) and `cookie` (default `accessToken`) set on the target origin |
-| `users` | seed users by name (`admin`, `agent`…), one per role that changes what the page shows. Seed test data, never real credentials |
+| `session` | `jwt_secret` and `jwt_timeout` (default 3600): the `JWT_SECRET` / `JWT_TIMEOUT` of the test stack. The engine signs an HS256 JWT `{sub, role, exp}` per user, like the static token of the ZAP stacks, and sets it as `cookie` (default `accessToken`) on the target origin |
+| `users` | seed users by name (`admin`, `agent`…), one per role that changes what the page shows: `id` (must exist in the seed, the APIs check it) and `role` |
 | `states` | renderings to capture: `id`, then either `route` (+ optional `as: <user>`) for a front, or `story` (Storybook id) for `lib-components`, and optional `steps` |
 
 A step is exactly one action. `click`, `hover`, `wait_for` and `wait_for_hidden` take a locator,
@@ -314,9 +314,9 @@ of `role` (+ `name`), `label`, `text`, `test_id` or `selector`, in that order of
 version: 1
 target: http://projects-front:5000
 session:
-  login_url: http://core-api:3000/auth/login
+  jwt_secret: b"secret"            # JWT_SECRET of the test stack, test-only
 users:
-  agent: { email: agent@mairie360.test, password: agent-password }
+  agent: { id: 2, role: user }      # id from init-test.sql
 criteria:
   # 2.x: no iframe. 4.x: no media.
   - "1.1"
@@ -329,6 +329,9 @@ states:
       - click: { role: button, name: Nouveau projet }
       - click: { role: button, name: Créer }
 ```
+
+The secret is the test stack's, committed in clear like in the compose files; ask for the
+`rgaa.yaml` finding to be added to the repo's `.gitleaksignore` if Gitleaks flags it.
 
 Cover at least the normal load and the empty list, form errors, every modal and view, and
 every role that changes the page. Full examples: `tests/a11y/examples/`.

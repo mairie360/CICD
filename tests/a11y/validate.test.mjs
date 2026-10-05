@@ -5,8 +5,8 @@ import { checkScope, loadScope } from "./validate.mjs";
 const front = () => ({
   version: 1,
   target: "http://settings-front:5000",
-  session: { login_url: "http://core-api:3000/auth/login" },
-  users: { agent: { email: "agent@mairie360.test", password: "x" } },
+  session: { jwt_secret: 'b"secret"' },
+  users: { agent: { id: 2, role: "user" } },
   criteria: ["1.1", "11.1"],
   states: [{ id: "profile", route: "/", as: "agent", steps: [{ click: { role: "tab", name: "Profil" } }] }],
 });
@@ -16,10 +16,22 @@ test("the examples are valid", () => {
   loadScope(new URL("./examples/lib.rgaa.yaml", import.meta.url).pathname);
 });
 
-test("a minimal front is valid and gets the default cookie name", () => {
+test("a minimal front is valid and gets the session defaults", () => {
   const scope = front();
   assert.deepEqual(checkScope(scope), []);
   assert.equal(scope.session.cookie, "accessToken");
+  assert.equal(scope.session.jwt_timeout, 3600);
+});
+
+test("a seed user needs its id and role", () => {
+  const scope = front();
+  scope.users.agent = { email: "agent@mairie360.test", password: "x" };
+  assert.deepEqual(checkScope(scope), [
+    "/users/agent: must have required property 'id'",
+    "/users/agent: must have required property 'role'",
+    '/users/agent: must NOT have additional properties ("email")',
+    '/users/agent: must NOT have additional properties ("password")',
+  ]);
 });
 
 test("an unknown criterion is reported with its value", () => {
