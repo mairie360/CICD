@@ -45,7 +45,9 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           files: coverage/coverage.lcov
-          fail_ci_if_error: true
+          # [CHANGEMENT] MAIR-467: Codecov only reports coverage, so an outage on its side (expired
+          # certificate on 2026-10-05) must not fail the job and block the release.
+          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
   # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
