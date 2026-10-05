@@ -94,8 +94,18 @@ action, a locator one of `role`/`label`/`text`/`test_id`/`selector`; sessions ar
 `loadScope()` for the engine; it reports steps and states itself because the schema `oneOf`s
 give unreadable errors), `validate.test.mjs` (`node --test`) and `examples/`, all run by the
 `a11y` job of `lint.yml`. Changing the format is a breaking change for every front: bump
-`version`. The job in `frontend-cicd.yml` (MAIR-317), the capture and checks (MAIR-318) and the
-rate / 80 % gate (MAIR-319) come next.
+`version`. Engine (MAIR-317): `run.sh` (runner command: `npm ci` then `run.mjs <scope> <report
+dir>`), `run.mjs` (exit 0 / 1 a state failed / 2 invalid scope), `states.mjs` (`playState`:
+fresh context per state, JWT cookie, steps, `onReached` hook where MAIR-318 captures),
+`session.mjs` (HS256 signing, tested against the ZAP stacks' static token). The runner image is
+pinned in `tests/a11y/runner-image` (version + digest) and must match the exact `playwright`
+dependency (a test checks it); bump both together. `states.e2e.test.mjs` only runs with
+`RGAA_E2E=1` inside that image (`a11y` job of `lint.yml`). Jobs: `accessibility_tests` in
+`frontend-cicd.yml` (needs `release-dev`, required by `release-staging`; the front provides
+`accessibility_test.sh` + `docker-compose-accessibility.yml`) and in `front-libs-cicd.yml`
+(serves `storybook-static` as `http://storybook:6006`; required by `storybook` / `package`).
+MAIR-317 also moved the front ZAP / k6 jobs to `IMAGE_REF=<image>:dev-<sha_tag>`. The checks
+(MAIR-318) and the rate / 80 % gate (MAIR-319) come next.
 
 ## Node version drift
 
@@ -128,7 +138,7 @@ No shared Node input. `cicd.yml`, `front-libs-cicd.yml`, and both composite acti
 
 ## What downstream repos must provide
 
-Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.test.yml` exposing services named `security-scan` (ZAP), `k6-perf-test` or `db-test` (jobs use `--exit-code-from <that service>`); for `APIs_cicd.yml`, an `integration_test.sh` (same shape as `security_test.sh`) driving a `docker-compose-integration.yml` whose test-runner service exercises the API and sets the exit code; for `APIs_cicd.yml` and `BFFs-cicd.yml`, compose stacks whose service under test reads `${IMAGE_REF}` (no `build:` block), `*_test.sh` scripts that build a local image and export `IMAGE_REF` themselves when the variable is empty and clone `cicd-repo/` at the pinned `cicd_version` when it is absent, a ZAP service that mounts `cicd-repo/tests/zap/zap_hooks.py` and passes it with `--hook`, and a `load-test.js` built on `cicd-repo/tests/k6/coverage.js` with one handler per operation of `openapi.json`; `test.sh` (database); npm scripts `lint` / `build` / `test` / `typecheck` / `build-storybook`; cargo commands `cargo open_api` and the `cargo lint_check` alias (plus the `cargo cov` alias for `APIs_cicd.yml`, which must emit `codecov.json` and enforce the coverage threshold itself); an `openapi-spec.json` / `openapi.json` at repo root for OpenAPI publishing.
+Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.test.yml` exposing services named `security-scan` (ZAP), `k6-perf-test` or `db-test` (jobs use `--exit-code-from <that service>`); for `APIs_cicd.yml`, an `integration_test.sh` (same shape as `security_test.sh`) driving a `docker-compose-integration.yml` whose test-runner service exercises the API and sets the exit code; for `APIs_cicd.yml` and `BFFs-cicd.yml`, compose stacks whose service under test reads `${IMAGE_REF}` (no `build:` block), `*_test.sh` scripts that build a local image and export `IMAGE_REF` themselves when the variable is empty and clone `cicd-repo/` at the pinned `cicd_version` when it is absent, a ZAP service that mounts `cicd-repo/tests/zap/zap_hooks.py` and passes it with `--hook`, and a `load-test.js` built on `cicd-repo/tests/k6/coverage.js` with one handler per operation of `openapi.json`; for `frontend-cicd.yml`, a `rgaa.yaml`, an `accessibility_test.sh` and a `docker-compose-accessibility.yml` whose front reads `${IMAGE_REF}` and whose `a11y` runner service runs `cicd-repo/tests/a11y/run.sh` (ZAP / k6 stacks read `${IMAGE_REF}` too); for `front-libs-cicd.yml`, a `rgaa.yaml` of Storybook stories; `test.sh` (database); npm scripts `lint` / `build` / `test` / `typecheck` / `build-storybook`; cargo commands `cargo open_api` and the `cargo lint_check` alias (plus the `cargo cov` alias for `APIs_cicd.yml`, which must emit `codecov.json` and enforce the coverage threshold itself); an `openapi-spec.json` / `openapi.json` at repo root for OpenAPI publishing.
 
 ## Conventions
 
