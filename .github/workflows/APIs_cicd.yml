@@ -233,6 +233,9 @@ jobs:
     if: github.ref == 'refs/heads/main'
     name: Integration tests
     runs-on: ubuntu-latest
+    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
+    # runner for GitHub's 6 h default and starved the whole org's queue.
+    timeout-minutes: 25
     needs: release-dev
     permissions:
       contents: read
@@ -250,15 +253,32 @@ jobs:
       # (same shape as `security_test.sh`) starts `docker-compose-integration.yml`, waits for
       # the test-runner service and returns its exit code. No external service is involved.
       - name: Run integration tests via Docker Compose
+        timeout-minutes: 15
         env:
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
         run: ./integration_test.sh
+
+      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
+      # leaving a `*-ready` service polling forever), the step timeout kills the script before
+      # its `docker compose down`, so the containers are still there: print their state and
+      # logs to see why the service under test did not start.
+      - name: Dump container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+            docker logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
 
   integration_and_security:
     if: github.ref == 'refs/heads/main'
     name: Dynamic Security Tests (OWASP ZAP)
     needs: release-dev
     runs-on: ubuntu-latest
+    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
+    # runner for GitHub's 6 h default and starved the whole org's queue.
+    timeout-minutes: 25
     permissions:
       contents: read
       packages: read
@@ -282,6 +302,7 @@ jobs:
           path: cicd-repo
 
       - name: Run ZAP Security Scan via Docker Compose
+        timeout-minutes: 15
         env:
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
         run: |
@@ -289,10 +310,26 @@ jobs:
           # or when an operation of openapi.json was not reached (coverage gate).
           ./security_test.sh
 
+      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
+      # leaving a `*-ready` service polling forever), the step timeout kills the script before
+      # its `docker compose down`, so the containers are still there: print their state and
+      # logs to see why the service under test did not start.
+      - name: Dump container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+            docker logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
+
   performance_isolated:
     if: github.ref == 'refs/heads/main'
     name: Isolated Performance Test
     runs-on: ubuntu-latest
+    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
+    # runner for GitHub's 6 h default and starved the whole org's queue.
+    timeout-minutes: 25
     needs: release-dev
     permissions:
       contents: read
@@ -319,12 +356,26 @@ jobs:
       # [CHANGEMENT] `TARGET_IMAGE` (recomputed locally, never read by any compose file) is
       # replaced by `IMAGE_REF`, taken from the `release-dev` outputs like the other test jobs.
       - name: Run Performance Tests via Docker Compose
+        timeout-minutes: 15
         env:
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
         run: |
           # `--exit-code-from k6-perf-test` fails the job when k6 exceeds its thresholds,
           # including the `operations_uncovered` one of the coverage gate.
           ./performance_test.sh
+
+      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
+      # leaving a `*-ready` service polling forever), the step timeout kills the script before
+      # its `docker compose down`, so the containers are still there: print their state and
+      # logs to see why the service under test did not start.
+      - name: Dump container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+            docker logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
 
   release-staging:
     needs: [release-dev, integration_and_security, integration_tests, performance_isolated]
