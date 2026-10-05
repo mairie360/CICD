@@ -156,18 +156,19 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Rust Tests
-        run: cargo test --release
-
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Générer le rapport de couverture
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+      # [CHANGEMENT] MAIR-467: the tests run once. `cargo llvm-cov` runs them and writes
+      # `codecov.json` in the same pass (it used to be `cargo test --release`, then a second
+      # instrumented run on main / PRs to main). Same as `cargo cov` in APIs_cicd.yml.
+      - name: Run Rust Tests & Generate Coverage
         run: cargo llvm-cov --workspace --codecov --output-path codecov.json
 
       - name: Envoyer à Codecov
@@ -176,7 +177,9 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: codecov.json
-          fail_ci_if_error: true
+          # [CHANGEMENT] MAIR-467: a Codecov outage (expired certificate on 2026-10-05) must not
+          # block the release; coverage is only reported here, never enforced.
+          fail_ci_if_error: false
 
   publish_release:
     if: github.ref == 'refs/heads/main'
