@@ -1,0 +1,58 @@
+# Example rgaa.yaml of a front, validated by the lint workflow.
+# The real file lives at the root of each front repo.
+version: 1
+target: http://projects-front:5000
+
+session:
+  login_url: http://core-api:3000/auth/login
+
+users:
+  admin:
+    email: admin@mairie360.test
+    password: admin-password
+  agent:
+    email: agent@mairie360.test
+    password: agent-password
+
+criteria:
+  # 1.4-1.9: no CAPTCHA, chart, image of text or figure caption.
+  - "1.1"
+  - "1.2"
+  - "1.3"
+  # 2.x: no iframe. 4.x: no media.
+  - "3.1"
+  - "3.2"
+  - "3.3"
+  - "5.4"
+  - "5.5"
+  - "5.6"
+  - "5.7"
+  - "11.1"
+  - "12.1"
+  - "12.7"
+
+states:
+  - id: kanban
+    route: /
+    as: agent
+  - id: table-view
+    route: /
+    as: admin
+    steps:
+      - click: { role: tab, name: Tableau }
+      - wait_for: { role: table }
+  - id: create-project-errors
+    description: Creation form submitted empty
+    route: /
+    as: agent
+    steps:
+      - click: { role: button, name: Nouveau projet }
+      - click: { role: button, name: Créer }
+  - id: rename-project
+    route: /
+    as: admin
+    steps:
+      - click: { role: button, name: Nouveau projet }
+      - fill: { label: Nom du projet, value: Rénovation de l'école }
+      - press: Escape
+      - wait_for_hidden: { role: dialog }

@@ -9,10 +9,11 @@ Centralized CI/CD for the **mairie360** GitHub org (project "Mairie360"). It con
 - **Reusable workflows** in `.github/workflows/*_cicd.yml` (`on: workflow_call`), consumed by the org's application repos.
 - **Composite actions** in `actions/*/action.yml`, invoked by those reusable workflows.
 - **Shared test files** in `tests/` (`zap/zap_hooks.py`, `k6/coverage.js`): the OpenAPI coverage
-  gate mounted by the consumers' ZAP / k6 compose stacks (see "OpenAPI coverage gate" below).
+  gate mounted by the consumers' ZAP / k6 compose stacks (see "OpenAPI coverage gate" below),
+  and `a11y/`, the RGAA engine (see "RGAA engine" below).
 - This repo's own release pipeline (`.github/workflows/cicd.yml` + `.releaserc.json`), plus Renovate automation.
 
-There is nothing to build, run, or unit-test locally. Changes are validated by the downstream repos that call these workflows. `.github/workflows/lint.yml` runs [`actionlint`](https://github.com/rhysd/actionlint) on every PR and, as a reusable workflow, as the `lint` job that `cicd.yml`'s `release` depends on (SC2086/SC2016/SC2129 shellcheck findings are ignored until the existing ones are cleaned up) and checks that each `actions/**/action.yml` has a `runs:` block; run the same locally with `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12`. The two files under `tests/` can be exercised by hand: `python3` with a fake `zap` object for the hook, `docker run grafana/k6` for the module.
+Apart from `tests/a11y` (`npm ci && npm test` there), there is nothing to build, run, or unit-test locally. Changes are validated by the downstream repos that call these workflows. `.github/workflows/lint.yml` runs [`actionlint`](https://github.com/rhysd/actionlint) on every PR and, as a reusable workflow, as the `lint` job that `cicd.yml`'s `release` depends on (SC2086/SC2016/SC2129 shellcheck findings are ignored until the existing ones are cleaned up) and checks that each `actions/**/action.yml` has a `runs:` block; run the same locally with `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12`. The ZAP and k6 files under `tests/` can be exercised by hand: `python3` with a fake `zap` object for the hook, `docker run grafana/k6` for the module.
 
 Dependency automation is delegated: `renovate.json` only does `"extends": ["github>mairie360/renovate-config"]`, so the actual Renovate rules live in the org's `mairie360/renovate-config` repo, not here.
 
@@ -81,6 +82,20 @@ request with `op`, and the `operations_uncovered` / `operation_handler_errors` c
 `--hook`, `load-test.js` handlers, `security` in the spec) is documented in `README.md`; changing
 the hook's report format, the handler key format or the counter names is a breaking change for
 every consumer.
+
+## RGAA engine (`tests/a11y/`, epic MAIR-297)
+
+Rule: this repo holds **only the testing logic**. Each front and `lib-components` declare their
+own scope in a `rgaa.yaml` at their root (applicable criteria, transverse ones included, and the
+page states or Storybook stories to capture); never add a front-specific file here.
+`tests/a11y/` is a Node package (`npm ci` there, `node_modules/` is git-ignored):
+`rgaa.schema.json` (format, MAIR-316; the 106 criterion ids are an enum, a step is exactly one
+action, a locator one of `role`/`label`/`text`/`test_id`/`selector`), `validate.mjs` (CLI +
+`loadScope()` for the engine; it reports steps and states itself because the schema `oneOf`s
+give unreadable errors), `validate.test.mjs` (`node --test`) and `examples/`, all run by the
+`a11y` job of `lint.yml`. Changing the format is a breaking change for every front: bump
+`version`. The job in `frontend-cicd.yml` (MAIR-317), the capture and checks (MAIR-318) and the
+rate / 80 % gate (MAIR-319) come next.
 
 ## Node version drift
 
