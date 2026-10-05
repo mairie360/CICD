@@ -34,12 +34,29 @@ jobs:
   tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
+    # runner for GitHub's 6 h default and starved the whole org's queue.
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Run tests
+        timeout-minutes: 15
         run: ./test.sh
+
+      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
+      # leaving a `*-ready` service polling forever), the step timeout kills the script before
+      # its `docker compose down`, so the containers are still there: print their state and
+      # logs to see why the service under test did not start.
+      - name: Dump container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+            docker logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7

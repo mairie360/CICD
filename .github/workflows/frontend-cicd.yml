@@ -226,28 +226,62 @@ jobs:
   security_tests:
     name: Dynamic Security Tests (OWASP ZAP)
     runs-on: ubuntu-latest
+    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
+    # runner for GitHub's 6 h default and starved the whole org's queue.
+    timeout-minutes: 25
     needs: release-dev
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Run ZAP Security Scan via Docker Compose
+        timeout-minutes: 15
         run: ./security_test.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
+      # leaving a `*-ready` service polling forever), the step timeout kills the script before
+      # its `docker compose down`, so the containers are still there: print their state and
+      # logs to see why the service under test did not start.
+      - name: Dump container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+            docker logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
+
   performance_tests:
     name: Isolated Performance Tests (k6)
     runs-on: ubuntu-latest
+    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
+    # runner for GitHub's 6 h default and starved the whole org's queue.
+    timeout-minutes: 25
     needs: release-dev
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Run Performance Tests via Docker Compose
+        timeout-minutes: 15
         run: ./performance_test.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
+      # leaving a `*-ready` service polling forever), the step timeout kills the script before
+      # its `docker compose down`, so the containers are still there: print their state and
+      # logs to see why the service under test did not start.
+      - name: Dump container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+            docker logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
 
   release-staging:
     needs: [release-dev, security_tests, performance_tests]

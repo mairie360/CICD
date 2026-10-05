@@ -120,6 +120,7 @@ Depending on which workflow they call: a root `Dockerfile`; a `docker-compose.te
 - Commit messages: Conventional Commits (angular) — `feat:`, `fix:`, `perf:`, `chore(deps):`, breaking via `!` or footer. This drives every semantic-release version bump.
 - Pin third-party actions by major tag (`@v7`); the org's own refs use `inputs.cicd_version`. Exception: actions that publish no floating major tag (e.g. `sigstore/cosign-installer`, only `vX.Y.Z`) are pinned by full version, since `@vN` fails to resolve at job start.
 - Codecov uploads are **never blocking** (`fail_ci_if_error: false` everywhere, MAIR-467): Codecov only reports coverage, thresholds are enforced by the test commands (`cargo cov`, jest config). A Codecov outage (expired certificate on 2026-10-05) used to fail `unit_test` and skip every release.
+- Every job that starts a Docker stack (`*_test.sh`, `test.sh`) is bounded (MAIR-468): job `timeout-minutes` (25 for APIs / fronts / database, 60 for BFFs) and, outside the BFFs, a 15 min step timeout followed by an `if: failure()` "Dump container logs" step. A stack that never gets ready (e.g. a `*-ready` service polling `/health` forever) used to hold a runner for GitHub's 6 h default and starve the whole org's queue.
 - French is used in comments and step names throughout; `# [CHANGEMENT]` / `# [NOUVEAU]` mark deliberate deviations from a previous version — keep annotating significant changes the same way.
 
 ## Pull request reviewers
