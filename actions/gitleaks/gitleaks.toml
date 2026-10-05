@@ -1,0 +1,15 @@
+# Default Gitleaks config of the `gitleaks` action, used when the scanned repo has no
+# .gitleaks.toml of its own. Gitleaks' built-in rules, plus allowlists for known test values.
+
+[extend]
+useDefault = true
+
+# MAIR-316: rgaa.yaml commits the JWT_SECRET of the test stack (session.jwt_secret), which the
+# RGAA engine uses to sign its session tokens. Only that line of that file is allowed: any other
+# secret in rgaa.yaml, or a jwt_secret elsewhere, is still reported.
+[[allowlists]]
+description = "Test-stack JWT secret of rgaa.yaml"
+condition = "AND"
+paths = ['''(^|/)rgaa\.ya?ml$''']
+regexTarget = "line"
+regexes = ['''^\s*jwt_secret:''']

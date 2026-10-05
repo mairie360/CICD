@@ -82,6 +82,12 @@ request, `before..after` of a push, the last commit for a new branch. A secret a
 history therefore does not fail every later build: rotate it first, then add its fingerprint to a
 `.gitleaksignore` at the root of the repo. The job checks the repo out with `fetch-depth: 0`.
 
+Without a `.gitleaks.toml` in the repo, Gitleaks runs with `actions/gitleaks/gitleaks.toml`:
+the built-in rules plus allowlists for known test values. Today it only allows the
+`jwt_secret:` line of `rgaa.yaml` (the test-stack secret of the RGAA engine); any other secret
+in that file, or a `jwt_secret` elsewhere, is still reported. A repo that adds its own
+`.gitleaks.toml` replaces this default and must copy the allowlists it still needs.
+
 ## Image release (`actions/docker-release`, MAIR-416)
 
 `APIs_cicd.yml`, `BFFs-cicd.yml`, `frontend-cicd.yml` and `database_cicd.yml` release their images
@@ -330,8 +336,9 @@ states:
       - click: { role: button, name: Créer }
 ```
 
-The secret is the test stack's, committed in clear like in the compose files; ask for the
-`rgaa.yaml` finding to be added to the repo's `.gitleaksignore` if Gitleaks flags it.
+The secret is the test stack's, committed in clear like in the compose files; the default
+Gitleaks config of this repo allows that line (see "Gitleaks"). Test stacks do not set
+`JWT_REQUIRE_SESSION`, so these tokens without `sid` are accepted; it is a production setting.
 
 Cover at least the normal load and the empty list, form errors, every modal and view, and
 every role that changes the page. Full examples: `tests/a11y/examples/`.
