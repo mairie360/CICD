@@ -45,9 +45,9 @@ opening a file or a new window should say so.`,
   "11.2": `${COMMON}
 Criterion 11.2: is the label of each form field relevant? Judge only the relevance of an existing
 label: a field with no label at all is "valid" here (it is judged by criterion 11.1). The label must let
-the user know what to enter; when a specific format is required (date, phone), the label or its context
-should indicate it. Invalid: generic labels ("champ", "texte", "input"), a label that does not match the
-field's purpose.`,
+the user know what to enter. The expected format is judged by criterion 11.10, not here, and the value
+the field holds is never given: do not judge it. Invalid: generic labels ("champ", "texte", "input"), a
+label that does not match the field's type or purpose.`,
   "11.9": `${COMMON}
 Criterion 11.9: is the accessible name of each button relevant? It must describe the action. When the
 button shows a visible label, the accessible name must contain that label; containment ignores case,

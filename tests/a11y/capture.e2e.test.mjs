@@ -111,7 +111,7 @@ const AI_PAGE = page(
     <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=" alt="IMG_2041.png" width="40" height="40">
     <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="" width="10" height="10">
     <p>Le rapport annuel est disponible. <a href="/rapport.pdf">Cliquez ici</a></p>
-    <label for="d">Date</label><input id="d" placeholder="jj/mm/aaaa">
+    <label for="d">Date</label><input id="d" placeholder="jj/mm/aaaa" value="15/06/2026">
     <label>Service <select><option>Direction générale</option><option>Ressources humaines</option></select></label>
     <button role="switch" aria-checked="false" aria-label="Mode maintenance"></button>
     <button aria-label="Supprimer le projet"><svg aria-hidden="true" width="8" height="8"></svg></button>
@@ -285,6 +285,7 @@ test("extracts the elements of the AI criteria, with a screenshot for images", {
   assert.deepEqual(of("11.9").map((i) => i.name), ["Mode maintenance", "Supprimer le projet", "Sélectionner le 15 juin"]);
   assert.match(of("11.9")[2].visible_text, /^Lun\s+15$/, "rendered text keeps the separation between blocks");
   assert.ok(aiItems.every((i) => !i.html.includes("data-rgaa-ai")), "the extraction marker never reaches the html");
+  assert.ok(of("11.2").every((i) => !/\svalue=/.test(i.html)), "the value of a field (data) is not judged");
   assert.deepEqual(of("13.5").map((i) => i.text), ["Projet terminé 🎉"]);
   const again = await capture("/ai", declared, [], true);
   assert.deepEqual(again.aiItems.map((i) => i.fingerprint), aiItems.map((i) => i.fingerprint), "stable fingerprints");

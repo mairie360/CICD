@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 
 // Bump when the prompts or the extracted fields change: every cached verdict is then re-judged.
-export const EXTRACTION_VERSION = 3;
+export const EXTRACTION_VERSION = 4;
 
 // Criteria of the first batch, each with the kind of element it judges.
 export const AI_CRITERIA = {
@@ -53,17 +53,21 @@ function inPageExtract({ kinds, max }) {
     const own = rendered(el);
     return rendered(block).replace(own, " … ").slice(0, 240);
   };
-  const opening = (el) => {
+  const opening = (el, { keepValue = true } = {}) => {
     const outer = el.outerHTML;
     // data-rgaa-ai: an element extracted as a field and then as a button is already marked.
-    return outer.slice(0, outer.indexOf(">") + 1).replace(/\s(class|style|data-rgaa-ai)="[^"]*"/g, "").slice(0, 300);
+    const tag = outer.slice(0, outer.indexOf(">") + 1).replace(/\s(class|style|data-rgaa-ai)="[^"]*"/g, "");
+    // The value of a field is data (the seed, what a step typed), not markup: it would mislead the
+    // judge and change the fingerprint with the data.
+    return (keepValue ? tag : tag.replace(/\svalue="[^"]*"/g, "")).slice(0, 300);
   };
   const items = [];
   const push = (kind, el, fields) => {
     if (items.filter((i) => i.kind === kind).length >= max) return;
     // Read the markup before marking the element: the marker must not reach the html (nor the
     // fingerprint), or the same component would change fingerprint with its position.
-    const item = { kind, index: items.length, target: target(el), html: opening(el), context: context(el), ...fields };
+    const html = opening(el, { keepValue: kind !== "field" });
+    const item = { kind, index: items.length, target: target(el), html, context: context(el), ...fields };
     el.dataset.rgaaAi = String(item.index);
     items.push(item);
   };
