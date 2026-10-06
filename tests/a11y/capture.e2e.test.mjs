@@ -140,7 +140,17 @@ const target = () => `http://127.0.0.1:${server.address().port}`;
 
 before(async () => {
   if (!e2e) return;
+  let flaky = 0;
   server = createServer((request, response) => {
+    // Fails its first load, like an upstream timeout of a test stack under load.
+    if (new URL(request.url, "http://x").pathname === "/flaky" && flaky++ === 0) {
+      response.writeHead(502).end("bad gateway");
+      return;
+    }
+    if (new URL(request.url, "http://x").pathname === "/flaky") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(FORM);
+      return;
+    }
     const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE, "/form": FORM, "/scrollers": SCROLLERS }[new URL(request.url, "http://x").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" }).end(body ?? "");
   });
@@ -215,6 +225,12 @@ test("focusable scroll containers are not a keyboard trap", { skip: !e2e }, asyn
 test("no skip link is required when the keyboard starts in the main content", { skip: !e2e }, async () => {
   const form = await capture("/form");
   assert.deepEqual(failing(form, "12.7"), []);
+});
+
+test("run.mjs plays an unreached state once more before failing it", { skip: !e2e }, async () => {
+  const { code, report } = await runEngine(`version: 1\ntarget: ${target()}\ncriteria: ["1.1", "8.3", "11.1"]\nstates:\n  - id: flaky\n    route: /flaky\n`);
+  assert.equal(code, 0);
+  assert.deepEqual([report.states[0].reached, report.states[0].attempts], [true, 2]);
 });
 
 test("run.mjs writes the report and fails on undeclared criteria", { skip: !e2e }, async () => {

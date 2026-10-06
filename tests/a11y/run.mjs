@@ -14,7 +14,7 @@
 // a criterion rgaa.yaml does not declare, 2 invalid rgaa.yaml / RGAA_MIN_RATE or engine error,
 // 3 the CI rate is below RGAA_MIN_RATE (default 60 %, MAIR-319; see rate.mjs).
 export const EXIT = { ok: 0, failed: 1, invalid: 2, below_rate: 3 };
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { aiSettings, createClient, elements, estimatedRate, judge, loadCache, proposals, saveCache } from "./ai.mjs";
@@ -26,6 +26,7 @@ import { loadScope } from "./validate.mjs";
 
 export const REPORT_VERSION = 1;
 export const DEFAULT_CONCURRENCY = 4;
+export const MAX_ATTEMPTS = 2;
 
 // RGAA_CONCURRENCY: states played at the same time (default 4, the vCPUs of a GitHub runner).
 export function parallelism(env = process.env) {
@@ -195,20 +196,29 @@ async function main([scopeFile, reportDir]) {
     const playOne = async (state) => {
       const dir = join(reportDir, "states", state.id);
       const found = [];
-      const result = await playState(browser, scope, state, {
-        onReached: async (page, res) => {
-          const capture = await captureState(page, { scope, criteria, dir, stateId: state.id, ai: ai.enabled });
-          aiItems.push(...capture.aiItems.map((item) => ({ ...item, order: stateOrder.get(state.id) })));
-          writeFileSync(join(dir, "checks.json"), `${JSON.stringify(capture.checks, null, 2)}\n`);
-          res.fingerprint = capture.fingerprint;
-          res.files = Object.fromEntries(
-            Object.entries(capture.files).map(([k, v]) => [k, Array.isArray(v) ? v.map((f) => `states/${state.id}/${f}`) : `states/${state.id}/${v}`]),
-          );
-          res.checks = capture.checks;
-          found.push(...capture.undeclared.map((u) => ({ state: state.id, ...u })));
-        },
-        onFailure: (page) => page.screenshot({ path: join(reportDir, "failures", `${state.id}.png`), fullPage: true }),
-      });
+      // A state that cannot be reached is played once more: a test stack under parallel load can
+      // fail a request now and then (an upstream timeout), which is not a verdict on the page.
+      let result;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+        result = await playState(browser, scope, state, {
+          onReached: async (page, res) => {
+            const capture = await captureState(page, { scope, criteria, dir, stateId: state.id, ai: ai.enabled });
+            aiItems.push(...capture.aiItems.map((item) => ({ ...item, order: stateOrder.get(state.id) })));
+            writeFileSync(join(dir, "checks.json"), `${JSON.stringify(capture.checks, null, 2)}\n`);
+            res.fingerprint = capture.fingerprint;
+            res.files = Object.fromEntries(
+              Object.entries(capture.files).map(([k, v]) => [k, Array.isArray(v) ? v.map((f) => `states/${state.id}/${f}`) : `states/${state.id}/${v}`]),
+            );
+            res.checks = capture.checks;
+            found.push(...capture.undeclared.map((u) => ({ state: state.id, ...u })));
+          },
+          onFailure: (page) => page.screenshot({ path: join(reportDir, "failures", `${state.id}.png`), fullPage: true }),
+        });
+        result.attempts = attempt;
+        if (result.reached) break;
+        if (attempt < MAX_ATTEMPTS) console.log(`retry  ${state.id}: ${result.error}`);
+      }
+      if (result.reached) rmSync(join(reportDir, "failures", `${state.id}.png`), { force: true });
       console.log(`${result.reached ? "ok    " : "FAILED"} ${state.id}${result.error ? `: ${result.error}` : ""}`);
       return { result, found };
     };

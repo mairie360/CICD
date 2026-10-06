@@ -94,7 +94,7 @@ action, a locator one of `role`/`label`/`text`/`test_id`/`selector`; sessions ar
 `loadScope()` for the engine; it reports steps and states itself because the schema `oneOf`s
 give unreadable errors), `validate.test.mjs` (`node --test`) and `examples/`, all run by the
 `a11y` job of `lint.yml`. Changing the format is a breaking change for every front: bump
-`version`. Engine (MAIR-317): `run.sh` (runner command: copies the read-only `/engine` mount to
+`version`. Engine (MAIR-317; an unreached state is played once more, `attempts` in the report, since a test stack under parallel load can drop a request): `run.sh` (runner command: copies the read-only `/engine` mount to
 `/tmp/engine` (never extract into `/tmp` itself: it resets its 1777 mode and Chromium crashes),
 `npm ci`, then `run.mjs <scope> <report dir>`), `run.mjs` (exit 0 / 1 a state failed / 2 invalid scope), `states.mjs` (`playState`:
 fresh context per state, JWT cookie, steps, `onReached` hook where MAIR-318 captures),
