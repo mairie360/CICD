@@ -106,6 +106,8 @@ const AI_PAGE = page(
     <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="" width="10" height="10">
     <p>Le rapport annuel est disponible. <a href="/rapport.pdf">Cliquez ici</a></p>
     <label for="d">Date</label><input id="d" placeholder="jj/mm/aaaa">
+    <label>Service <select><option>Direction générale</option><option>Ressources humaines</option></select></label>
+    <button role="switch" aria-checked="false" aria-label="Mode maintenance"></button>
     <button aria-label="Supprimer le projet"><svg aria-hidden="true" width="8" height="8"></svg></button>
     <button aria-label="Sélectionner le 15 juin" style="display:flex;flex-direction:column"><span>Lun</span><span>15</span></button>
     <p>Projet terminé 🎉</p>
@@ -270,9 +272,9 @@ test("extracts the elements of the AI criteria, with a screenshot for images", {
   assert.ok(of("1.3")[0].image?.length > 0, "a screenshot of the image is attached");
   assert.deepEqual(of("6.1").map((i) => i.name), ["Cliquez ici"]);
   assert.match(of("6.1")[0].context, /rapport annuel/);
-  assert.deepEqual(of("11.2").map((i) => [i.name, i.placeholder]), [["Date", "jj/mm/aaaa"]]);
-  assert.deepEqual(of("11.9").map((i) => i.name), ["Supprimer le projet", "Sélectionner le 15 juin"]);
-  assert.match(of("11.9")[1].visible_text, /^Lun\s+15$/, "rendered text keeps the separation between blocks");
+  assert.deepEqual(of("11.2").map((i) => [i.name, i.placeholder]), [["Date", "jj/mm/aaaa"], ["Service", ""], ["Mode maintenance", ""]]);
+  assert.deepEqual(of("11.9").map((i) => i.name), ["Mode maintenance", "Supprimer le projet", "Sélectionner le 15 juin"]);
+  assert.match(of("11.9")[2].visible_text, /^Lun\s+15$/, "rendered text keeps the separation between blocks");
   assert.ok(aiItems.every((i) => !i.html.includes("data-rgaa-ai")), "the extraction marker never reaches the html");
   assert.deepEqual(of("13.5").map((i) => i.text), ["Projet terminé 🎉"]);
   const again = await capture("/ai", declared, [], true);

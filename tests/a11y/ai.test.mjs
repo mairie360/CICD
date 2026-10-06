@@ -140,3 +140,15 @@ test("elements lists every judged element once per state, without screenshots", 
   assert.deepEqual(list.map((e) => [e.criterion, e.state, e.verdict]), [["1.3", "s1", "valid"], ["1.3", "s2", "valid"], ["6.1", "s1", "invalid"]]);
   assert.equal(list[0].image, undefined);
 });
+
+test("the context is not sent for the criteria judged without it", async () => {
+  const client = fakeClient();
+  await judge([item("11.9", "Effacer", { context: "Exporter CSV … Effacer" }), item("6.1", "Lire", { context: "Le rapport … Lire" })], {
+    client,
+    model: "claude-sonnet-5-5",
+    cache: { version: 1, verdicts: {} },
+  });
+  const sent = client.requests.flatMap((r) => JSON.parse(r.messages[0].content[0].text));
+  assert.equal(sent.find((e) => e.name === "Effacer").context, undefined);
+  assert.equal(sent.find((e) => e.name === "Lire").context, "Le rapport … Lire");
+});

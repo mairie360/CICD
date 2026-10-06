@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
+import { CONTEXT_FREE } from "./extract.mjs";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 
@@ -49,7 +50,8 @@ should indicate it. Invalid: generic labels ("champ", "texte", "input"), a label
 field's purpose.`,
   "11.9": `${COMMON}
 Criterion 11.9: is the accessible name of each button relevant? It must describe the action. When the
-button shows a visible label, the accessible name must contain that label. Exceptions, which are valid:
+button shows a visible label, the accessible name must contain that label; containment ignores case,
+punctuation and position ("Modèle terminé" contains "Terminé"). Exceptions, which are valid:
 - a trigger of a list or menu (popup "listbox", "menu", "true"): its visible text is the selected value,
   not a label; the name must identify the field or the menu (e.g. "Filtrer par rôle" showing "Tous les
   rôles" is valid);
@@ -108,10 +110,18 @@ export function saveCache(file, cache) {
 }
 
 // What the model sees of an item: no fingerprint, target or screenshot bytes.
+// The context is not sent for the criteria judged without it (it is not in their fingerprint either):
+// a cached verdict must not depend on the neighbours of the first occurrence, and nearby controls
+// misled the model ("Effacer" judged against the "Exporter CSV" next to it).
 function describe(item, id) {
   const { fingerprint, target, index, image, state, kind, criterion, ...fields } = item;
+  if (CONTEXT_FREE.has(criterion)) delete fields.context;
   return { id, ...fields };
 }
+
+// Elements differing only by numbers (calendar days and slots: "Sélectionner le 15 Juin 2026 à
+// 10:00") are sorted next to each other so that they share a batch and get the same verdict.
+const shape = (item) => `${item.name}|${item.visible_text ?? ""}|${item.html}`.replace(/\d+/g, "#");
 
 function requestFor(model, criterion, batch) {
   const content = [{ type: "text", text: JSON.stringify(batch.map(({ id, item }) => describe(item, id))) }];
@@ -182,7 +192,7 @@ export async function judge(items, { client, model, cache }) {
     // Similar elements in the same batch: they get consistent verdicts.
     const list = todo
       .filter((item) => item.criterion === criterion)
-      .sort((a, b) => `${a.name}|${a.html}`.localeCompare(`${b.name}|${b.html}`));
+      .sort((a, b) => shape(a).localeCompare(shape(b)) || `${a.name}|${a.html}`.localeCompare(`${b.name}|${b.html}`));
     for (let i = 0; i < list.length; i += BATCH_SIZE) {
       batches.push({ criterion, batch: list.slice(i, i + BATCH_SIZE).map((item, k) => ({ id: `e${i + k + 1}`, item })) });
     }

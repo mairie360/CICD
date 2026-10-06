@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 
 // Bump when the prompts or the extracted fields change: every cached verdict is then re-judged.
-export const EXTRACTION_VERSION = 2;
+export const EXTRACTION_VERSION = 3;
 
 // Criteria of the first batch, each with the kind of element it judges.
 export const AI_CRITERIA = {
@@ -24,12 +24,26 @@ function inPageExtract({ kinds, max }) {
   const text = (s) => (s ?? "").replace(/\s+/g, " ").trim();
   // Rendered text (innerText keeps the spaces between blocks: "Lun 15", not "Lun15").
   const rendered = (el) => text(el?.innerText ?? el?.textContent);
-  const byIds = (ids) => text((ids ?? "").split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" "));
+  // Text of a label without the controls nested in it (a <label> wrapping its <select> must not
+  // name the field after every option), blocks separated by spaces, like the accessible name.
+  const CONTROLS = "select, option, optgroup, input, textarea, [role=listbox], [role=option], [role=slider]";
+  const labelText = (label) => {
+    if (!label) return "";
+    const parts = [];
+    const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (parent && parent !== label && parent.closest(CONTROLS) && label.contains(parent.closest(CONTROLS))) continue;
+      parts.push(node.textContent);
+    }
+    return text(parts.join(" "));
+  };
+  const byIds = (ids) => text((ids ?? "").split(/\s+/).map((id) => labelText(document.getElementById(id))).join(" "));
   const name = (el) =>
     text(el.getAttribute("aria-label")) ||
     byIds(el.getAttribute("aria-labelledby")) ||
-    (el.id ? text([...document.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`)].map((l) => l.textContent).join(" ")) : "") ||
-    rendered(el.closest("label")) ||
+    (el.id ? text([...document.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`)].map(labelText).join(" ")) : "") ||
+    labelText(el.closest("label")) ||
     text(el.getAttribute("alt")) ||
     text(el.getAttribute("title")) ||
     rendered(el);
@@ -41,7 +55,8 @@ function inPageExtract({ kinds, max }) {
   };
   const opening = (el) => {
     const outer = el.outerHTML;
-    return outer.slice(0, outer.indexOf(">") + 1).replace(/\s(class|style)="[^"]*"/g, "").slice(0, 300);
+    // data-rgaa-ai: an element extracted as a field and then as a button is already marked.
+    return outer.slice(0, outer.indexOf(">") + 1).replace(/\s(class|style|data-rgaa-ai)="[^"]*"/g, "").slice(0, 300);
   };
   const items = [];
   const push = (kind, el, fields) => {
@@ -111,7 +126,7 @@ function inPageExtract({ kinds, max }) {
 // Fields that do not change the verdict of a criterion stay out of its fingerprint, so that the same
 // component in several stories or pages is judged once. The context matters for images and links
 // (an alt or a link text is judged against it), much less for button names, labels and symbols.
-const CONTEXT_FREE = new Set(["11.2", "11.9", "13.5", "13.6"]);
+export const CONTEXT_FREE = new Set(["11.2", "11.9", "13.5", "13.6"]);
 
 export function itemFingerprint(criterion, item) {
   const { target, index, image, state, ...judged } = item;
