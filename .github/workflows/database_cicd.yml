@@ -24,11 +24,22 @@ on:
         type: boolean
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the images (accepted risks go in .trivyignore)"
+      gdpr_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model that proposes a classification for the columns missing from the GDPR inventory (MAIR-285); only used when the ANTHROPIC_API_KEY secret is set"
     secrets:
       N8N_WEBHOOK_SECRET:
         required: true
       CODECOV_TOKEN:
         required: true
+      # [NOUVEAU] MAIR-285: optional; without it the GDPR inventory gate runs without AI proposals.
+      ANTHROPIC_API_KEY:
+        required: false
+      # [NOUVEAU] MAIR-285: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
 
 jobs:
   tests:
@@ -202,9 +213,48 @@ jobs:
           expected_digest: ${{ needs.release-dev.outputs.digest }}
           expected_extra_digest: ${{ needs.release-dev.outputs.extra_digest }}
 
+  # [NOUVEAU] MAIR-285: GDPR inventory gate, between staging and the Prod approval. Migrates an
+  # empty database with the images just promoted to staging (by digest) and checks that the repo's
+  # `gdpr/inventory.yaml` classifies every column. It runs before `release-prod` waits for its
+  # approval, so the approver reads the job summary first: the gaps, the inventory changes since
+  # the last release and, for each unclassified column, a classification proposed by Claude
+  # (never part of the verdict). A gap skips `release-prod`.
+  gdpr_inventory:
+    name: GDPR inventory (staging schema)
+    needs: release-staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the previous release tag, for the diff of the inventory
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Check the GDPR inventory
+        uses: ./cicd-repo/actions/gdpr-inventory
+        with:
+          package_name: ${{ inputs.package_name }}
+          digest: ${{ needs.release-staging.outputs.digest }}
+          migrations_digest: ${{ needs.release-staging.outputs.extra_digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          ai_model: ${{ inputs.gdpr_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+
   release-prod:
     name: Release to Prod
-    needs: release-staging
+    # [CHANGEMENT] MAIR-285: also waits for the GDPR inventory gate.
+    needs: [release-staging, gdpr_inventory]
     runs-on: ubuntu-latest
     environment: Prod
     permissions:
@@ -251,6 +301,7 @@ jobs:
       - release-dev
       - performance_tests
       - release-staging
+      - gdpr_inventory
       - release-prod
     runs-on: ubuntu-latest
     steps:

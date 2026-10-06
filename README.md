@@ -129,6 +129,40 @@ cosign verify ghcr.io/mairie360/<package>:<tag> \
 - **APIs, fronts, database:** Semgrep and Trivy now block; set `semgrep_fail_on_findings: false` /
   `image_scan_fail_on_findings: false`, or add a `.trivyignore`, while the findings are fixed.
 
+## GDPR inventory gate (`actions/gdpr-inventory`, MAIR-285)
+
+`database_cicd.yml` runs a `gdpr_inventory` job after `release-staging`; `release-prod` needs it.
+It migrates an empty database with the images promoted to staging and compares the columns with
+the repo's `gdpr/inventory.yaml`, which classifies every column of the `public` tables (personal
+or not, category, fate on erasure, visibility, audit log exclusion). A column missing from the
+inventory, an entry naming a column that no longer exists, or a column referencing `users` not
+classified as an `identifier` stops the prod release.
+
+The job summary, shown before the Prod approval, holds:
+
+- the gaps, if any;
+- the inventory changes since the last release tag: **review them before approving Prod**;
+- for each unclassified column, a classification proposed by Claude (`gdpr_ai_model`, default
+  `claude-sonnet-5-5`, only with the `ANTHROPIC_API_KEY` secret), as YAML to review and paste into
+  the inventory in a PR. The proposals never decide the gate.
+
+To wire it, the Database repo passes the secrets to the workflow:
+
+```yaml
+    secrets:
+      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}  # optional: AI proposals
+```
+
+Run the check by hand on a migrated database:
+
+```bash
+cd tests/gdpr && npm ci
+psql -At -q -d core -f schema.sql > /tmp/schema.json
+node check.mjs ../../../Database/gdpr/inventory.yaml /tmp/schema.json /tmp/gdpr-report
+```
+
 ## OpenAPI coverage gate (ZAP + k6)
 
 `openapi.json` is the contract of every API and BFF. Two shared files turn it into a coverage

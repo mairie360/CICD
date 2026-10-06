@@ -35,3 +35,26 @@ jobs:
                   bad = 1
           sys.exit(bad)
           PY
+
+  # [NOUVEAU] MAIR-285: unit tests of the GDPR inventory gate (tests/gdpr, no database, the
+  # Anthropic client is mocked).
+  gdpr:
+    name: GDPR checks tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/gdpr
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        run: npm test
