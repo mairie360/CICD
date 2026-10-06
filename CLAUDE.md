@@ -131,7 +131,9 @@ when a prompt changes), `ai.mjs` (`@anthropic-ai/sdk` `client.beta.messages.pars
 `betaZodOutputFormat`, default `claude-sonnet-5-5` / `RGAA_AI_MODEL`, effort `low`, system
 prompt per criterion with `cache_control`, `fallbacks: "default"` only on the models in
 `FALLBACK_MODELS`, verdict cache by fingerprint in `/ai-cache/verdicts.json` (`RGAA_AI_CACHE`),
-errors/refusals → uncertain and not cached). Proposals and `estimated_rate` live in
+errors/refusals → uncertain and not cached, but every request failing throws: a configuration
+problem must not look like hundreds of uncertain verdicts; `ANTHROPIC_WORKSPACE_ID` → the
+`anthropic-workspace-id` header, for keys not scoped to a workspace). Proposals and `estimated_rate` live in
 `report.ai` and never touch `report.rate`. No `ANTHROPIC_API_KEY` → skipped. `ai.test.mjs`
 mocks the client; no test calls the real API.
 

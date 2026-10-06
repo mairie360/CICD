@@ -35,6 +35,9 @@ on:
       # [NOUVEAU] MAIR-320: optional; without it the RGAA AI pre-audit is skipped.
       ANTHROPIC_API_KEY:
         required: false
+      # [NOUVEAU] MAIR-320: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
 
 permissions:
   contents: read
@@ -227,13 +230,14 @@ jobs:
         env:
           RGAA_MIN_RATE: ${{ inputs.rgaa_min_rate }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
           RGAA_AI_MODEL: ${{ inputs.rgaa_ai_model }}
         run: |
           mkdir -p rgaa-report .rgaa-ai-cache
           docker network create rgaa
           docker run -d --name storybook --network rgaa -v "$PWD/storybook-static:/site:ro" \
             python:3-alpine python -m http.server 6006 --directory /site
-          docker run --rm --network rgaa -e RGAA_MIN_RATE -e ANTHROPIC_API_KEY -e RGAA_AI_MODEL \
+          docker run --rm --network rgaa -e RGAA_MIN_RATE -e ANTHROPIC_API_KEY -e ANTHROPIC_WORKSPACE_ID -e RGAA_AI_MODEL \
             -v "$PWD/.rgaa-ai-cache:/ai-cache" \
             -v "$PWD/cicd-repo/tests/a11y:/engine:ro" \
             -v "$PWD/rgaa.yaml:/scope/rgaa.yaml:ro" \

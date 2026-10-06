@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Anthropic from "@anthropic-ai/sdk";
-import { DEFAULT_MODEL, aiSettings, estimatedRate, judge, proposals } from "./ai.mjs";
+import { DEFAULT_MODEL, aiSettings, createClient, estimatedRate, judge, proposals } from "./ai.mjs";
 import { itemFingerprint } from "./extract.mjs";
 
 const item = (criterion, name, extra = {}) => {
@@ -82,12 +82,37 @@ test("cache: an unchanged element is never sent twice, duplicates across states 
   assert.deepEqual([second.stats.judged, second.stats.cached], [0, 2]);
 });
 
-test("API errors make the elements uncertain and are not cached", async () => {
+test("an API error on some batches makes those elements uncertain, not cached", async () => {
   const cache = { version: 1, verdicts: {} };
   const error = new Anthropic.InternalServerError(500, { error: { message: "boom" } }, "boom", new Headers());
-  const { verdicts } = await judge([item("6.1", "Accueil")], { client: fakeClient({ fail: error }), model: "claude-sonnet-5-5", cache });
-  assert.equal(Object.values(verdicts)[0].verdict, "uncertain");
-  assert.deepEqual(cache.verdicts, {});
+  const ok = fakeClient();
+  let calls = 0;
+  const flaky = { beta: { messages: { parse: async (p) => (calls++ === 0 ? Promise.reject(error) : ok.beta.messages.parse(p)) } } };
+  const items = [...Array.from({ length: 15 }, (_, i) => item("6.1", `Lien ${i}`)), item("11.2", "Nom")];
+  const { verdicts, stats } = await judge(items, { client: flaky, model: "claude-sonnet-5-5", cache });
+  const values = Object.values(verdicts);
+  assert.equal(values.filter((v) => v.verdict === "uncertain").length, 15, "the failed batch");
+  assert.equal(Object.keys(cache.verdicts).length, 1, "only the successful verdict is cached");
+  assert.equal(stats.usage.errors, 1);
+});
+
+test("when every request fails, the pre-audit fails with the API message", async () => {
+  const error = new Anthropic.BadRequestError(
+    400,
+    { error: { type: "invalid_request_error", message: "This API key is not scoped to a workspace" } },
+    "400",
+    new Headers(),
+  );
+  await assert.rejects(
+    judge([item("6.1", "Accueil")], { client: fakeClient({ fail: error }), model: "claude-sonnet-5-5", cache: { version: 1, verdicts: {} } }),
+    /every AI request failed \(400: This API key is not scoped to a workspace\)/,
+  );
+});
+
+test("the workspace id is sent as a header when set", () => {
+  const client = createClient({ ANTHROPIC_API_KEY: "k", ANTHROPIC_WORKSPACE_ID: "wrkspc_1" });
+  assert.equal(client._options.defaultHeaders["anthropic-workspace-id"], "wrkspc_1");
+  assert.equal(createClient({ ANTHROPIC_API_KEY: "k" })._options.defaultHeaders, undefined);
 });
 
 test("proposals and estimated rate", async () => {

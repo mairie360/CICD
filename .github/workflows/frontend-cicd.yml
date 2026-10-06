@@ -48,6 +48,9 @@ on:
       # [NOUVEAU] MAIR-320: optional; without it the RGAA AI pre-audit is skipped.
       ANTHROPIC_API_KEY:
         required: false
+      # [NOUVEAU] MAIR-320: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
 
 jobs:
   dependencies:
@@ -415,6 +418,7 @@ jobs:
           RGAA_MIN_RATE: ${{ inputs.rgaa_min_rate }}
           # [NOUVEAU] MAIR-320: forwarded to the runner service with the .rgaa-ai-cache mount.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
           RGAA_AI_MODEL: ${{ inputs.rgaa_ai_model }}
 
       - name: Save RGAA AI verdicts

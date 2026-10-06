@@ -152,7 +152,11 @@ async function judgeBatch(client, model, criterion, batch, usage) {
     return batch.map(({ id }) => byId.get(id) ?? { id, verdict: "uncertain", reason: "pas de verdict renvoyé pour cet élément" });
   } catch (error) {
     if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) throw error;
-    if (error instanceof Anthropic.APIError) return uncertain(`erreur de l'API (${error.status ?? "réseau"})`);
+    if (error instanceof Anthropic.APIError) {
+      usage.errors = (usage.errors ?? 0) + 1;
+      usage.last_error = `${error.status ?? "network"}: ${error.error?.error?.message ?? error.message}`.slice(0, 300);
+      return uncertain(`erreur de l'API (${error.status ?? "réseau"})`);
+    }
     throw error;
   }
 }
@@ -189,6 +193,11 @@ export async function judge(items, { client, model, cache }) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, worker));
+  // Every request failed: a configuration problem (key, workspace, model name), not the content.
+  // Reported as a pre-audit failure instead of hundreds of silent "uncertain" verdicts.
+  if (batches.length > 0 && usage.errors === batches.length) {
+    throw new Error(`every AI request failed (${usage.last_error})`);
+  }
 
   const verdicts = {};
   for (const [fingerprint, item] of unique) {
@@ -235,6 +244,9 @@ export function estimatedRate(criteria, ai) {
   return { validated, invalidated, value: decided === 0 ? null : Math.round((validated / decided) * 1000) / 10 };
 }
 
-export function createClient() {
-  return new Anthropic({ maxRetries: 4 });
+// ANTHROPIC_WORKSPACE_ID: needed when the API key is not scoped to a workspace (the API then
+// answers 400 "must include the anthropic-workspace-id header").
+export function createClient(env = process.env) {
+  const workspace = (env.ANTHROPIC_WORKSPACE_ID ?? "").trim();
+  return new Anthropic({ maxRetries: 4, ...(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {}) });
 }

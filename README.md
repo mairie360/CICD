@@ -392,6 +392,7 @@ APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
     environment:
       RGAA_MIN_RATE: ${RGAA_MIN_RATE:-}   # set by the job from the rgaa_min_rate input
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # AI pre-audit (MAIR-320), optional
+      ANTHROPIC_WORKSPACE_ID: ${ANTHROPIC_WORKSPACE_ID:-}
       RGAA_AI_MODEL: ${RGAA_AI_MODEL:-}
     volumes:
       - ./.rgaa-ai-cache:/ai-cache        # AI verdicts kept between runs by the job
@@ -541,7 +542,8 @@ The other elements go to Claude (`@anthropic-ai/sdk`), with these settings:
 - effort `low`;
 - `fallbacks: "default"` on the models that accept it.
 
-API errors and refusals give `uncertain` and are not cached, so they are retried at the next run.
+API errors and refusals give `uncertain` and are not cached, so they are retried at the next run. When **every** request fails (key, workspace or model name), the pre-audit fails instead: a
+`::warning`, `ai.error` in the report and the summary, with the API message.
 
 **What a criterion gets.** One `invalid` element proposes `invalidated`. All elements `valid`
 proposes `validated`. Anything else is `uncertain`. The estimated rate counts these proposals for
@@ -553,6 +555,7 @@ invalid elements, the model, the number of judged and cached elements, and the c
 | Setting | Value |
 | --- | --- |
 | Secret `ANTHROPIC_API_KEY` | optional; without it the pre-audit is skipped and the run is unchanged |
+| Secret `ANTHROPIC_WORKSPACE_ID` | only when the key is not scoped to a workspace (the API otherwise answers 400 "must include the anthropic-workspace-id header"); sent as the `anthropic-workspace-id` header |
 | Input `rgaa_ai_model` (`RGAA_AI_MODEL`) | default `claude-sonnet-5-5` |
 | `RGAA_AI=off` | disables the pre-audit |
 
