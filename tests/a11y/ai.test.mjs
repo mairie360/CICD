@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Anthropic from "@anthropic-ai/sdk";
-import { DEFAULT_MODEL, aiSettings, createClient, estimatedRate, judge, proposals } from "./ai.mjs";
+import { DEFAULT_MODEL, aiSettings, createClient, elements, estimatedRate, judge, proposals } from "./ai.mjs";
 import { itemFingerprint } from "./extract.mjs";
 
 const item = (criterion, name, extra = {}) => {
@@ -130,4 +130,13 @@ test("proposals and estimated rate", async () => {
     { id: "3.1", status: "to_review" },
   ];
   assert.deepEqual(estimatedRate(criteria, ai), { validated: 2, invalidated: 2, value: 50 });
+});
+
+test("elements lists every judged element once per state, without screenshots", async () => {
+  const a = item("1.3", "Logo", { image: "iVBORw0KGgo=" });
+  const items = [a, a, { ...a, state: "s2" }, item("6.1", "Cliquez ici")];
+  const { verdicts } = await judge(items, { client: fakeClient(), model: "claude-sonnet-5-5", cache: { version: 1, verdicts: {} } });
+  const list = elements(items, verdicts);
+  assert.deepEqual(list.map((e) => [e.criterion, e.state, e.verdict]), [["1.3", "s1", "valid"], ["1.3", "s2", "valid"], ["6.1", "s1", "invalid"]]);
+  assert.equal(list[0].image, undefined);
 });

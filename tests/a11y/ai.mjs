@@ -231,6 +231,24 @@ export function proposals(items, verdicts) {
   return out;
 }
 
+// Every judged element, once per (fingerprint, state), for the reviewer form of the n8n chain
+// (MAIR-298) and for checking the verdicts: no screenshot, the html excerpt is enough.
+export function elements(items, verdicts) {
+  const seen = new Set();
+  return items
+    .filter((item) => verdicts[item.fingerprint] && !seen.has(`${item.fingerprint}|${item.state}`) && seen.add(`${item.fingerprint}|${item.state}`))
+    .map(({ fingerprint, criterion, state, target, html, name }) => ({
+      fingerprint,
+      criterion,
+      state,
+      target,
+      name,
+      html,
+      verdict: verdicts[fingerprint].verdict,
+      reason: verdicts[fingerprint].reason,
+    }));
+}
+
 // Estimated rate: the decided criteria, plus the AI proposals on the criteria left to review.
 export function estimatedRate(criteria, ai) {
   let validated = 0;

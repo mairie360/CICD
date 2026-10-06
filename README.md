@@ -547,7 +547,7 @@ API errors and refusals give `uncertain` and are not cached, so they are retried
 
 **What a criterion gets.** One `invalid` element proposes `invalidated`. All elements `valid`
 proposes `validated`. Anything else is `uncertain`. The estimated rate counts these proposals for
-the criteria left `to_review`. Both appear in `report.json` (`ai`) and in the job summary, with the
+the criteria left `to_review`. Both appear in `report.json` (`ai`, with `ai.elements`: every judged element and its verdict, the input of the reviewer form, MAIR-298) and in the job summary, with the
 invalid elements, the model, the number of judged and cached elements, and the cost.
 
 **Settings.**

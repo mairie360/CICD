@@ -17,7 +17,7 @@ export const EXIT = { ok: 0, failed: 1, invalid: 2, below_rate: 3 };
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
-import { aiSettings, createClient, estimatedRate, judge, loadCache, proposals, saveCache } from "./ai.mjs";
+import { aiSettings, createClient, elements, estimatedRate, judge, loadCache, proposals, saveCache } from "./ai.mjs";
 import { captureState } from "./capture.mjs";
 import { aggregate, loadCriteria } from "./criteria.mjs";
 import { computeRate, criterionStatus, minRate } from "./rate.mjs";
@@ -138,7 +138,15 @@ async function preAudit(ai, items, results) {
     const criteria = proposals(items, verdicts);
     const cost = stats.usage.cost_usd === undefined ? "" : `, ~$${stats.usage.cost_usd}`;
     console.log(`AI pre-audit (${ai.model}): ${stats.elements} elements, ${stats.judged} judged, ${stats.cached} from cache${cost}`);
-    return { enabled: true, model: ai.model, cache: ai.cache || null, stats, criteria, estimated_rate: estimatedRate(results, criteria) };
+    return {
+      enabled: true,
+      model: ai.model,
+      cache: ai.cache || null,
+      stats,
+      criteria,
+      estimated_rate: estimatedRate(results, criteria),
+      elements: elements(items, verdicts),
+    };
   } catch (error) {
     saveCache(ai.cache, cache);
     console.log(`::warning title=RGAA AI::pre-audit failed: ${error.message.split("\n")[0]}`);
