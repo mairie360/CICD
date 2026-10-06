@@ -193,6 +193,11 @@ test("each seeded defect fails its criterion", { skip: !e2e }, async () => {
   assert.deepEqual(bad.undeclared.map((u) => u.criterion), ["5.6"]);
 });
 
+test("the keyboard walk starts at the top of the page, not where the steps left the focus", { skip: !e2e }, async () => {
+  const good = await capture("/good", ALL, [{ fill: { label: "Nom", value: "École" } }]);
+  assert.deepEqual(failing(good, "12.7"), [], "the skip link is the first element reached");
+});
+
 test("no skip link is required when the keyboard starts in the main content", { skip: !e2e }, async () => {
   const form = await capture("/form");
   assert.deepEqual(failing(form, "12.7"), []);

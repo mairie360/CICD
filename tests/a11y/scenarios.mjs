@@ -248,9 +248,15 @@ const orientation = dom(() => {
 // that the three scenarios share one walk.
 async function keyboardWalk(page) {
   const prepared = await page.evaluate(() => {
-    document.activeElement?.blur?.();
     const modal = window.__rgaa.modalRoot();
     if (modal) modal.dataset.rgaaModal = "";
+    // Start the walk at the top of the page (of the open modal, where a user's focus is). blur()
+    // is not enough: Chromium resumes Tab from the element the steps focused last.
+    const start = document.createElement("span");
+    start.tabIndex = -1;
+    start.dataset.rgaaStart = "";
+    (modal ?? document.body).prepend(start);
+    start.focus();
     const list = window.__rgaa.tabbables();
     list.forEach((el, i) => {
       el.dataset.rgaaTab = String(i);
@@ -287,6 +293,7 @@ async function keyboardWalk(page) {
     const root = document.querySelector("[data-rgaa-modal]");
     const failure = root ? window.__rgaa.failure(root, "") : null;
     delete root?.dataset.rgaaModal;
+    document.querySelector("[data-rgaa-start]")?.remove();
     document.querySelectorAll("[data-rgaa-tab]").forEach((el) => {
       delete el.dataset.rgaaTab;
       delete el.dataset.rgaaStyle;
