@@ -1,0 +1,134 @@
+name: "GDPR inventory"
+description: >
+  Personal data inventory gate of the database (MAIR-285, epic MAIR-284). Migrates an empty
+  database with the promoted images (by digest), compares its columns with the repo's
+  `gdpr/inventory.yaml` (tests/gdpr/check.mjs) and writes in the job summary the gaps, the
+  inventory changes since the last release tag, and Claude's proposals for the unclassified
+  columns. A gap fails the step; the AI proposals never decide it. The caller checks the repo out
+  with `fetch-depth: 0` (the diff needs the tags) and `mairie360/CICD` into `cicd-repo/`.
+
+inputs:
+  package_name:
+    description: "Database image (ghcr.io/<owner>/<package_name>)"
+    required: true
+  digest:
+    description: "Digest of the database image to test (the one promoted to staging)"
+    required: true
+  migrations_package_name:
+    description: "Liquibase migrations image (ghcr.io/<owner>/<migrations_package_name>)"
+    required: false
+    default: "liquibase-migrations"
+  migrations_digest:
+    description: "Digest of the migrations image to test"
+    required: true
+  github_token:
+    description: "Token that can pull the images from GHCR"
+    required: true
+  inventory:
+    description: "Path of the inventory in the repo"
+    required: false
+    default: "gdpr/inventory.yaml"
+  ai_model:
+    description: "Claude model of the proposals for unclassified columns"
+    required: false
+    default: "claude-sonnet-5-5"
+  anthropic_api_key:
+    description: "Anthropic API key; without it there is no AI proposal (the gate still runs)"
+    required: false
+    default: ""
+  anthropic_workspace_id:
+    description: "Anthropic workspace id, only for a key that is not scoped to a workspace"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check the inventory is present
+      id: present
+      shell: bash
+      env:
+        INVENTORY: ${{ inputs.inventory }}
+      run: |
+        if [ -f "$INVENTORY" ]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::No $INVENTORY in this repo, GDPR inventory check skipped."
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Setup Node
+      if: steps.present.outputs.present == 'true'
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Migrate an empty database and check the inventory
+      if: steps.present.outputs.present == 'true'
+      shell: bash
+      env:
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        DIGEST: ${{ inputs.digest }}
+        MIGRATIONS_PACKAGE_NAME: ${{ inputs.migrations_package_name }}
+        MIGRATIONS_DIGEST: ${{ inputs.migrations_digest }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        INVENTORY: ${{ inputs.inventory }}
+        GDPR_AI_MODEL: ${{ inputs.ai_model }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        ANTHROPIC_WORKSPACE_ID: ${{ inputs.anthropic_workspace_id }}
+      run: |
+        set -uo pipefail
+        owner="${GITHUB_REPOSITORY_OWNER,,}"
+        db_image="ghcr.io/$owner/$PACKAGE_NAME@$DIGEST"
+        migrations_image="ghcr.io/$owner/$MIGRATIONS_PACKAGE_NAME@$MIGRATIONS_DIGEST"
+        report="$RUNNER_TEMP/gdpr-report"
+        echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+
+        cleanup() { docker rm -f gdpr-db >/dev/null 2>&1; docker network rm gdpr >/dev/null 2>&1; }
+        trap cleanup EXIT
+        docker network create gdpr >/dev/null
+        docker run -d --name gdpr-db --network gdpr \
+          -e POSTGRES_PASSWORD=password -e POSTGRES_DB=core "$db_image" >/dev/null
+        # pg_isready also answers during the init restart of the entrypoint: wait for a real query.
+        for _ in $(seq 60); do
+          docker exec gdpr-db psql -U postgres -d core -Atc 'SELECT 1' >/dev/null 2>&1 && break
+          sleep 2
+        done
+        # Same invocation as the migration job of Deploiment; the API role passwords are left out
+        # (roles created NOLOGIN), the template admin is allowed since no admin is given.
+        if ! timeout 600 docker run --rm --network gdpr \
+          -e LIQUIBASE_COMMAND_URL=jdbc:postgresql://gdpr-db:5432/core \
+          -e LIQUIBASE_COMMAND_USERNAME=postgres \
+          -e LIQUIBASE_COMMAND_PASSWORD=password \
+          -e LIQUIBASE_SEARCH_PATH=/migrations \
+          "$migrations_image" --changelog-file=changelog.xml update -Dallow_template_admin=true > "$RUNNER_TEMP/liquibase.log" 2>&1; then
+          tail -50 "$RUNNER_TEMP/liquibase.log"
+          echo "::error::The migrations failed on an empty database."
+          exit 1
+        fi
+        docker exec -i gdpr-db psql -U postgres -d core -At -q < cicd-repo/tests/gdpr/schema.sql > "$RUNNER_TEMP/schema.json"
+
+        # Inventory of the last release before this commit: the diff the approver reviews.
+        previous_ref="$(git describe --tags --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
+        previous_args=()
+        if [ -n "$previous_ref" ] && git show "$previous_ref:$INVENTORY" > "$RUNNER_TEMP/previous-inventory.yaml" 2>/dev/null; then
+          previous_args=("$RUNNER_TEMP/previous-inventory.yaml" "$previous_ref")
+        fi
+
+        (cd cicd-repo/tests/gdpr && npm ci --no-audit --no-fund --silent)
+        GDPR_SCHEMA_LABEL="${PACKAGE_NAME}@${DIGEST:0:19}" \
+          node cicd-repo/tests/gdpr/check.mjs "$INVENTORY" "$RUNNER_TEMP/schema.json" "$report" "${previous_args[@]}" > /dev/null
+        code=$?
+        cat "$report/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        if [ "$code" -ne 0 ]; then
+          echo "::error::The GDPR inventory does not match the schema (see the job summary and the gdpr-inventory artifact)."
+        fi
+        exit "$code"
+
+    - name: Upload the GDPR inventory report
+      if: always() && steps.present.outputs.present == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: gdpr-inventory
+        path: ${{ runner.temp }}/gdpr-report/
+        if-no-files-found: ignore
