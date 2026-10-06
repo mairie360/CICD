@@ -17,6 +17,11 @@ on:
         type: boolean
         default: false
         description: "Fail the pipeline on Semgrep findings (report-only by default until the existing findings are triaged, see README)"
+      rgaa_min_rate:
+        required: false
+        type: number
+        default: 60
+        description: "Minimum CI RGAA rate (percent) of the automatically decided criteria; below it the accessibility job fails (MAIR-319)"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -202,12 +207,14 @@ jobs:
 
       - name: Run accessibility tests on the stories
         timeout-minutes: 15
+        env:
+          RGAA_MIN_RATE: ${{ inputs.rgaa_min_rate }}
         run: |
           mkdir -p rgaa-report
           docker network create rgaa
           docker run -d --name storybook --network rgaa -v "$PWD/storybook-static:/site:ro" \
             python:3-alpine python -m http.server 6006 --directory /site
-          docker run --rm --network rgaa \
+          docker run --rm --network rgaa -e RGAA_MIN_RATE \
             -v "$PWD/cicd-repo/tests/a11y:/engine:ro" \
             -v "$PWD/rgaa.yaml:/scope/rgaa.yaml:ro" \
             -v "$PWD/rgaa-report:/report" \

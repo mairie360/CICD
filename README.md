@@ -389,6 +389,8 @@ APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
       settings-front:
         condition: service_healthy
     command: ["sh", "/engine/run.sh"]
+    environment:
+      RGAA_MIN_RATE: ${RGAA_MIN_RATE:-}   # set by the job from the rgaa_min_rate input
     volumes:
       - ./cicd-repo/tests/a11y:/engine:ro
       - ./rgaa.yaml:/scope/rgaa.yaml:ro
@@ -488,5 +490,22 @@ visible elements (Storybook keeps hidden docs markup in its iframe).
 The runner copies the engine out of its read-only `/engine` mount before `npm ci`, so it never
 writes a root-owned `node_modules` into the consumer's `cicd-repo/`.
 
-The job fails on an unreachable state or an undeclared criterion. Failing criteria do not fail it
-until the rate gate (MAIR-319) is in place.
+The job fails on an unreachable state or an undeclared criterion, and on the rate gate below.
+
+## RGAA rate gate (MAIR-319)
+
+Boolean and unweighted, like the official RGAA rate: a criterion is validated only if every check
+passes on every element of every state. Each criterion of `report.json` gets a `status`:
+- `invalidated`: a check failed (certain, whatever the coverage);
+- `validated`: `coverage: full`, no failure and nothing to review;
+- `to_review`: everything else (partial or no coverage, axe "incomplete", scenario error). These
+  go to the RGAA reviewer in the n8n chain (MAIR-298) and are left out of the CI rate.
+
+**CI rate** = validated ÷ (validated + invalidated), rounded to one decimal, in `report.rate`
+(`validated`, `invalidated`, `to_review`, `value`, `min`, `passed`). Below `rgaa_min_rate`
+(workflow input, default **60**), the engine exits 3: `release-prod` stops before tagging and
+promoting the front (for the lib, `accessibility_tests` fails and blocks `storybook` / `package`). With no criterion decided, `value` is
+`null` and the gate passes. Locally, `RGAA_MIN_RATE=<percent> ./accessibility_test.sh`.
+
+The release gate of the n8n chain (MAIR-298, at least 60 % per front and 50 % overall) uses the
+full rate, once the reviewed criteria are in.
