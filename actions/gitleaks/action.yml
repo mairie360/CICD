@@ -3,7 +3,9 @@ description: >
   Scans the commits added by the current push or pull request for leaked secrets with a pinned
   Gitleaks image (the gitleaks-action needs a paid license on organizations). Only the new commits
   are scanned, so a secret already in the history does not fail every later build: rotate it,
-  then add its fingerprint to a `.gitleaksignore` at the root of the calling repo.
+  then add its fingerprint to a `.gitleaksignore` at the root of the calling repo. Without a
+  `.gitleaks.toml` in the calling repo, the action's `gitleaks.toml` is used (built-in rules plus
+  allowlists for known test values, e.g. the test `jwt_secret` of `rgaa.yaml`).
   The caller must check the repository out with `fetch-depth: 0`.
 
 inputs:
@@ -27,6 +29,7 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PUSH_BEFORE: ${{ github.event.before }}
+        DEFAULT_CONFIG: ${{ github.action_path }}/gitleaks.toml
       run: |
         set -uo pipefail
         zero=0000000000000000000000000000000000000000
@@ -45,13 +48,25 @@ runs:
 
         exit_code=1
         [ "$FAIL_ON_FINDINGS" = "true" ] || exit_code=0
+        # [NOUVEAU] MAIR-316: the repo's own .gitleaks.toml wins (Gitleaks loads it by itself);
+        # otherwise the action's default config, mounted read-only outside the repo.
+        mount_args=()
+        config_args=()
+        if [ -f "$GITHUB_WORKSPACE/.gitleaks.toml" ]; then
+          echo "Using the repository's .gitleaks.toml"
+        else
+          mount_args=(-v "$DEFAULT_CONFIG:/gitleaks/default.toml:ro")
+          config_args=(--config /gitleaks/default.toml)
+        fi
         # Same uid as the checkout, otherwise git refuses the repo ("dubious ownership").
         docker run --rm \
           --user "$(id -u):$(id -g)" \
           -v "$GITHUB_WORKSPACE:/repo" \
+          "${mount_args[@]}" \
           -w /repo \
           "$GITLEAKS_IMAGE" \
           git /repo \
+            "${config_args[@]}" \
             --log-opts="$log_opts" \
             --redact \
             --no-banner \

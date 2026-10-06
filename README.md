@@ -82,6 +82,12 @@ request, `before..after` of a push, the last commit for a new branch. A secret a
 history therefore does not fail every later build: rotate it first, then add its fingerprint to a
 `.gitleaksignore` at the root of the repo. The job checks the repo out with `fetch-depth: 0`.
 
+Without a `.gitleaks.toml` in the repo, Gitleaks runs with `actions/gitleaks/gitleaks.toml`:
+the built-in rules plus allowlists for known test values. Today it only allows the
+`jwt_secret:` line of `rgaa.yaml` (the test-stack secret of the RGAA engine); any other secret
+in that file, or a `jwt_secret` elsewhere, is still reported. A repo that adds its own
+`.gitleaks.toml` replaces this default and must copy the allowlists it still needs.
+
 ## Image release (`actions/docker-release`, MAIR-416)
 
 `APIs_cicd.yml`, `BFFs-cicd.yml`, `frontend-cicd.yml` and `database_cicd.yml` release their images
@@ -290,3 +296,61 @@ Error: openapi coverage: 1 problem(s) between the spec and load-test.js:
 
 k6 (threshold, exit code 99): `operations_uncovered ✗ 'count==0' count=40`, with the `op`
 tag of the offending operation in the metric breakdown.
+
+## RGAA scope (`rgaa.yaml`, MAIR-316)
+
+Each front, and `lib-components`, declares its RGAA 4.1.2 scope in a `rgaa.yaml` at the root of
+its repo. This repo only holds the format (`tests/a11y/rgaa.schema.json`), its validator and the
+test engine that plays the scope (MAIR-317 to MAIR-319); no front-specific file lives here.
+
+| Key | Content |
+| --- | --- |
+| `version` | `1` |
+| `target` | URL of the front in the test stack (`http://settings-front:5000`), or of the Storybook for `lib-components` |
+| `criteria` | applicable criteria, transverse ones (12.1 to 12.5) included. A criterion that is not listed is not applicable: give the reason in a YAML comment |
+| `session` | `jwt_secret` and `jwt_timeout` (default 3600): the `JWT_SECRET` / `JWT_TIMEOUT` of the test stack. The engine signs an HS256 JWT `{sub, role, exp}` per user, like the static token of the ZAP stacks, and sets it as `cookie` (default `accessToken`) on the target origin |
+| `users` | seed users by name (`admin`, `agent`…), one per role that changes what the page shows: `id` (must exist in the seed, the APIs check it) and `role` |
+| `states` | renderings to capture: `id`, then either `route` (+ optional `as: <user>`) for a front, or `story` (Storybook id) for `lib-components`, and optional `steps` |
+
+A step is exactly one action. `click`, `hover`, `wait_for` and `wait_for_hidden` take a locator,
+`fill` and `select` a locator plus `value`, `press` a key name and `goto` a route. A locator is one
+of `role` (+ `name`), `label`, `text`, `test_id` or `selector`, in that order of preference:
+
+```yaml
+version: 1
+target: http://projects-front:5000
+session:
+  jwt_secret: b"secret"            # JWT_SECRET of the test stack, test-only
+users:
+  agent: { id: 2, role: user }      # id from init-test.sql
+criteria:
+  # 2.x: no iframe. 4.x: no media.
+  - "1.1"
+  - "11.1"
+states:
+  - id: create-project-errors
+    route: /
+    as: agent
+    steps:
+      - click: { role: button, name: Nouveau projet }
+      - click: { role: button, name: Créer }
+```
+
+The secret is the test stack's, committed in clear like in the compose files; the default
+Gitleaks config of this repo allows that line (see "Gitleaks"). Test stacks do not set
+`JWT_REQUIRE_SESSION`, so these tokens without `sid` are accepted; it is a production setting.
+
+Cover at least the normal load and the empty list, form errors, every modal and view, and
+every role that changes the page. Full examples: `tests/a11y/examples/`.
+
+For completion and checks in the editor, start the file with
+`# yaml-language-server: $schema=https://raw.githubusercontent.com/mairie360/CICD/<cicd_version>/tests/a11y/rgaa.schema.json`.
+Validate it locally:
+
+```bash
+git clone --depth 1 --branch <cicd_version> https://github.com/mairie360/CICD.git cicd-repo
+(cd cicd-repo/tests/a11y && npm ci) && node cicd-repo/tests/a11y/validate.mjs rgaa.yaml
+```
+
+Errors come out as GitHub annotations, one per problem, e.g.
+`/states/0/steps/0/click: needs a locator: one of role, label, text, test_id, selector`.
