@@ -40,12 +40,6 @@ on:
         type: string
         default: "claude-sonnet-5-5"
         description: "Claude model of the RGAA AI pre-audit (MAIR-320); the pre-audit only runs when the ANTHROPIC_API_KEY secret is set"
-      # [TEMPORAIRE] MAIR-320: CI test of the RGAA check from a front's branch, removed before the release.
-      rgaa_preview_image:
-        required: false
-        type: string
-        default: ""
-        description: "TEMPORARY: runs the RGAA check (rgaa-front action) on this published image, on any branch"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -385,7 +379,7 @@ jobs:
 
       # [NOUVEAU] MAIR-317 (epic MAIR-297): RGAA gate between staging and prod. It runs once the
       # Prod approval is given and before anything is tagged or promoted, on the `staging-<sha>`
-      # image (the steps live in the rgaa-front action, also used by rgaa-preview). Its report is the
+      # image (the steps live in the rgaa-front action). Its report is the
       # input of the n8n release chain (MAIR-298). A failure stops the job: no tag, no prod image.
       - name: RGAA check
         uses: ./cicd-repo/actions/rgaa-front
@@ -414,35 +408,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release_published: ${{ steps.set_tag.outputs.new_release_published }}
           release_version: ${{ steps.set_tag.outputs.new_release_version }}
-
-  # [TEMPORAIRE] MAIR-320: the RGAA check of release-prod (same action) on a published image, from a
-  # front's branch, to test it in the CI before the release. Removed before the release.
-  rgaa-preview:
-    if: inputs.rgaa_preview_image != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: RGAA check
-        uses: ./cicd-repo/actions/rgaa-front
-        with:
-          image_ref: ${{ inputs.rgaa_preview_image }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          min_rate: ${{ inputs.rgaa_min_rate }}
-          ai_model: ${{ inputs.rgaa_ai_model }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
 
   notify-cicd-failure:
     name: Notify n8n on failure

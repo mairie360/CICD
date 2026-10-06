@@ -377,12 +377,47 @@ Besides `rgaa.yaml`, a front provides two files. `IMAGE_REF` is also exported to
 their compose stacks must read `${IMAGE_REF}` too (no `build:` block), like the APIs and BFFs.
 
 `docker-compose-accessibility.yml`: the stack of `docker-compose-security.yml` (database + seed,
-APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
+APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP. Lessons from the eight
+fronts:
+
+- **Every env var the front reads** (`grep -rn process.env src`): its BFF URL(s), every
+  `*_FRONT_URL` (dummy `http://<x>-front.invalid/` values, the front's own URL pointing at itself)
+  and `COOKIE_DOMAIN` (the front service name). A missing one renders an error page instead of
+  the page under test (Login: "Connexion temporairement indisponible", every login a 503).
+- **The data the states need** in an `init-accessibility.sql`, run by a second seeder service
+  after `seeder`, in this stack only: ZAP / k6 keep `init-test.sql` and their thresholds. Every
+  seeded user needs a `user_roles` row (core-api answers 502 without a role); roles come from the
+  database (`Admin`, `Responsable`, …), the BFFs ignore the JWT `role` claim. Insert the users and
+  their roles in one transaction (a deferred trigger adds `Guest` otherwise), use fixed dates
+  (the engine fixes the browser clock at 2026-01-15T09:00+01:00, the servers keep the real one)
+  and ids that do not clash with `init-test.sql`.
+- **States run in parallel** (4 at a time): a state that writes data uses its own seed user, so
+  that the others never see its writes.
 
 ```yaml
+  seeder-a11y:
+    image: postgres:18-alpine
+    depends_on:
+      seeder:
+        condition: service_completed_successfully
+    volumes:
+      - ./init-accessibility.sql:/init-accessibility.sql:ro
+    environment:
+      PGPASSWORD: password
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-h", "postgres", "-U", "postgres", "-d", "mairie_360_database", "-f", "/init-accessibility.sql"]
+    networks:
+      - backend
+    # the services that depended on `seeder` depend on `seeder-a11y`
+
   settings-front:
     image: ${IMAGE_REF:?}
-    # ... environment, healthcheck, networks as in docker-compose-security.yml
+    environment:
+      SETTINGS_BFF_URL: http://bff-settings:4008
+      LOGIN_FRONT_URL: http://login-front.invalid/
+      SETTINGS_FRONT_URL: http://settings-front:5000/
+      # ... every other *_FRONT_URL
+      COOKIE_DOMAIN: settings-front
+    # ... healthcheck, networks as in docker-compose-security.yml
 
   a11y:
     image: ${A11Y_RUNNER_IMAGE:?}
@@ -411,7 +446,7 @@ APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
 #!/usr/bin/env bash
 COMPOSE_FILE="docker-compose-accessibility.yml"
 
-# The CI exports IMAGE_REF (dev-<sha>). Locally, build the front under test.
+# The CI exports IMAGE_REF (staging-<sha>). Locally, build the front under test.
 if [ -z "${IMAGE_REF:-}" ]; then
   docker build -t settings-front:local --secret id=node_auth_token,env=NODE_AUTH_TOKEN . || exit 1
   export IMAGE_REF="settings-front:local"
@@ -431,11 +466,15 @@ docker compose -f "$COMPOSE_FILE" up -d
 docker compose -f "$COMPOSE_FILE" wait a11y
 EXIT_CODE=$?
 docker compose -f "$COMPOSE_FILE" logs a11y
+# The stack is removed below: print it now when something failed (a seeder or an API that did not
+# start), the job cannot dump the containers afterwards.
+[ "$EXIT_CODE" -eq 0 ] || docker compose -f "$COMPOSE_FILE" logs --tail 100
 docker compose -f "$COMPOSE_FILE" down -v
 exit $EXIT_CODE
 ```
 
-The report stays in `rgaa-report/` (add it, `.rgaa-ai-cache/` and `cicd-repo/` to `.gitignore`).
+The report stays in `rgaa-report/` (add it, `.rgaa-ai-cache/` and `cicd-repo/` to `.gitignore`;
+add the RGAA files and `init-accessibility.sql` to `.dockerignore`).
 
 ### Wiring lib-components
 
