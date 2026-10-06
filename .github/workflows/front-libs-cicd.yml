@@ -237,7 +237,7 @@ jobs:
           docker network create rgaa
           docker run -d --name storybook --network rgaa -v "$PWD/storybook-static:/site:ro" \
             python:3-alpine python -m http.server 6006 --directory /site
-          docker run --rm --network rgaa -e RGAA_MIN_RATE -e ANTHROPIC_API_KEY -e ANTHROPIC_WORKSPACE_ID -e RGAA_AI_MODEL \
+          docker run --rm --network rgaa --user "$(id -u):$(id -g)" -e RGAA_MIN_RATE -e ANTHROPIC_API_KEY -e ANTHROPIC_WORKSPACE_ID -e RGAA_AI_MODEL \
             -v "$PWD/.rgaa-ai-cache:/ai-cache" \
             -v "$PWD/cicd-repo/tests/a11y:/engine:ro" \
             -v "$PWD/rgaa.yaml:/scope/rgaa.yaml:ro" \

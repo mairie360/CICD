@@ -385,6 +385,7 @@ APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
 
   a11y:
     image: ${A11Y_RUNNER_IMAGE:?}
+    user: "${RGAA_UID:-0}:${RGAA_GID:-0}"   # the script exports them: rgaa-report/ is not root-owned
     depends_on:
       settings-front:
         condition: service_healthy
@@ -422,6 +423,7 @@ if [ ! -f cicd-repo/tests/a11y/run.sh ]; then
   git clone --quiet --depth 1 --branch "$CICD_VERSION" https://github.com/mairie360/CICD cicd-repo || exit 1
 fi
 export A11Y_RUNNER_IMAGE="$(cat cicd-repo/tests/a11y/runner-image)"
+export RGAA_UID="$(id -u)" RGAA_GID="$(id -g)"   # run the runner as the caller
 
 mkdir -p rgaa-report .rgaa-ai-cache
 docker compose -f "$COMPOSE_FILE" up -d
