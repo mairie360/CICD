@@ -138,15 +138,15 @@ jobs:
           extra_dockerfile: ./liquibase/Dockerfile
           scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
-  # [NOUVEAU] MAIR-476: schema load test between dev and staging, like the
+  # [NOUVEAU] MAIR-476: schema load test, gate between dev and staging, like the
   # `performance_tests` job of the other stacks. The repo's `./performance_test.sh`
   # migrates an empty database, loads a volume seed and runs pgbench scripts that replay
   # the APIs' hot queries; a script over its threshold (`bench/thresholds.conf`) fails the
-  # job and blocks `release-staging`. Dev is still released on every commit.
+  # job and blocks `release-staging`. Dev is still released on every commit (`release-dev`
+  # does not need it). It builds from the commit's sources and never uses the dev image, so
+  # it runs on PRs too, in parallel with the other jobs: a regression shows before merge.
   performance_tests:
     name: Performance Tests (schema bench)
-    needs: release-dev
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
