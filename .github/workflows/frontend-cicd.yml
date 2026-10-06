@@ -196,6 +196,10 @@ jobs:
       id-token: write  # [NOUVEAU] MAIR-416: cosign keyless signature
     outputs:
       digest: ${{ steps.release.outputs.digest }}
+      # [NOUVEAU] MAIR-317: the test jobs run the published `dev-<sha_tag>` image (IMAGE_REF)
+      # instead of rebuilding the front, like APIs_cicd.yml / BFFs-cicd.yml.
+      image: ${{ steps.release.outputs.primary_image }}
+      sha_tag: ${{ steps.release.outputs.sha_tag }}
     steps:
       - uses: actions/checkout@v7
 
@@ -230,15 +234,25 @@ jobs:
     # runner for GitHub's 6 h default and starved the whole org's queue.
     timeout-minutes: 25
     needs: release-dev
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Run ZAP Security Scan via Docker Compose
         timeout-minutes: 15
         run: ./security_test.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # [NOUVEAU] MAIR-317: the stack's front service reads `${IMAGE_REF}` (no `build:`).
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
 
       # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
       # leaving a `*-ready` service polling forever), the step timeout kills the script before
@@ -260,15 +274,25 @@ jobs:
     # runner for GitHub's 6 h default and starved the whole org's queue.
     timeout-minutes: 25
     needs: release-dev
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Run Performance Tests via Docker Compose
         timeout-minutes: 15
         run: ./performance_test.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # [NOUVEAU] MAIR-317: the stack's front service reads `${IMAGE_REF}` (no `build:`).
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
 
       # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
       # leaving a `*-ready` service polling forever), the step timeout kills the script before
@@ -312,9 +336,12 @@ jobs:
           expected_digest: ${{ needs.release-dev.outputs.digest }}
 
   release-prod:
-    needs: release-staging
+    # [CHANGEMENT] MAIR-317: needs release-dev too, for the image name and sha tag of the RGAA run.
+    needs: [release-dev, release-staging]
     runs-on: ubuntu-latest
     environment: Prod
+    # [NOUVEAU] MAIR-317: bounded like the test jobs (MAIR-468), the RGAA stack runs in this job.
+    timeout-minutes: 30
     permissions:
       contents: write
       packages: write
@@ -333,6 +360,61 @@ jobs:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
+
+      # [NOUVEAU] MAIR-317 (epic MAIR-297): RGAA gate between staging and prod. It runs once the
+      # Prod approval is given and before anything is tagged or promoted: the front's
+      # `accessibility_test.sh` starts its `docker-compose-accessibility.yml` stack on the
+      # `staging-<sha>` image, the runner plays the states of `rgaa.yaml` with the engine of
+      # `cicd-repo/tests/a11y` and writes `rgaa-report/` (artifact + job summary, input of the n8n
+      # release chain, MAIR-298). A failure stops the job: no tag, no prod image.
+      - name: Check the accessibility scope
+        run: |
+          missing=0
+          for f in rgaa.yaml accessibility_test.sh docker-compose-accessibility.yml; do
+            if [ ! -f "$f" ]; then
+              echo "::error title=RGAA::$f is missing: every front declares its RGAA scope and stack (see the mairie360/CICD README, \"RGAA scope\")"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Run accessibility tests via Docker Compose
+        timeout-minutes: 15
+        run: ./accessibility_test.sh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:staging-${{ needs.release-dev.outputs.sha_tag }}
+
+      - name: RGAA job summary
+        if: always()
+        run: |
+          if [ -f rgaa-report/summary.md ]; then
+            cat rgaa-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No RGAA report (the stack or the runner did not start, see the logs)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload RGAA report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rgaa-report
+          path: rgaa-report/
+          if-no-files-found: ignore
+
+      - name: Dump container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+            docker logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
 
       # [CHANGEMENT] Correction du chemin d'appel vers le dépôt centralisé 'cicd-repo'.
       - name: Calculate & Create Tag

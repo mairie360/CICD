@@ -162,9 +162,81 @@ jobs:
       - name: Run Gitleaks Secret Scan
         uses: ./cicd-repo/actions/gitleaks
 
+  # [NOUVEAU] MAIR-317 (epic MAIR-297): plays the stories declared in the lib's `rgaa.yaml` with the
+  # RGAA engine of `cicd-repo/tests/a11y`, at release time only: on `main`, once the unit tests
+  # pass, before `package` publishes (like the fronts, checked in `release-prod`). The static
+  # Storybook is served on a private Docker network as `http://storybook:6006` (the `target` of the
+  # lib's rgaa.yaml).
+  accessibility_tests:
+    name: Accessibility Tests (RGAA)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the accessibility scope
+        run: |
+          if [ ! -f rgaa.yaml ]; then
+            echo "::error title=RGAA::rgaa.yaml is missing: the lib declares the RGAA scope of its stories (see the mairie360/CICD README, \"RGAA scope\")"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build Storybook
+        run: npm run build-storybook
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run accessibility tests on the stories
+        timeout-minutes: 15
+        run: |
+          mkdir -p rgaa-report
+          docker network create rgaa
+          docker run -d --name storybook --network rgaa -v "$PWD/storybook-static:/site:ro" \
+            python:3-alpine python -m http.server 6006 --directory /site
+          docker run --rm --network rgaa \
+            -v "$PWD/cicd-repo/tests/a11y:/engine" \
+            -v "$PWD/rgaa.yaml:/scope/rgaa.yaml:ro" \
+            -v "$PWD/rgaa-report:/report" \
+            "$(cat cicd-repo/tests/a11y/runner-image)" sh /engine/run.sh
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f rgaa-report/summary.md ]; then
+            cat rgaa-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No RGAA report (the runner did not start, see the logs)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload RGAA report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rgaa-report
+          path: rgaa-report/
+          if-no-files-found: ignore
+
+      - name: Dump Storybook server logs
+        if: failure()
+        run: docker logs storybook 2>&1 | tail -50 || true
+
   storybook:
     name: Storybook Chain
-    needs: [security, security_sast]
+    needs: [security, security_sast, accessibility_tests]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
@@ -217,7 +289,7 @@ jobs:
 
   package:
     name: Package Publish
-    needs: [test, security, security_sast]
+    needs: [test, security, security_sast, accessibility_tests]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -275,6 +347,7 @@ jobs:
       - test
       - security
       - security_sast
+      - accessibility_tests
       - storybook
       - package
     runs-on: ubuntu-latest

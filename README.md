@@ -354,3 +354,81 @@ git clone --depth 1 --branch <cicd_version> https://github.com/mairie360/CICD.gi
 
 Errors come out as GitHub annotations, one per problem, e.g.
 `/states/0/steps/0/click: needs a locator: one of role, label, text, test_id, selector`.
+
+## RGAA gate (MAIR-317)
+
+In `frontend-cicd.yml` the RGAA check runs **between staging and prod, inside `release-prod`**:
+once the Prod approval is given, the job tests `<image>:staging-<sha>` before anything is tagged or
+promoted, and a failure stops it (no release tag, no prod image). `front-libs-cicd.yml` runs the
+same engine on the lib's Storybook stories in an `accessibility_tests` job, at release time only:
+on `main`, once the unit tests pass, and `storybook` / `package` need it. Neither runs on pull
+requests or other branches. Both fail right away when the scope is missing, keep `rgaa-report/` as an artifact (`report.json`,
+`summary.md`, a full-page screenshot per failed state under `failures/`) and add `summary.md` to
+the job summary. The checks and the rate gate are added by MAIR-318 / MAIR-319; today the job
+fails when a state cannot be reached (HTTP error, step that times out).
+
+The runner image is pinned by version and digest in `tests/a11y/runner-image`, matching the
+`playwright` dependency of the engine (a test keeps them in sync): consumers never write it.
+
+### Wiring a front
+
+Besides `rgaa.yaml`, a front provides two files. `IMAGE_REF` is also exported to ZAP and k6:
+their compose stacks must read `${IMAGE_REF}` too (no `build:` block), like the APIs and BFFs.
+
+`docker-compose-accessibility.yml`: the stack of `docker-compose-security.yml` (database + seed,
+APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
+
+```yaml
+  settings-front:
+    image: ${IMAGE_REF:?}
+    # ... environment, healthcheck, networks as in docker-compose-security.yml
+
+  a11y:
+    image: ${A11Y_RUNNER_IMAGE:?}
+    depends_on:
+      settings-front:
+        condition: service_healthy
+    command: ["sh", "/engine/run.sh"]
+    volumes:
+      - ./cicd-repo/tests/a11y:/engine
+      - ./rgaa.yaml:/scope/rgaa.yaml:ro
+      - ./rgaa-report:/report
+    networks:
+      - backend
+```
+
+`accessibility_test.sh`, same shape as `security_test.sh`:
+
+```bash
+#!/usr/bin/env bash
+COMPOSE_FILE="docker-compose-accessibility.yml"
+
+# The CI exports IMAGE_REF (dev-<sha>). Locally, build the front under test.
+if [ -z "${IMAGE_REF:-}" ]; then
+  docker build -t settings-front:local --secret id=node_auth_token,env=NODE_AUTH_TOKEN . || exit 1
+  export IMAGE_REF="settings-front:local"
+fi
+
+# RGAA engine at the cicd_version pinned in .github/workflows/cicd.yml (CI checks it out itself).
+if [ ! -f cicd-repo/tests/a11y/run.sh ]; then
+  CICD_VERSION="${CICD_VERSION:-$(sed -n 's/^[[:space:]]*cicd_version:[[:space:]]*\([^[:space:]#]*\).*/\1/p' .github/workflows/cicd.yml | head -n 1)}"
+  rm -rf cicd-repo
+  git clone --quiet --depth 1 --branch "$CICD_VERSION" https://github.com/mairie360/CICD cicd-repo || exit 1
+fi
+export A11Y_RUNNER_IMAGE="$(cat cicd-repo/tests/a11y/runner-image)"
+
+mkdir -p rgaa-report
+docker compose -f "$COMPOSE_FILE" up -d
+docker compose -f "$COMPOSE_FILE" wait a11y
+EXIT_CODE=$?
+docker compose -f "$COMPOSE_FILE" logs a11y
+docker compose -f "$COMPOSE_FILE" down -v
+exit $EXIT_CODE
+```
+
+The report stays in `rgaa-report/` (add it, and `cicd-repo/`, to `.gitignore`).
+
+### Wiring lib-components
+
+Only `rgaa.yaml`, with `target: http://storybook:6006` and `story` states: the job builds the
+Storybook (`npm run build-storybook`) and serves it under that name.
