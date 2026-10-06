@@ -94,8 +94,9 @@ action, a locator one of `role`/`label`/`text`/`test_id`/`selector`; sessions ar
 `loadScope()` for the engine; it reports steps and states itself because the schema `oneOf`s
 give unreadable errors), `validate.test.mjs` (`node --test`) and `examples/`, all run by the
 `a11y` job of `lint.yml`. Changing the format is a breaking change for every front: bump
-`version`. Engine (MAIR-317): `run.sh` (runner command: `npm ci` then `run.mjs <scope> <report
-dir>`), `run.mjs` (exit 0 / 1 a state failed / 2 invalid scope), `states.mjs` (`playState`:
+`version`. Engine (MAIR-317): `run.sh` (runner command: copies the read-only `/engine` mount to
+`/tmp/engine` (never extract into `/tmp` itself: it resets its 1777 mode and Chromium crashes),
+`npm ci`, then `run.mjs <scope> <report dir>`), `run.mjs` (exit 0 / 1 a state failed / 2 invalid scope), `states.mjs` (`playState`:
 fresh context per state, JWT cookie, steps, `onReached` hook where MAIR-318 captures),
 `session.mjs` (HS256 signing, tested against the ZAP stacks' static token). The runner image is
 pinned in `tests/a11y/runner-image` (version + digest) and must match the exact `playwright`
@@ -107,8 +108,19 @@ tag and no prod image (the front provides `accessibility_test.sh` +
 `docker-compose-accessibility.yml`). In `front-libs-cicd.yml` it is the `accessibility_tests` job (main only, `needs: test`: release
 time, after the unit tests)
 (serves `storybook-static` as `http://storybook:6006`; required by `storybook` / `package`).
-MAIR-317 also moved the front ZAP / k6 jobs to `IMAGE_REF=<image>:dev-<sha_tag>`. The checks
-(MAIR-318) and the rate / 80 % gate (MAIR-319) come next.
+MAIR-317 also moved the front ZAP / k6 jobs to `IMAGE_REF=<image>:dev-<sha_tag>`. Checks
+(MAIR-318): `criteria.yaml` (106 criteria: checklist `level`, `checks` = `axe:<rule>` /
+`scenario:<id>`, `coverage` full/partial/none; `criteria.test.mjs` keeps it consistent with
+axe-core and `SCENARIOS`), `capture.mjs` (`captureState`: injects `page-helpers.js` and axe-core
+4.14 (pinned, no `@axe-core/playwright` wrapper), writes the snapshot, fingerprint = sha256 of
+normalized HTML + ARIA snapshot, runs only the checks of the declared criteria, detects elements of
+undeclared criteria through `PRESENCE`), `scenarios.mjs` (order matters: DOM checks, layout checks
+that restore viewport/styles, then keyboard/hover which move the focus), `criteria.mjs`
+(`aggregate` per declared criterion). The context uses `bypassCSP` (the fronts' CSP blocks the
+injected scripts), a fixed clock and reduced motion for stable fingerprints. `capture.e2e.test.mjs`
+seeds known defects (one per main scenario). 7.5 uses `status-observer.js`, an init script that
+records the DOM changes between the first step (`__rgaaStatus.mark`) and the end of the steps
+(`stop()`, before the engine injects anything); scenarios may return `{ failures, review }`. The rate / 80 % gate (MAIR-319) comes next.
 
 ## Node version drift
 

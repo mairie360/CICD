@@ -390,7 +390,7 @@ APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
         condition: service_healthy
     command: ["sh", "/engine/run.sh"]
     volumes:
-      - ./cicd-repo/tests/a11y:/engine
+      - ./cicd-repo/tests/a11y:/engine:ro
       - ./rgaa.yaml:/scope/rgaa.yaml:ro
       - ./rgaa-report:/report
     networks:
@@ -432,3 +432,61 @@ The report stays in `rgaa-report/` (add it, and `cicd-repo/`, to `.gitignore`).
 
 Only `rgaa.yaml`, with `target: http://storybook:6006` and `story` states: the job builds the
 Storybook (`npm run build-storybook`) and serves it under that name.
+
+## RGAA checks and report (MAIR-318)
+
+Every reached state is captured and checked, then the results are grouped per criterion.
+
+**Snapshot.** For each state, `rgaa-report/states/<id>/` holds:
+- `page.html`: the normalized HTML, without scripts and styles. Classes and inline styles are
+  removed, generated ids (React `useId`, Radix…) become `gen-<n>`, Next.js build hashes become
+  `<build>` and attributes are sorted;
+- `aria.yml`: the accessibility tree (Playwright ARIA snapshot);
+- `desktop.png` and `mobile-320.png`;
+- `checks.json`.
+
+The `fingerprint` of a state is the SHA-256 of `page.html` and `aria.yml`. The browser runs with
+a fixed date (2026-01-15), reduced motion and the `fr-FR` locale, so the same image and seed always
+give the same fingerprints. The verdicts of the n8n chain (MAIR-298, MAIR-320) are keyed on them.
+
+**Checks.** `tests/a11y/criteria.yaml` maps each of the 106 criteria to its checklist `level`
+(auto / semi / manual), its `checks` and its automated `coverage`:
+- `full`: the checks decide the criterion;
+- `partial`: a failure invalidates the criterion, a pass still needs a review;
+- `none`: always reviewed.
+
+There are two kinds of checks. `axe:<rule>` runs axe-core 4.14, pinned, injected in the page.
+`scenario:<id>` runs a scenario from `scenarios.mjs`:
+
+| Scenario | Criteria | What it does |
+| --- | --- | --- |
+| `doctype`, `duplicate-ids`, `lang-fr`, `page-title` | 8.1, 8.2, 8.4, 8.6 | DOM checks: `<!doctype html>`, unique ids, `lang="fr…"`, a non-generic title |
+| `presentational-attrs`, `new-window`, `decorative-svg`, `figure-caption` | 10.1, 13.2, 1.2, 1.9 | presentational markup, `target="_blank"` without a warning, an unnamed svg that is not `aria-hidden`, a caption not repeated in `aria-label` |
+| `table-title`, `layout-table`, `group-legend`, `invalid-fields` | 5.4, 5.8, 11.6, 11.10 | a data table without a title, data markup in a layout table, a `fieldset` / group without a name, an `aria-invalid` field without a linked message |
+| `reflow-320`, `zoom-200`, `text-spacing`, `orientation` | 10.11, 10.4, 10.12, 13.9 | horizontal scroll at 320×256 (outside scrollable containers), text cut by its box at 200 % or with the WCAG spacing, elements hidden or rotated under an `@media (orientation: …)` rule (a layout change at a width breakpoint is not a lock) |
+| `keyboard`, `modal-focus`, `focus-visible`, `skip-link` | 12.9, 7.3, 12.8, 7.1, 10.7, 12.7 | one Tab walk: focus cycling inside part of the page without ever getting out while other controls are never reached (trap), focus leaving the open modal dialog (7.1), no visible change on focus, first stop is not a skip link to an existing target |
+| `hover-content` | 10.13, 12.11 | hovers each control (40 at most). What appears must stay when the pointer moves onto it, close with Escape and also show on keyboard focus |
+| `status-messages` | 7.5 | `status-observer.js` records the DOM changes made by the state's steps. **Failure**: a live region (`status`, `alert`, `log`, `aria-live`, `output`) inserted together with its text, which is never announced; this includes toasts that close themselves. **Review**: text that appeared after a step outside any live region, while the focus did not move into it and no dialog opened. Only states with steps (save, create, search…) exercise it |
+
+A scenario that throws puts its criteria in review; it never counts as a pass.
+
+**Undeclared criteria.** A page that contains an image (1.1), a frame (2.1), a media element
+(4.1), a data table (5.6), a link (6.2) or a form field (11.1) whose criterion is missing from the
+front's `rgaa.yaml` fails the run, with the element.
+
+**Report.** `report.json` holds:
+- `criteria[]`: `id`, `level`, `coverage`, `checks`, `failures[]` and `review[]` (axe
+  "incomplete" results, scenario errors), each item with its `state`, `check`, `target`, `html`
+  and `message`;
+- `states[]`: `id`, `reached`, `url`, `fingerprint` and `files`;
+- `undeclared[]`.
+
+States run in parallel, 4 at a time by default (`RGAA_CONCURRENCY`, 1-16), each in its own browser
+context; the report keeps the order of `rgaa.yaml`. Table, group and legend checks only look at
+visible elements (Storybook keeps hidden docs markup in its iframe).
+
+The runner copies the engine out of its read-only `/engine` mount before `npm ci`, so it never
+writes a root-owned `node_modules` into the consumer's `cicd-repo/`.
+
+The job fails on an unreachable state or an undeclared criterion. Failing criteria do not fail it
+until the rate gate (MAIR-319) is in place.

@@ -1,10 +1,15 @@
 // Plays the states of a rgaa.yaml in a browser (MAIR-317): opens the session of the state's
 // user, loads the route (or the Storybook story) and runs its steps. The capture and the checks
 // of each state are added on top of this (MAIR-318).
+import { readFileSync } from "node:fs";
 import { sessionCookie } from "./session.mjs";
+
+const STATUS_OBSERVER = readFileSync(new URL("./status-observer.js", import.meta.url), "utf8");
 
 const ACTION_TIMEOUT = 10_000;
 const NAVIGATION_TIMEOUT = 30_000;
+// Date seen by the page (Date.now, new Date), so that relative dates render the same at every run.
+export const FIXED_TIME = new Date("2026-01-15T09:00:00+01:00");
 
 export function locate(page, locator) {
   const exact = locator.exact ?? false;
@@ -41,6 +46,19 @@ const ACTIONS = {
   goto: (page, route) => page.goto(route, { waitUntil: "networkidle" }),
 };
 
+// A story that throws renders Storybook's error page with HTTP 200: checking it would report the
+// error page, not the component. It counts as a state that could not be reached.
+async function assertStoryRendered(page, story) {
+  const error = await page.evaluate(() => {
+    const shown = document.body.classList.contains("sb-show-errordisplay") || document.body.classList.contains("sb-show-nopreview");
+    if (!shown) return null;
+    return (document.querySelector("#error-message")?.textContent ?? document.querySelector(".sb-nopreview")?.textContent ?? "no preview")
+      .replace(/\s+/g, " ")
+      .trim();
+  });
+  if (error !== null) throw new Error(`story ${story} did not render: ${error.slice(0, 200)}`);
+}
+
 async function settle(page) {
   // Fonts and late requests (data loaded after hydration) must be in before a capture.
   await page.waitForLoadState("networkidle", { timeout: NAVIGATION_TIMEOUT }).catch(() => {});
@@ -55,7 +73,14 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
     viewport: { width: 1280, height: 800 },
     locale: "fr-FR",
     timezoneId: "Europe/Paris",
+    // The engine injects its helpers and axe-core: the fronts' CSP would block them.
+    bypassCSP: true,
+    // Same rendering at every run (MAIR-318 fingerprints): no animation, a fixed date.
+    reducedMotion: "reduce",
   });
+  await context.clock.setFixedTime(FIXED_TIME);
+  // Records the DOM changes caused by the steps, for the status-messages scenario (7.5).
+  await context.addInitScript({ content: STATUS_OBSERVER });
   context.setDefaultTimeout(ACTION_TIMEOUT);
   context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
   if (state.as) await context.addCookies([sessionCookie(scope, state.as)]);
@@ -68,11 +93,14 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
     if (response && response.status() >= 400) {
       throw new Error(`${stateUrl(state)} answered HTTP ${response.status()}`);
     }
+    if (state.story) await assertStoryRendered(page, state.story);
     for (step = 0; step < (state.steps ?? []).length; step += 1) {
       const [action, arg] = Object.entries(state.steps[step])[0];
+      await page.evaluate((i) => window.__rgaaStatus?.mark(i), step);
       await ACTIONS[action](page, arg);
     }
     await settle(page);
+    await page.evaluate(() => window.__rgaaStatus?.stop());
     result.reached = true;
     result.url = page.url();
     if (onReached) await onReached(page, result);

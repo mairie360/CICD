@@ -208,7 +208,7 @@ jobs:
           docker run -d --name storybook --network rgaa -v "$PWD/storybook-static:/site:ro" \
             python:3-alpine python -m http.server 6006 --directory /site
           docker run --rm --network rgaa \
-            -v "$PWD/cicd-repo/tests/a11y:/engine" \
+            -v "$PWD/cicd-repo/tests/a11y:/engine:ro" \
             -v "$PWD/rgaa.yaml:/scope/rgaa.yaml:ro" \
             -v "$PWD/rgaa-report:/report" \
             "$(cat cicd-repo/tests/a11y/runner-image)" sh /engine/run.sh
