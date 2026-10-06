@@ -218,8 +218,8 @@ criteria:
   "7.5":
     topic: scripts
     level: semi
-    coverage: none
-    checks: []
+    coverage: partial
+    checks: [scenario:status-messages]
   "8.1":
     topic: mandatory-elements
     level: auto

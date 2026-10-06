@@ -123,6 +123,34 @@ const invalidFields = dom(() =>
     .map((field) => window.__rgaa.failure(field, "invalid field without an error message linked by aria-describedby or aria-errormessage")),
 );
 
+// Status messages (7.5), from what status-observer.js recorded while the steps ran: a live region
+// inserted together with its text is never announced (failure); text that appeared outside any
+// live region, without the focus moving into it nor a dialog opening, may be a status message
+// that is not announced (review).
+const statusMessages = dom(() => {
+  const events = window.__rgaaStatus?.events() ?? [];
+  const failures = [];
+  const review = [];
+  const seen = new Set();
+  for (const event of events) {
+    const key = `${event.kind}|${event.text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const quoted = event.text.length > 120 ? `${event.text.slice(0, 117)}...` : event.text;
+    const item = window.__rgaa.failure(event.element, "");
+    if (event.kind === "region-with-text") {
+      failures.push({ ...item, message: `live region inserted with its message, so it is not announced (after step ${event.step + 1}): "${quoted}"` });
+      continue;
+    }
+    const el = event.element;
+    const focusedInside = el.isConnected && el.contains(document.activeElement);
+    const inDialog = el.isConnected && el.closest('dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"]');
+    if (focusedInside || inDialog || review.length >= 20) continue;
+    review.push({ ...item, message: `text appeared after step ${event.step + 1} outside any live region (status message?): "${quoted}"` });
+  }
+  return { failures, review };
+});
+
 // --- Layout checks ---------------------------------------------------------------------------
 
 async function settleLayout(page) {
@@ -329,6 +357,7 @@ export const SCENARIOS = {
   "layout-table": layoutTable,
   "group-legend": groupLegend,
   "invalid-fields": invalidFields,
+  "status-messages": statusMessages,
   "reflow-320": reflow320,
   "zoom-200": zoom200,
   "text-spacing": textSpacing,

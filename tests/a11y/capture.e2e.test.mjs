@@ -62,6 +62,30 @@ const BAD = page(
   "<style>*:focus{outline:none}</style>",
 );
 
+// Three ways to show a message after a click: only the second one is announced.
+const STATUS = page(
+  "fr",
+  `<main><h1>Projets</h1>
+    <div role="status" id="live"></div>
+    <button id="toast">Créer</button><button id="good">Enregistrer</button><button id="plain">Rechercher</button>
+  </main>
+  <script>
+    document.getElementById("toast").onclick = () => {
+      const toast = document.createElement("div");
+      toast.setAttribute("role", "status");
+      toast.textContent = "Projet créé";
+      document.querySelector("main").append(toast);
+      setTimeout(() => toast.remove(), 200);
+    };
+    document.getElementById("good").onclick = () => (document.getElementById("live").textContent = "Modifications enregistrées");
+    document.getElementById("plain").onclick = () => {
+      const p = document.createElement("p");
+      p.textContent = "3 résultats";
+      document.querySelector("main").append(p);
+    };
+  </script>`,
+);
+
 let server;
 let browser;
 let criteria;
@@ -70,7 +94,7 @@ const target = () => `http://127.0.0.1:${server.address().port}`;
 before(async () => {
   if (!e2e) return;
   server = createServer((request, response) => {
-    const body = { "/good": GOOD, "/bad": BAD }[new URL(request.url, "http://x").pathname];
+    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS }[new URL(request.url, "http://x").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" }).end(body ?? "");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -86,11 +110,11 @@ after(async () => {
 
 const ALL = ["1.1", "1.2", "6.2", "8.2", "8.3", "8.4", "8.5", "9.1", "10.4", "10.7", "10.11", "10.13", "11.1", "12.7", "12.9", "13.2"];
 
-async function capture(route, declared = ALL) {
+async function capture(route, declared = ALL, steps = []) {
   const scope = { target: target(), criteria: declared, states: [] };
   let captured;
   const dir = mkdtempSync(join(tmpdir(), "rgaa-"));
-  const result = await playState(browser, scope, { id: route.slice(1), route }, {
+  const result = await playState(browser, scope, { id: route.slice(1), route, steps }, {
     onReached: async (p) => (captured = await captureState(p, { scope, criteria, dir })),
   });
   assert.equal(result.reached, true, result.error);
@@ -151,4 +175,21 @@ test("run.mjs writes the report and fails on undeclared criteria", { skip: !e2e 
   assert.deepEqual(report.undeclared.map((u) => u.criterion).sort(), ["11.1", "6.2"]);
   assert.match(report.states[0].fingerprint, /^[0-9a-f]{64}$/);
   assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /### Undeclared criteria/);
+});
+
+test("status messages: a region inserted with its text fails, a plain text goes to review", { skip: !e2e }, async () => {
+  const captured = await capture("/status", ["7.5"], [
+    { click: { role: "button", name: "Créer" } },
+    { click: { role: "button", name: "Enregistrer" } },
+    { click: { role: "button", name: "Rechercher" } },
+    { wait_for: { text: "3 résultats" } },
+  ]);
+  const { failures, review } = captured.checks["scenario:status-messages"];
+  // The toast removed itself before the capture: it is still reported.
+  assert.deepEqual(failures.map((f) => f.message), [
+    'live region inserted with its message, so it is not announced (after step 1): "Projet créé"',
+  ]);
+  assert.deepEqual(review.map((r) => r.message), [
+    'text appeared after step 3 outside any live region (status message?): "3 résultats"',
+  ]);
 });

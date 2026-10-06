@@ -390,7 +390,7 @@ APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
         condition: service_healthy
     command: ["sh", "/engine/run.sh"]
     volumes:
-      - ./cicd-repo/tests/a11y:/engine
+      - ./cicd-repo/tests/a11y:/engine:ro
       - ./rgaa.yaml:/scope/rgaa.yaml:ro
       - ./rgaa-report:/report
     networks:
@@ -466,6 +466,7 @@ There are two kinds of checks. `axe:<rule>` runs axe-core 4.14, pinned, injected
 | `reflow-320`, `zoom-200`, `text-spacing`, `orientation` | 10.11, 10.4, 10.12, 13.9 | horizontal scroll at 320×256 (outside scrollable containers), text cut by its box at 200 % or with the WCAG spacing, content lost in portrait |
 | `keyboard`, `focus-visible`, `skip-link` | 12.9, 7.3, 12.8, 10.7, 12.7 | one Tab walk: focus stuck before every control is reached (the open modal dialog is the scope when there is one), no visible change on focus, first stop is not a skip link to an existing target |
 | `hover-content` | 10.13, 12.11 | hovers each control (40 at most). What appears must stay when the pointer moves onto it, close with Escape and also show on keyboard focus |
+| `status-messages` | 7.5 | `status-observer.js` records the DOM changes made by the state's steps. **Failure**: a live region (`status`, `alert`, `log`, `aria-live`, `output`) inserted together with its text, which is never announced; this includes toasts that close themselves. **Review**: text that appeared after a step outside any live region, while the focus did not move into it and no dialog opened. Only states with steps (save, create, search…) exercise it |
 
 A scenario that throws puts its criteria in review; it never counts as a pass.
 
@@ -479,6 +480,9 @@ front's `rgaa.yaml` fails the run, with the element.
   and `message`;
 - `states[]`: `id`, `reached`, `url`, `fingerprint` and `files`;
 - `undeclared[]`.
+
+The runner copies the engine out of its read-only `/engine` mount before `npm ci`, so it never
+writes a root-owned `node_modules` into the consumer's `cicd-repo/`.
 
 The job fails on an unreachable state or an undeclared criterion. Failing criteria do not fail it
 until the rate gate (MAIR-319) is in place.

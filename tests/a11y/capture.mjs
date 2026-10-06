@@ -83,7 +83,9 @@ export async function captureState(page, { scope, criteria, dir }) {
   for (const [id, scenario] of Object.entries(SCENARIOS)) {
     if (!wanted.has(`scenario:${id}`)) continue;
     try {
-      checks[`scenario:${id}`] = { failures: await scenario(page, { screenshot }), review: [] };
+      // A scenario returns its failures, or { failures, review } when it also has items to review.
+      const out = await scenario(page, { screenshot });
+      checks[`scenario:${id}`] = Array.isArray(out) ? { failures: out, review: [] } : out;
     } catch (error) {
       // A scenario that cannot run is not a pass: its criteria go to review.
       checks[`scenario:${id}`] = { failures: [], review: [{ target: "", html: "", message: `scenario error: ${error.message.split("\n")[0]}` }] };

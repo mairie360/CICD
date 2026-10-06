@@ -1,7 +1,10 @@
 // Plays the states of a rgaa.yaml in a browser (MAIR-317): opens the session of the state's
 // user, loads the route (or the Storybook story) and runs its steps. The capture and the checks
 // of each state are added on top of this (MAIR-318).
+import { readFileSync } from "node:fs";
 import { sessionCookie } from "./session.mjs";
+
+const STATUS_OBSERVER = readFileSync(new URL("./status-observer.js", import.meta.url), "utf8");
 
 const ACTION_TIMEOUT = 10_000;
 const NAVIGATION_TIMEOUT = 30_000;
@@ -63,6 +66,8 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
     reducedMotion: "reduce",
   });
   await context.clock.setFixedTime(FIXED_TIME);
+  // Records the DOM changes caused by the steps, for the status-messages scenario (7.5).
+  await context.addInitScript({ content: STATUS_OBSERVER });
   context.setDefaultTimeout(ACTION_TIMEOUT);
   context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
   if (state.as) await context.addCookies([sessionCookie(scope, state.as)]);
@@ -77,9 +82,11 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
     }
     for (step = 0; step < (state.steps ?? []).length; step += 1) {
       const [action, arg] = Object.entries(state.steps[step])[0];
+      await page.evaluate((i) => window.__rgaaStatus?.mark(i), step);
       await ACTIONS[action](page, arg);
     }
     await settle(page);
+    await page.evaluate(() => window.__rgaaStatus?.stop());
     result.reached = true;
     result.url = page.url();
     if (onReached) await onReached(page, result);

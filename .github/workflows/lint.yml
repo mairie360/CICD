@@ -68,8 +68,8 @@ jobs:
         run: node validate.mjs examples/*.rgaa.yaml
 
       # [NOUVEAU] MAIR-317: plays states in a real browser, inside the pinned runner image the
-      # consumers use (its node_modules are reinstalled there, as run.sh does).
+      # consumers use, on a copy of the engine with its own node_modules (as run.sh does).
       - name: Run end-to-end tests in the runner image
         run: |
-          docker run --rm -v "$PWD:/engine" -w /engine -e RGAA_E2E=1 "$(cat runner-image)" \
-            sh -c 'npm ci --no-audit --no-fund --loglevel=error && node --test'
+          docker run --rm -v "$PWD:/engine:ro" -e RGAA_E2E=1 "$(cat runner-image)" sh -c \
+            'mkdir /tmp/engine && tar -C /engine --exclude=./node_modules -cf - . | tar -C /tmp/engine -xf - && cd /tmp/engine && npm ci --no-audit --no-fund --loglevel=error && node --test'
