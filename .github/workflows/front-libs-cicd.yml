@@ -163,14 +163,16 @@ jobs:
         uses: ./cicd-repo/actions/gitleaks
 
   # [NOUVEAU] MAIR-317 (epic MAIR-297): plays the stories declared in the lib's `rgaa.yaml` with the
-  # RGAA engine of `cicd-repo/tests/a11y`, on every run, so that a component is checked before it
-  # reaches the fronts. The static Storybook is served on a private Docker network as
-  # `http://storybook:6006` (the `target` of the lib's rgaa.yaml).
+  # RGAA engine of `cicd-repo/tests/a11y`, at release time only: on `main`, once the unit tests
+  # pass, before `package` publishes (like the fronts, checked in `release-prod`). The static
+  # Storybook is served on a private Docker network as `http://storybook:6006` (the `target` of the
+  # lib's rgaa.yaml).
   accessibility_tests:
     name: Accessibility Tests (RGAA)
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: dependencies
+    needs: test
     steps:
       - uses: actions/checkout@v7
 

@@ -360,8 +360,9 @@ Errors come out as GitHub annotations, one per problem, e.g.
 In `frontend-cicd.yml` the RGAA check runs **between staging and prod, inside `release-prod`**:
 once the Prod approval is given, the job tests `<image>:staging-<sha>` before anything is tagged or
 promoted, and a failure stops it (no release tag, no prod image). `front-libs-cicd.yml` runs the
-same engine on the lib's Storybook stories in an `accessibility_tests` job, on every run, and
-`storybook` / `package` need it. Both fail right away when the scope is missing, keep `rgaa-report/` as an artifact (`report.json`,
+same engine on the lib's Storybook stories in an `accessibility_tests` job, at release time only:
+on `main`, once the unit tests pass, and `storybook` / `package` need it. Neither runs on pull
+requests or other branches. Both fail right away when the scope is missing, keep `rgaa-report/` as an artifact (`report.json`,
 `summary.md`, a full-page screenshot per failed state under `failures/`) and add `summary.md` to
 the job summary. The checks and the rate gate are added by MAIR-318 / MAIR-319; today the job
 fails when a state cannot be reached (HTTP error, step that times out).

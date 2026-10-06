@@ -104,7 +104,8 @@ dependency (a test checks it); bump both together. `states.e2e.test.mjs` only ru
 check is a set of steps of `release-prod` (needs `release-dev` + `release-staging`), after the Prod
 approval and before `semantic-tag` / promotion, on `<image>:staging-<sha_tag>`; a failure means no
 tag and no prod image (the front provides `accessibility_test.sh` +
-`docker-compose-accessibility.yml`). In `front-libs-cicd.yml` it is the `accessibility_tests` job
+`docker-compose-accessibility.yml`). In `front-libs-cicd.yml` it is the `accessibility_tests` job (main only, `needs: test`: release
+time, after the unit tests)
 (serves `storybook-static` as `http://storybook:6006`; required by `storybook` / `package`).
 MAIR-317 also moved the front ZAP / k6 jobs to `IMAGE_REF=<image>:dev-<sha_tag>`. The checks
 (MAIR-318) and the rate / 80 % gate (MAIR-319) come next.
