@@ -46,6 +46,19 @@ const ACTIONS = {
   goto: (page, route) => page.goto(route, { waitUntil: "networkidle" }),
 };
 
+// A story that throws renders Storybook's error page with HTTP 200: checking it would report the
+// error page, not the component. It counts as a state that could not be reached.
+async function assertStoryRendered(page, story) {
+  const error = await page.evaluate(() => {
+    const shown = document.body.classList.contains("sb-show-errordisplay") || document.body.classList.contains("sb-show-nopreview");
+    if (!shown) return null;
+    return (document.querySelector("#error-message")?.textContent ?? document.querySelector(".sb-nopreview")?.textContent ?? "no preview")
+      .replace(/\s+/g, " ")
+      .trim();
+  });
+  if (error !== null) throw new Error(`story ${story} did not render: ${error.slice(0, 200)}`);
+}
+
 async function settle(page) {
   // Fonts and late requests (data loaded after hydration) must be in before a capture.
   await page.waitForLoadState("networkidle", { timeout: NAVIGATION_TIMEOUT }).catch(() => {});
@@ -80,6 +93,7 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
     if (response && response.status() >= 400) {
       throw new Error(`${stateUrl(state)} answered HTTP ${response.status()}`);
     }
+    if (state.story) await assertStoryRendered(page, state.story);
     for (step = 0; step < (state.steps ?? []).length; step += 1) {
       const [action, arg] = Object.entries(state.steps[step])[0];
       await page.evaluate((i) => window.__rgaaStatus?.mark(i), step);

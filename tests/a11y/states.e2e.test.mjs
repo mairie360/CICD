@@ -33,7 +33,10 @@ before(async () => {
       response.writeHead(401).end("no session");
       return;
     }
-    const body = url.pathname === "/private" ? "<h1>Profil</h1>" : PAGES[url.pathname];
+    const broken = url.pathname === "/iframe.html" && url.searchParams.get("id") === "components-broken--default";
+    const body = broken
+      ? `<script>document.addEventListener("DOMContentLoaded", () => document.body.classList.add("sb-show-errordisplay"))</script><div id="error-message"><h1>React is not defined</h1></div>`
+      : url.pathname === "/private" ? "<h1>Profil</h1>" : PAGES[url.pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
     response.end(body ? `<!doctype html><html lang="fr"><title>t</title><body>${body}</body></html>` : "");
   });
@@ -101,4 +104,10 @@ test("loads a Storybook story", { skip: !e2e }, async () => {
     steps: [{ wait_for: { role: "button", name: "Bouton de story" } }],
   });
   assert.equal(result.reached, true, result.error);
+});
+
+test("a story that renders Storybook's error page is not reached", { skip: !e2e }, async () => {
+  const result = await playState(browser, scope, { id: "broken", story: "components-broken--default" });
+  assert.equal(result.reached, false);
+  assert.match(result.error, /did not render: React is not defined/);
 });
