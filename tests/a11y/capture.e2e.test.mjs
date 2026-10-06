@@ -67,7 +67,7 @@ const STATUS = page(
   "fr",
   `<main><h1>Projets</h1>
     <div role="status" id="live"></div>
-    <button id="toast">Créer</button><button id="good">Enregistrer</button><button id="plain">Rechercher</button>
+    <button id="toast">Créer</button><button id="good">Enregistrer</button><button id="plain">Rechercher</button><button id="alert">Valider</button>
   </main>
   <script>
     document.getElementById("toast").onclick = () => {
@@ -78,6 +78,12 @@ const STATUS = page(
       setTimeout(() => toast.remove(), 200);
     };
     document.getElementById("good").onclick = () => (document.getElementById("live").textContent = "Modifications enregistrées");
+    document.getElementById("alert").onclick = () => {
+      const alert = document.createElement("p");
+      alert.setAttribute("role", "alert");
+      alert.textContent = "Email ou mot de passe incorrect.";
+      document.querySelector("main").append(alert);
+    };
     document.getElementById("plain").onclick = () => {
       const p = document.createElement("p");
       p.textContent = "3 résultats";
@@ -213,6 +219,9 @@ test("status messages: a region inserted with its text fails, a plain text goes 
     { click: { role: "button", name: "Enregistrer" } },
     { click: { role: "button", name: "Rechercher" } },
     { wait_for: { text: "3 résultats" } },
+    // An alert inserted with its text is announced (WAI-ARIA): neither a failure nor a review item.
+    { click: { role: "button", name: "Valider" } },
+    { wait_for: { text: "Email ou mot de passe incorrect." } },
   ]);
   const { failures, review } = captured.checks["scenario:status-messages"];
   // The toast removed itself before the capture: it is still reported.
