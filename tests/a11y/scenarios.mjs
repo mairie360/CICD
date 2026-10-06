@@ -265,8 +265,16 @@ async function keyboardWalk(page) {
     return list.length;
   });
   const visits = [];
-  const max = Math.min(prepared + 5, 300);
+  // Tab through one full cycle: until the focus has left the page (body / browser UI) twice, the
+  // second time after wrapping around (a modal can only be escaped backwards). The page can hold Tab
+  // stops tabbables() does not count (Chromium makes scroll containers without focusable content
+  // focusable), so the bound leaves room for them before concluding to a trap.
+  const max = Math.min(prepared * 2 + 20, 400);
+  let exits = 0;
   for (let i = 0; i < max; i += 1) {
+    // One exit per move from the page to the outside, however many Tab stops the browser UI takes.
+    if (visits.length > 0 && !visits.at(-1).failure && (visits.length === 1 || visits.at(-2).failure)) exits += 1;
+    if (exits === 2) break;
     await page.keyboard.press("Tab");
     visits.push(
       await page.evaluate(() => {

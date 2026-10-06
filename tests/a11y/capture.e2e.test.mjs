@@ -43,6 +43,15 @@ const GOOD = page(
 // A form alone on its page, inside main: the keyboard starts in the content, nothing to bypass.
 const FORM = page("fr", `<main><h1>Connexion</h1><label for="e">Email</label><input id="e"><button>Se connecter</button></main>`);
 
+// A board of scrollable columns without focusable content: Chromium makes each scroller a Tab stop
+// that tabbables() does not count. Not a keyboard trap.
+const SCROLLERS = page(
+  "fr",
+  `<main><h1>Tableau</h1>${Array.from({ length: 8 }, (_, i) =>
+    `<div style="height:60px;overflow:auto"><p style="height:200px">Colonne ${i + 1}</p></div><button>Carte ${i + 1}</button>`,
+  ).join("")}</main>`,
+);
+
 const BAD = page(
   "en",
   `<header><a href="/">Accueil</a></header>
@@ -132,7 +141,7 @@ const target = () => `http://127.0.0.1:${server.address().port}`;
 before(async () => {
   if (!e2e) return;
   server = createServer((request, response) => {
-    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE, "/form": FORM }[new URL(request.url, "http://x").pathname];
+    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE, "/form": FORM, "/scrollers": SCROLLERS }[new URL(request.url, "http://x").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" }).end(body ?? "");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -196,6 +205,11 @@ test("each seeded defect fails its criterion", { skip: !e2e }, async () => {
 test("the keyboard walk starts at the top of the page, not where the steps left the focus", { skip: !e2e }, async () => {
   const good = await capture("/good", ALL, [{ fill: { label: "Nom", value: "École" } }]);
   assert.deepEqual(failing(good, "12.7"), [], "the skip link is the first element reached");
+});
+
+test("focusable scroll containers are not a keyboard trap", { skip: !e2e }, async () => {
+  const board = await capture("/scrollers");
+  for (const criterion of ["7.3", "12.8", "12.9"]) assert.deepEqual(failing(board, criterion), [], criterion);
 });
 
 test("no skip link is required when the keyboard starts in the main content", { skip: !e2e }, async () => {
