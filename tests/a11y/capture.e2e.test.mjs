@@ -99,6 +99,18 @@ const MODAL = page(
   "<style>@media (orientation: portrait) { main { display: none; } } button:focus { outline: 3px solid #000; }</style>",
 );
 
+const AI_PAGE = page(
+  "fr",
+  `<main><h1>Projets</h1>
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=" alt="IMG_2041.png" width="40" height="40">
+    <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="" width="10" height="10">
+    <p>Le rapport annuel est disponible. <a href="/rapport.pdf">Cliquez ici</a></p>
+    <label for="d">Date</label><input id="d" placeholder="jj/mm/aaaa">
+    <button aria-label="Supprimer le projet"><svg aria-hidden="true" width="8" height="8"></svg></button>
+    <p>Projet terminé 🎉</p>
+  </main>`,
+);
+
 let server;
 let browser;
 let criteria;
@@ -107,7 +119,7 @@ const target = () => `http://127.0.0.1:${server.address().port}`;
 before(async () => {
   if (!e2e) return;
   server = createServer((request, response) => {
-    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL }[new URL(request.url, "http://x").pathname];
+    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE }[new URL(request.url, "http://x").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" }).end(body ?? "");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -123,12 +135,12 @@ after(async () => {
 
 const ALL = ["1.1", "1.2", "6.2", "8.2", "8.3", "8.4", "8.5", "9.1", "10.4", "10.7", "10.11", "10.13", "11.1", "12.7", "12.9", "13.2"];
 
-async function capture(route, declared = ALL, steps = []) {
+async function capture(route, declared = ALL, steps = [], ai = false) {
   const scope = { target: target(), criteria: declared, states: [] };
   let captured;
   const dir = mkdtempSync(join(tmpdir(), "rgaa-"));
   const result = await playState(browser, scope, { id: route.slice(1), route, steps }, {
-    onReached: async (p) => (captured = await captureState(p, { scope, criteria, dir })),
+    onReached: async (p) => (captured = await captureState(p, { scope, criteria, dir, stateId: route.slice(1), ai })),
   });
   assert.equal(result.reached, true, result.error);
   return { ...captured, dir };
@@ -247,4 +259,19 @@ test("the rate gate fails the run below the minimum", { skip: !e2e }, async () =
   const failing = await runEngine(scopeYaml, { RGAA_MIN_RATE: "80" });
   assert.equal(failing.code, 3);
   assert.equal(failing.report.rate.passed, false);
+});
+
+test("extracts the elements of the AI criteria, with a screenshot for images", { skip: !e2e }, async () => {
+  const declared = ["1.1", "1.3", "6.1", "6.2", "11.1", "11.2", "11.9", "13.5"];
+  const { aiItems } = await capture("/ai", declared, [], true);
+  const of = (criterion) => aiItems.filter((i) => i.criterion === criterion);
+  assert.deepEqual(of("1.3").map((i) => i.name), ["IMG_2041.png"], "decorative images (alt empty) are left to 1.2");
+  assert.ok(of("1.3")[0].image?.length > 0, "a screenshot of the image is attached");
+  assert.deepEqual(of("6.1").map((i) => i.name), ["Cliquez ici"]);
+  assert.match(of("6.1")[0].context, /rapport annuel/);
+  assert.deepEqual(of("11.2").map((i) => [i.name, i.placeholder]), [["Date", "jj/mm/aaaa"]]);
+  assert.deepEqual(of("11.9").map((i) => i.name), ["Supprimer le projet"]);
+  assert.deepEqual(of("13.5").map((i) => i.text), ["Projet terminé 🎉"]);
+  const again = await capture("/ai", declared, [], true);
+  assert.deepEqual(again.aiItems.map((i) => i.fingerprint), aiItems.map((i) => i.fingerprint), "stable fingerprints");
 });

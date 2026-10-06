@@ -17,6 +17,7 @@ export const EXIT = { ok: 0, failed: 1, invalid: 2, below_rate: 3 };
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { aiSettings, createClient, estimatedRate, judge, loadCache, proposals, saveCache } from "./ai.mjs";
 import { captureState } from "./capture.mjs";
 import { aggregate, loadCriteria } from "./criteria.mjs";
 import { computeRate, criterionStatus, minRate } from "./rate.mjs";
@@ -86,6 +87,30 @@ export function summarize(report) {
     const status = c.status === "invalidated" ? "**invalidated**" : c.status.replace("_", " ");
     lines.push(`| ${c.id} | ${status} | ${c.level} | ${c.coverage} | ${c.failures.length || ""} | ${c.review.length || ""} |`);
   }
+  if (report.ai?.enabled && report.ai.criteria) {
+    const { ai } = report;
+    const est = ai.estimated_rate.value === null ? "n/a" : `${ai.estimated_rate.value} %`;
+    const cost = ai.stats.usage.cost_usd === undefined ? "" : `, ~$${ai.stats.usage.cost_usd}`;
+    lines.push(
+      "",
+      "### AI pre-audit (proposals, not gating)",
+      "",
+      `Estimated rate with the AI proposals: **${est}**. Model \`${ai.model}\`: ${ai.stats.elements} elements, ${ai.stats.judged} judged, ${ai.stats.cached} from cache${cost}.`,
+      "",
+      "| Criterion | Proposal | Elements | Valid | Invalid | Uncertain |",
+      "| --- | --- | --- | --- | --- | --- |",
+    );
+    for (const [id, c] of Object.entries(ai.criteria)) {
+      lines.push(`| ${id} | ${c.proposal} | ${c.elements} | ${c.valid} | ${c.invalid.length} | ${c.uncertain} |`);
+    }
+    for (const [id, c] of Object.entries(ai.criteria).filter(([, c]) => c.invalid.length > 0)) {
+      lines.push("", `**${id}** (AI)`, "");
+      for (const f of c.invalid.slice(0, 5)) lines.push(`- \`${f.state}\` · \`${cell(f.target)}\` « ${cell(f.name)} »: ${cell(f.reason)}`);
+      if (c.invalid.length > 5) lines.push(`- … ${c.invalid.length - 5} more in report.json`);
+    }
+  } else if (report.ai?.error) {
+    lines.push("", `AI pre-audit failed: ${cell(report.ai.error)}`);
+  }
   const failing = report.criteria.filter((c) => c.failures.length > 0);
   if (failing.length > 0) {
     lines.push("", "### Failures (first 5 per criterion)", "");
@@ -97,6 +122,28 @@ export function summarize(report) {
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+// AI pre-audit (MAIR-320): proposals and an estimated rate, never part of the gate. Skipped without
+// an API key; an error is reported in the summary and does not fail the run.
+async function preAudit(ai, items, results) {
+  if (!ai.enabled) {
+    if (items.length === 0) console.log(`AI pre-audit skipped: ${ai.reason}`);
+    return { enabled: false, reason: ai.reason };
+  }
+  const cache = loadCache(ai.cache);
+  try {
+    const { verdicts, stats } = await judge(items, { client: createClient(), model: ai.model, cache });
+    saveCache(ai.cache, cache);
+    const criteria = proposals(items, verdicts);
+    const cost = stats.usage.cost_usd === undefined ? "" : `, ~$${stats.usage.cost_usd}`;
+    console.log(`AI pre-audit (${ai.model}): ${stats.elements} elements, ${stats.judged} judged, ${stats.cached} from cache${cost}`);
+    return { enabled: true, model: ai.model, cache: ai.cache || null, stats, criteria, estimated_rate: estimatedRate(results, criteria) };
+  } catch (error) {
+    saveCache(ai.cache, cache);
+    console.log(`::warning title=RGAA AI::pre-audit failed: ${error.message.split("\n")[0]}`);
+    return { enabled: true, model: ai.model, error: error.message.split("\n")[0] };
+  }
 }
 
 async function main([scopeFile, reportDir]) {
@@ -127,6 +174,8 @@ async function main([scopeFile, reportDir]) {
   }
 
   const criteria = loadCriteria();
+  const ai = aiSettings();
+  const aiItems = [];
   mkdirSync(join(reportDir, "failures"), { recursive: true });
   const browser = await chromium.launch();
   const states = [];
@@ -139,7 +188,8 @@ async function main([scopeFile, reportDir]) {
       const found = [];
       const result = await playState(browser, scope, state, {
         onReached: async (page, res) => {
-          const capture = await captureState(page, { scope, criteria, dir });
+          const capture = await captureState(page, { scope, criteria, dir, stateId: state.id, ai: ai.enabled });
+          aiItems.push(...capture.aiItems);
           writeFileSync(join(dir, "checks.json"), `${JSON.stringify(capture.checks, null, 2)}\n`);
           res.fingerprint = capture.fingerprint;
           res.files = Object.fromEntries(
@@ -163,6 +213,7 @@ async function main([scopeFile, reportDir]) {
   }
 
   const results = aggregate(scope, criteria, states).map((c) => ({ ...c, status: criterionStatus(c) }));
+  const aiReport = await preAudit(ai, aiItems, results);
   const report = {
     version: REPORT_VERSION,
     target: scope.target,
@@ -170,6 +221,7 @@ async function main([scopeFile, reportDir]) {
     criteria: results,
     states: states.map(({ checks, ...rest }) => rest),
     undeclared,
+    ai: aiReport,
   };
   writeFileSync(join(reportDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
   writeFileSync(join(reportDir, "summary.md"), summarize(report));

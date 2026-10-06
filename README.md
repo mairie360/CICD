@@ -391,7 +391,10 @@ APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
     command: ["sh", "/engine/run.sh"]
     environment:
       RGAA_MIN_RATE: ${RGAA_MIN_RATE:-}   # set by the job from the rgaa_min_rate input
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # AI pre-audit (MAIR-320), optional
+      RGAA_AI_MODEL: ${RGAA_AI_MODEL:-}
     volumes:
+      - ./.rgaa-ai-cache:/ai-cache        # AI verdicts kept between runs by the job
       - ./cicd-repo/tests/a11y:/engine:ro
       - ./rgaa.yaml:/scope/rgaa.yaml:ro
       - ./rgaa-report:/report
@@ -419,7 +422,7 @@ if [ ! -f cicd-repo/tests/a11y/run.sh ]; then
 fi
 export A11Y_RUNNER_IMAGE="$(cat cicd-repo/tests/a11y/runner-image)"
 
-mkdir -p rgaa-report
+mkdir -p rgaa-report .rgaa-ai-cache
 docker compose -f "$COMPOSE_FILE" up -d
 docker compose -f "$COMPOSE_FILE" wait a11y
 EXIT_CODE=$?
@@ -428,7 +431,7 @@ docker compose -f "$COMPOSE_FILE" down -v
 exit $EXIT_CODE
 ```
 
-The report stays in `rgaa-report/` (add it, and `cicd-repo/`, to `.gitignore`).
+The report stays in `rgaa-report/` (add it, `.rgaa-ai-cache/` and `cicd-repo/` to `.gitignore`).
 
 ### Wiring lib-components
 
@@ -509,3 +512,53 @@ promoting the front (for the lib, `accessibility_tests` fails and blocks `storyb
 
 The release gate of the n8n chain (MAIR-298, at least 60 % per front and 50 % overall) uses the
 full rate, once the reviewed criteria are in.
+
+## RGAA AI pre-audit (MAIR-320)
+
+Most criteria end up `to_review` because they are about relevance: is this `alt` right, is this
+link explicit. The engine extracts the elements those criteria judge, and Claude proposes a
+verdict for each one. The proposals **never change the gating rate**. They give the RGAA reviewer
+of the n8n chain (MAIR-298) a pre-filled answer and the report an **estimated rate**.
+
+| Criterion | Element sent (JSON, plus a screenshot for images) |
+| --- | --- |
+| 1.3 | informative images: `alt` / accessible name, `src`, surrounding text, screenshot. Decorative ones (`alt=""`) belong to 1.2 |
+| 6.1 | links: name, `href`, surrounding text |
+| 11.2 | fields: label, type, placeholder, required |
+| 11.9 | buttons: accessible name, visible text |
+| 13.5 / 13.6 | emoji, symbols or ASCII art used as content, with their alternative |
+
+Only the criteria declared in `rgaa.yaml` are extracted.
+
+**How each element is judged.** Each element has a fingerprint: SHA-256 of the criterion, the
+extracted fields and `EXTRACTION_VERSION` (bump it when a prompt changes). An element already in
+the verdict cache is never sent again: a run without change makes no API call.
+
+The other elements go to Claude (`@anthropic-ai/sdk`), with these settings:
+- 15 elements per request, 3 requests in parallel;
+- one system prompt per criterion, prompt-cached;
+- structured output (`valid` / `invalid` / `uncertain`, plus a reason in French);
+- effort `low`;
+- `fallbacks: "default"` on the models that accept it.
+
+API errors and refusals give `uncertain` and are not cached, so they are retried at the next run.
+
+**What a criterion gets.** One `invalid` element proposes `invalidated`. All elements `valid`
+proposes `validated`. Anything else is `uncertain`. The estimated rate counts these proposals for
+the criteria left `to_review`. Both appear in `report.json` (`ai`) and in the job summary, with the
+invalid elements, the model, the number of judged and cached elements, and the cost.
+
+**Settings.**
+
+| Setting | Value |
+| --- | --- |
+| Secret `ANTHROPIC_API_KEY` | optional; without it the pre-audit is skipped and the run is unchanged |
+| Input `rgaa_ai_model` (`RGAA_AI_MODEL`) | default `claude-sonnet-5-5` |
+| `RGAA_AI=off` | disables the pre-audit |
+
+The verdict cache (`.rgaa-ai-cache/verdicts.json`, mounted as `/ai-cache`) is restored and saved
+by the job with `actions/cache`, per repository, until the n8n store (MAIR-275) holds the
+verdicts.
+
+What is sent is the rendered UI of the test stack: seed data and Storybook demo data, never
+production data.

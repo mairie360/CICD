@@ -35,11 +35,19 @@ on:
         type: number
         default: 60
         description: "Minimum RGAA rate (percent) of the automatically decided criteria, checked between staging and prod; below it release-prod stops before tagging (MAIR-319)"
+      rgaa_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model of the RGAA AI pre-audit (MAIR-320); the pre-audit only runs when the ANTHROPIC_API_KEY secret is set"
     secrets:
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
         required: true
+      # [NOUVEAU] MAIR-320: optional; without it the RGAA AI pre-audit is skipped.
+      ANTHROPIC_API_KEY:
+        required: false
 
 jobs:
   dependencies:
@@ -388,6 +396,15 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      # [NOUVEAU] MAIR-320: AI verdicts by element fingerprint, kept between runs so that only new or
+      # changed elements are sent to Claude (until the n8n store, MAIR-275, holds them).
+      - name: Restore RGAA AI verdicts
+        uses: actions/cache/restore@v6
+        with:
+          path: .rgaa-ai-cache
+          key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: rgaa-ai-${{ github.repository }}-
+
       - name: Run accessibility tests via Docker Compose
         timeout-minutes: 15
         run: ./accessibility_test.sh
@@ -396,6 +413,16 @@ jobs:
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}:staging-${{ needs.release-dev.outputs.sha_tag }}
           # [NOUVEAU] MAIR-319: the runner service forwards it to the engine (exit 3 below it).
           RGAA_MIN_RATE: ${{ inputs.rgaa_min_rate }}
+          # [NOUVEAU] MAIR-320: forwarded to the runner service with the .rgaa-ai-cache mount.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RGAA_AI_MODEL: ${{ inputs.rgaa_ai_model }}
+
+      - name: Save RGAA AI verdicts
+        if: always() && hashFiles('.rgaa-ai-cache/verdicts.json') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: .rgaa-ai-cache
+          key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: RGAA job summary
         if: always()

@@ -124,7 +124,16 @@ records the DOM changes between the first step (`__rgaaStatus.mark`) and the end
 with nothing to review → `validated`; else `to_review`), CI rate = validated / (validated +
 invalidated), `RGAA_MIN_RATE` (input `rgaa_min_rate` of `frontend-cicd.yml` / `front-libs-cicd.yml`,
 default 60, the front's compose must forward it) → `run.mjs` exits 3 below it (exit 1 still wins
-for unreached states / undeclared criteria).
+for unreached states / undeclared criteria). AI pre-audit (MAIR-320): `extract.mjs` (in-page
+extraction for 1.3 / 6.1 / 11.2 / 11.9 / 13.5 / 13.6, before the scenarios move the focus;
+image screenshots; fingerprint = sha256 of criterion + fields + `EXTRACTION_VERSION`, bump it
+when a prompt changes), `ai.mjs` (`@anthropic-ai/sdk` `client.beta.messages.parse` +
+`betaZodOutputFormat`, default `claude-sonnet-5-5` / `RGAA_AI_MODEL`, effort `low`, system
+prompt per criterion with `cache_control`, `fallbacks: "default"` only on the models in
+`FALLBACK_MODELS`, verdict cache by fingerprint in `/ai-cache/verdicts.json` (`RGAA_AI_CACHE`),
+errors/refusals → uncertain and not cached). Proposals and `estimated_rate` live in
+`report.ai` and never touch `report.rate`. No `ANTHROPIC_API_KEY` → skipped. `ai.test.mjs`
+mocks the client; no test calls the real API.
 
 ## Node version drift
 
