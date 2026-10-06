@@ -26,8 +26,9 @@ You receive elements extracted from rendered pages (or component stories), as JS
 for ONE criterion only. Judge from the element, its accessible name and its surrounding text; do not
 assume anything that is not given. Answer "valid" when the element complies, "invalid" when it clearly
 does not, "uncertain" when the information given is not enough to decide. The interface is in French:
-names in French are expected. Write each reason in French, one short sentence, naming what is wrong
-or what makes it compliant. Return exactly one verdict per element id.`;
+names in French are expected. Ignore technical attributes the user never perceives (id, data-*,
+class). Judge identical elements identically. Write each reason in French, in one short sentence of at
+most 20 words, naming what is wrong or what makes it compliant. Return exactly one verdict per element id.`;
 
 export const PROMPTS = {
   "1.3": `${COMMON}
@@ -41,24 +42,32 @@ its context (the surrounding text given), lets the user know where it leads or w
 Invalid: "cliquez ici", "en savoir plus", "voir", "lien" without context that disambiguates them; a link
 opening a file or a new window should say so.`,
   "11.2": `${COMMON}
-Criterion 11.2: is the label of each form field relevant? The name must let the user know what to
-enter; when a specific format is required (date, phone), the label or the placeholder context should
-indicate it. Invalid: empty or generic labels ("champ", "texte", "input"), a placeholder used as the
-only cue for a format, a label that does not match the field's purpose.`,
+Criterion 11.2: is the label of each form field relevant? Judge only the relevance of an existing
+label: a field with no label at all is "valid" here (it is judged by criterion 11.1). The label must let
+the user know what to enter; when a specific format is required (date, phone), the label or its context
+should indicate it. Invalid: generic labels ("champ", "texte", "input"), a label that does not match the
+field's purpose.`,
   "11.9": `${COMMON}
 Criterion 11.9: is the accessible name of each button relevant? It must describe the action. When the
-button shows visible text, the accessible name must contain that visible text. Invalid: empty names,
-"bouton", a name that does not match the action, an icon-only button whose name does not say what
-it does, an accessible name that does not contain the visible text.`,
+button shows a visible label, the accessible name must contain that label. Exceptions, which are valid:
+- a trigger of a list or menu (popup "listbox", "menu", "true"): its visible text is the selected value,
+  not a label; the name must identify the field or the menu (e.g. "Filtrer par rôle" showing "Tous les
+  rôles" is valid);
+- a whole card or calendar entry made clickable: the name may summarize it (title, date) without
+  repeating every visible detail.
+Invalid: empty names, "bouton", placeholder names, a name that does not match the action, an
+icon-only button whose name does not say what it does, a name that leaves out the visible label of a
+regular button.`,
   "13.5": `${COMMON}
-Criterion 13.5: does each cryptic content (emoji, symbol, ASCII art, abbreviation used as content) have
-an alternative where needed? Decorative symbols hidden from assistive technologies (aria_hidden true)
-are valid. A meaningful emoji or symbol needs role="img" and an aria-label, or an equivalent text next
-to it. Invalid: a meaningful symbol with no alternative.`,
+Criterion 13.5: does each cryptic content (emoji, symbol, ASCII art) have an alternative where needed?
+Valid: decorative symbols hidden from assistive technologies (aria_hidden true); common symbols whose
+spoken name carries the meaning in their sentence (→ between two values, ©, •, ✓ next to a label);
+symbols already explained by the text next to them. Invalid: an emoji or symbol whose meaning is
+lost when read aloud and that has no aria-label, role="img" name or equivalent text.`,
   "13.6": `${COMMON}
-Criterion 13.6: for each cryptic content that has an alternative (aria-label, title, adjacent text), is
-that alternative relevant, i.e. does it convey the meaning of the symbol? Elements without any
-alternative are "valid" here (they are judged by 13.5).`,
+Criterion 13.6: for each cryptic content that has an explicit alternative (aria-label, role="img" name,
+title), is that alternative relevant, i.e. does it convey the meaning of the symbol? Elements without
+an explicit alternative are "valid" here: whether they need one is judged by criterion 13.5.`,
 };
 
 const Verdicts = z.object({
@@ -170,7 +179,10 @@ export async function judge(items, { client, model, cache }) {
 
   const batches = [];
   for (const criterion of Object.keys(PROMPTS)) {
-    const list = todo.filter((item) => item.criterion === criterion);
+    // Similar elements in the same batch: they get consistent verdicts.
+    const list = todo
+      .filter((item) => item.criterion === criterion)
+      .sort((a, b) => `${a.name}|${a.html}`.localeCompare(`${b.name}|${b.html}`));
     for (let i = 0; i < list.length; i += BATCH_SIZE) {
       batches.push({ criterion, batch: list.slice(i, i + BATCH_SIZE).map((item, k) => ({ id: `e${i + k + 1}`, item })) });
     }

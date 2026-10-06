@@ -184,6 +184,7 @@ async function main([scopeFile, reportDir]) {
   const criteria = loadCriteria();
   const ai = aiSettings();
   const aiItems = [];
+  const stateOrder = new Map(scope.states.map((state, i) => [state.id, i]));
   mkdirSync(join(reportDir, "failures"), { recursive: true });
   const browser = await chromium.launch();
   const states = [];
@@ -197,7 +198,7 @@ async function main([scopeFile, reportDir]) {
       const result = await playState(browser, scope, state, {
         onReached: async (page, res) => {
           const capture = await captureState(page, { scope, criteria, dir, stateId: state.id, ai: ai.enabled });
-          aiItems.push(...capture.aiItems);
+          aiItems.push(...capture.aiItems.map((item) => ({ ...item, order: stateOrder.get(state.id) })));
           writeFileSync(join(dir, "checks.json"), `${JSON.stringify(capture.checks, null, 2)}\n`);
           res.fingerprint = capture.fingerprint;
           res.files = Object.fromEntries(
@@ -221,7 +222,10 @@ async function main([scopeFile, reportDir]) {
   }
 
   const results = aggregate(scope, criteria, states).map((c) => ({ ...c, status: criterionStatus(c) }));
-  const aiReport = await preAudit(ai, aiItems, results);
+  // States finish in any order (parallel runs): the report follows the scope order.
+  const criterionOrder = new Map(scope.criteria.map((id, i) => [id, i]));
+  aiItems.sort((a, b) => a.order - b.order || criterionOrder.get(a.criterion) - criterionOrder.get(b.criterion) || a.index - b.index);
+  const aiReport = await preAudit(ai, aiItems.map(({ order, ...item }) => item), results);
   const report = {
     version: REPORT_VERSION,
     target: scope.target,

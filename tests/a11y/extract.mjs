@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 
 // Bump when the prompts or the extracted fields change: every cached verdict is then re-judged.
-export const EXTRACTION_VERSION = 1;
+export const EXTRACTION_VERSION = 2;
 
 // Criteria of the first batch, each with the kind of element it judges.
 export const AI_CRITERIA = {
@@ -22,20 +22,22 @@ const MAX_IMAGE_SIDE = 800;
 function inPageExtract({ kinds, max }) {
   const { visible, target } = window.__rgaa;
   const text = (s) => (s ?? "").replace(/\s+/g, " ").trim();
+  // Rendered text (innerText keeps the spaces between blocks: "Lun 15", not "Lun15").
+  const rendered = (el) => text(el?.innerText ?? el?.textContent);
   const byIds = (ids) => text((ids ?? "").split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" "));
   const name = (el) =>
     text(el.getAttribute("aria-label")) ||
     byIds(el.getAttribute("aria-labelledby")) ||
     (el.id ? text([...document.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`)].map((l) => l.textContent).join(" ")) : "") ||
-    text(el.closest("label")?.textContent) ||
+    rendered(el.closest("label")) ||
     text(el.getAttribute("alt")) ||
     text(el.getAttribute("title")) ||
-    text(el.textContent);
+    rendered(el);
   // Short text around the element: its nearest block container, without the element itself.
   const context = (el) => {
     const block = el.parentElement?.closest("p, li, td, th, dd, article, section, form, fieldset, header, nav, div") ?? el.parentElement;
-    const own = text(el.textContent);
-    return text(block?.textContent).replace(own, " … ").slice(0, 240);
+    const own = rendered(el);
+    return rendered(block).replace(own, " … ").slice(0, 240);
   };
   const opening = (el) => {
     const outer = el.outerHTML;
@@ -44,8 +46,11 @@ function inPageExtract({ kinds, max }) {
   const items = [];
   const push = (kind, el, fields) => {
     if (items.filter((i) => i.kind === kind).length >= max) return;
-    el.dataset.rgaaAi = String(items.length);
-    items.push({ kind, index: items.length, target: target(el), html: opening(el), context: context(el), ...fields });
+    // Read the markup before marking the element: the marker must not reach the html (nor the
+    // fingerprint), or the same component would change fingerprint with its position.
+    const item = { kind, index: items.length, target: target(el), html: opening(el), context: context(el), ...fields };
+    el.dataset.rgaaAi = String(item.index);
+    items.push(item);
   };
 
   if (kinds.includes("image")) {
@@ -76,7 +81,11 @@ function inPageExtract({ kinds, max }) {
   if (kinds.includes("button")) {
     for (const el of document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], input[type="reset"]')) {
       if (!visible(el)) continue;
-      push("button", el, { name: name(el) || text(el.getAttribute("value")), visible_text: text(el.textContent).slice(0, 120) });
+      push("button", el, {
+        name: name(el) || text(el.getAttribute("value")),
+        visible_text: rendered(el).slice(0, 120),
+        popup: el.getAttribute("aria-haspopup") ?? "",
+      });
     }
   }
   if (kinds.includes("cryptic")) {
@@ -90,7 +99,7 @@ function inPageExtract({ kinds, max }) {
       seen.add(el);
       push("cryptic", el, {
         name: name(el),
-        text: text(el.textContent).slice(0, 160),
+        text: rendered(el).slice(0, 160),
         role: el.getAttribute("role") ?? "",
         aria_hidden: el.closest('[aria-hidden="true"]') !== null,
       });
@@ -99,8 +108,14 @@ function inPageExtract({ kinds, max }) {
   return items;
 }
 
+// Fields that do not change the verdict of a criterion stay out of its fingerprint, so that the same
+// component in several stories or pages is judged once. The context matters for images and links
+// (an alt or a link text is judged against it), much less for button names, labels and symbols.
+const CONTEXT_FREE = new Set(["11.2", "11.9", "13.5", "13.6"]);
+
 export function itemFingerprint(criterion, item) {
   const { target, index, image, state, ...judged } = item;
+  if (CONTEXT_FREE.has(criterion)) delete judged.context;
   return createHash("sha256")
     .update(`${EXTRACTION_VERSION}|${criterion}|${JSON.stringify(judged, Object.keys(judged).sort())}`)
     .digest("hex");
