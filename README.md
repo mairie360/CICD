@@ -355,12 +355,13 @@ git clone --depth 1 --branch <cicd_version> https://github.com/mairie360/CICD.gi
 Errors come out as GitHub annotations, one per problem, e.g.
 `/states/0/steps/0/click: needs a locator: one of role, label, text, test_id, selector`.
 
-## RGAA job (`accessibility_tests`, MAIR-317)
+## RGAA gate (MAIR-317)
 
-`frontend-cicd.yml` runs `accessibility_tests` in parallel with ZAP and k6, on the published
-`<image>:dev-<sha>`, and `release-staging` needs it. `front-libs-cicd.yml` runs the same engine on
-the lib's Storybook stories, on every run, and `storybook` / `package` need it. Both jobs fail
-right away when the scope is missing, keep `rgaa-report/` as an artifact (`report.json`,
+In `frontend-cicd.yml` the RGAA check runs **between staging and prod, inside `release-prod`**:
+once the Prod approval is given, the job tests `<image>:staging-<sha>` before anything is tagged or
+promoted, and a failure stops it (no release tag, no prod image). `front-libs-cicd.yml` runs the
+same engine on the lib's Storybook stories in an `accessibility_tests` job, on every run, and
+`storybook` / `package` need it. Both fail right away when the scope is missing, keep `rgaa-report/` as an artifact (`report.json`,
 `summary.md`, a full-page screenshot per failed state under `failures/`) and add `summary.md` to
 the job summary. The checks and the rate gate are added by MAIR-318 / MAIR-319; today the job
 fails when a state cannot be reached (HTTP error, step that times out).
@@ -370,7 +371,7 @@ The runner image is pinned by version and digest in `tests/a11y/runner-image`, m
 
 ### Wiring a front
 
-Besides `rgaa.yaml`, a front provides two files. The jobs also export `IMAGE_REF` to ZAP and k6:
+Besides `rgaa.yaml`, a front provides two files. `IMAGE_REF` is also exported to ZAP and k6:
 their compose stacks must read `${IMAGE_REF}` too (no `build:` block), like the APIs and BFFs.
 
 `docker-compose-accessibility.yml`: the stack of `docker-compose-security.yml` (database + seed,

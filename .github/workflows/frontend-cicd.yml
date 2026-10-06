@@ -307,81 +307,8 @@ jobs:
             echo "::endgroup::"
           done
 
-  # [NOUVEAU] MAIR-317 (epic MAIR-297): RGAA gate between dev and staging. The front's
-  # `accessibility_test.sh` starts its `docker-compose-accessibility.yml` stack on the published
-  # image; the runner service plays the states of the front's `rgaa.yaml` with the engine of
-  # `cicd-repo/tests/a11y` and writes `rgaa-report/`, kept as an artifact (input of the n8n
-  # release chain, MAIR-298) and summarized in the job summary.
-  accessibility_tests:
-    name: Accessibility Tests (RGAA)
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    needs: release-dev
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Check the accessibility scope
-        run: |
-          missing=0
-          for f in rgaa.yaml accessibility_test.sh docker-compose-accessibility.yml; do
-            if [ ! -f "$f" ]; then
-              echo "::error title=RGAA::$f is missing: every front declares its RGAA scope and stack (see the mairie360/CICD README, \"RGAA scope\")"
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      - name: Run accessibility tests via Docker Compose
-        timeout-minutes: 15
-        run: ./accessibility_test.sh
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
-
-      - name: Job summary
-        if: always()
-        run: |
-          if [ -f rgaa-report/summary.md ]; then
-            cat rgaa-report/summary.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No RGAA report (the stack or the runner did not start, see the logs)." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload RGAA report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: rgaa-report
-          path: rgaa-report/
-          if-no-files-found: ignore
-
-      - name: Dump container logs
-        if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
-
   release-staging:
-    needs: [release-dev, security_tests, performance_tests, accessibility_tests]
+    needs: [release-dev, security_tests, performance_tests]
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
@@ -409,9 +336,12 @@ jobs:
           expected_digest: ${{ needs.release-dev.outputs.digest }}
 
   release-prod:
-    needs: release-staging
+    # [CHANGEMENT] MAIR-317: needs release-dev too, for the image name and sha tag of the RGAA run.
+    needs: [release-dev, release-staging]
     runs-on: ubuntu-latest
     environment: Prod
+    # [NOUVEAU] MAIR-317: bounded like the test jobs (MAIR-468), the RGAA stack runs in this job.
+    timeout-minutes: 30
     permissions:
       contents: write
       packages: write
@@ -430,6 +360,61 @@ jobs:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
+
+      # [NOUVEAU] MAIR-317 (epic MAIR-297): RGAA gate between staging and prod. It runs once the
+      # Prod approval is given and before anything is tagged or promoted: the front's
+      # `accessibility_test.sh` starts its `docker-compose-accessibility.yml` stack on the
+      # `staging-<sha>` image, the runner plays the states of `rgaa.yaml` with the engine of
+      # `cicd-repo/tests/a11y` and writes `rgaa-report/` (artifact + job summary, input of the n8n
+      # release chain, MAIR-298). A failure stops the job: no tag, no prod image.
+      - name: Check the accessibility scope
+        run: |
+          missing=0
+          for f in rgaa.yaml accessibility_test.sh docker-compose-accessibility.yml; do
+            if [ ! -f "$f" ]; then
+              echo "::error title=RGAA::$f is missing: every front declares its RGAA scope and stack (see the mairie360/CICD README, \"RGAA scope\")"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Run accessibility tests via Docker Compose
+        timeout-minutes: 15
+        run: ./accessibility_test.sh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:staging-${{ needs.release-dev.outputs.sha_tag }}
+
+      - name: RGAA job summary
+        if: always()
+        run: |
+          if [ -f rgaa-report/summary.md ]; then
+            cat rgaa-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No RGAA report (the stack or the runner did not start, see the logs)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload RGAA report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rgaa-report
+          path: rgaa-report/
+          if-no-files-found: ignore
+
+      - name: Dump container logs
+        if: failure()
+        run: |
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+            docker logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
 
       # [CHANGEMENT] Correction du chemin d'appel vers le dépôt centralisé 'cicd-repo'.
       - name: Calculate & Create Tag
@@ -461,7 +446,6 @@ jobs:
       - release-dev
       - security_tests
       - performance_tests
-      - accessibility_tests
       - release-staging
       - release-prod
     runs-on: ubuntu-latest

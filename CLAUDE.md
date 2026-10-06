@@ -100,9 +100,11 @@ fresh context per state, JWT cookie, steps, `onReached` hook where MAIR-318 capt
 `session.mjs` (HS256 signing, tested against the ZAP stacks' static token). The runner image is
 pinned in `tests/a11y/runner-image` (version + digest) and must match the exact `playwright`
 dependency (a test checks it); bump both together. `states.e2e.test.mjs` only runs with
-`RGAA_E2E=1` inside that image (`a11y` job of `lint.yml`). Jobs: `accessibility_tests` in
-`frontend-cicd.yml` (needs `release-dev`, required by `release-staging`; the front provides
-`accessibility_test.sh` + `docker-compose-accessibility.yml`) and in `front-libs-cicd.yml`
+`RGAA_E2E=1` inside that image (`a11y` job of `lint.yml`). Placement: in `frontend-cicd.yml` the RGAA
+check is a set of steps of `release-prod` (needs `release-dev` + `release-staging`), after the Prod
+approval and before `semantic-tag` / promotion, on `<image>:staging-<sha_tag>`; a failure means no
+tag and no prod image (the front provides `accessibility_test.sh` +
+`docker-compose-accessibility.yml`). In `front-libs-cicd.yml` it is the `accessibility_tests` job
 (serves `storybook-static` as `http://storybook:6006`; required by `storybook` / `package`).
 MAIR-317 also moved the front ZAP / k6 jobs to `IMAGE_REF=<image>:dev-<sha_tag>`. The checks
 (MAIR-318) and the rate / 80 % gate (MAIR-319) come next.
