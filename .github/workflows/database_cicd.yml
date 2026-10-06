@@ -138,9 +138,43 @@ jobs:
           extra_dockerfile: ./liquibase/Dockerfile
           scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
+  # [NOUVEAU] MAIR-476: schema load test between dev and staging, like the
+  # `performance_tests` job of the other stacks. The repo's `./performance_test.sh`
+  # migrates an empty database, loads a volume seed and runs pgbench scripts that replay
+  # the APIs' hot queries; a script over its threshold (`bench/thresholds.conf`) fails the
+  # job and blocks `release-staging`. Dev is still released on every commit.
+  performance_tests:
+    name: Performance Tests (schema bench)
+    needs: release-dev
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run schema bench
+        timeout-minutes: 20
+        run: |
+          if [ ! -x ./performance_test.sh ]; then
+            echo "::warning::No executable ./performance_test.sh in this repo, schema bench skipped."
+            exit 0
+          fi
+          ./performance_test.sh
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: schema-bench-results
+          path: bench/results/
+          if-no-files-found: ignore
+
   release-staging:
     name: Release to Staging
-    needs: release-dev
+    needs: [release-dev, performance_tests]
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
@@ -215,6 +249,7 @@ jobs:
       - tests
       - security_sast
       - release-dev
+      - performance_tests
       - release-staging
       - release-prod
     runs-on: ubuntu-latest
