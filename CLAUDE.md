@@ -120,7 +120,11 @@ that restore viewport/styles, then keyboard/hover which move the focus), `criter
 injected scripts), a fixed clock and reduced motion for stable fingerprints. `capture.e2e.test.mjs`
 seeds known defects (one per main scenario). 7.5 uses `status-observer.js`, an init script that
 records the DOM changes between the first step (`__rgaaStatus.mark`) and the end of the steps
-(`stop()`, before the engine injects anything); scenarios may return `{ failures, review }`. The rate / 80 % gate (MAIR-319) comes next.
+(`stop()`, before the engine injects anything); scenarios may return `{ failures, review }`. Rate gate (MAIR-319, `rate.mjs`): status per criterion (failure → `invalidated`; full coverage
+with nothing to review → `validated`; else `to_review`), CI rate = validated / (validated +
+invalidated), `RGAA_MIN_RATE` (input `rgaa_min_rate` of `frontend-cicd.yml` / `front-libs-cicd.yml`,
+default 60, the front's compose must forward it) → `run.mjs` exits 3 below it (exit 1 still wins
+for unreached states / undeclared criteria).
 
 ## Node version drift
 

@@ -30,6 +30,11 @@ on:
         type: boolean
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the image (accepted risks go in .trivyignore)"
+      rgaa_min_rate:
+        required: false
+        type: number
+        default: 60
+        description: "Minimum RGAA rate (percent) of the automatically decided criteria, checked between staging and prod; below it release-prod stops before tagging (MAIR-319)"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -389,6 +394,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE_REF: ${{ needs.release-dev.outputs.image }}:staging-${{ needs.release-dev.outputs.sha_tag }}
+          # [NOUVEAU] MAIR-319: the runner service forwards it to the engine (exit 3 below it).
+          RGAA_MIN_RATE: ${{ inputs.rgaa_min_rate }}
 
       - name: RGAA job summary
         if: always()
