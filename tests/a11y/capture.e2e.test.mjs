@@ -86,6 +86,19 @@ const STATUS = page(
   </script>`,
 );
 
+// An open modal that lets Tab out (7.1, not a 12.9 trap), a portrait lock (13.9) and a hidden table
+// from the host page (Storybook's docs wrapper) that must be ignored.
+const MODAL = page(
+  "fr",
+  `<div hidden class="sb-wrapper"><table><tr><td>docs</td></tr></table></div>
+  <main><h1>Utilisateurs</h1><button>Derrière la modale</button>
+    <div role="dialog" aria-modal="true" aria-label="Nouvel utilisateur">
+      <button>Annuler</button><button>Créer</button>
+    </div>
+  </main>`,
+  "<style>@media (orientation: portrait) { main { display: none; } } button:focus { outline: 3px solid #000; }</style>",
+);
+
 let server;
 let browser;
 let criteria;
@@ -94,7 +107,7 @@ const target = () => `http://127.0.0.1:${server.address().port}`;
 before(async () => {
   if (!e2e) return;
   server = createServer((request, response) => {
-    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS }[new URL(request.url, "http://x").pathname];
+    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL }[new URL(request.url, "http://x").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" }).end(body ?? "");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -192,4 +205,13 @@ test("status messages: a region inserted with its text fails, a plain text goes 
   assert.deepEqual(review.map((r) => r.message), [
     'text appeared after step 3 outside any live region (status message?): "3 résultats"',
   ]);
+});
+
+test("a modal that lets the focus out fails 7.1, not as a keyboard trap", { skip: !e2e }, async () => {
+  const captured = await capture("/modal", ["5.4", "7.1", "12.9", "13.9"]);
+  const ids = (criterion) => failing(captured, criterion).map((f) => f.check);
+  assert.ok(ids("7.1").includes("scenario:modal-focus"), "modal-focus should fail");
+  assert.deepEqual(ids("12.9"), [], "leaving the modal is not a keyboard trap");
+  assert.deepEqual(ids("5.4"), [], "the hidden table must be ignored");
+  assert.ok(ids("13.9").includes("scenario:orientation"), "portrait lock should fail 13.9");
 });

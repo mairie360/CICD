@@ -48,9 +48,13 @@
 
   // Keyboard-reachable elements, inside the open modal dialog when there is one (a modal
   // keeps the focus inside on purpose: that is not a keyboard trap).
+  // The open modal dialog, if any: the keyboard scope of the page.
+  function modalRoot() {
+    return [...document.querySelectorAll('dialog[open], [aria-modal="true"]')].filter(visible).pop() ?? null;
+  }
+
   function tabbables() {
-    const modal = [...document.querySelectorAll('dialog[open], [aria-modal="true"]')].filter(visible).pop();
-    const root = modal ?? document;
+    const root = modalRoot() ?? document;
     return [...root.querySelectorAll(TABBABLE)].filter(
       (el) => !el.disabled && el.tabIndex >= 0 && visible(el) && !el.closest("[inert]"),
     );
@@ -118,5 +122,5 @@
     return `<!doctype ${document.doctype?.name ?? "none"}>\n${clone.outerHTML.replace(/>\s+</g, "><").replace(/\s{2,}/g, " ")}`;
   }
 
-  window.__rgaa = { target, html, failure, visible, tabbables, focusStyle, clipped, normalizedHtml };
+  window.__rgaa = { target, html, failure, visible, modalRoot, tabbables, focusStyle, clipped, normalizedHtml };
 })();

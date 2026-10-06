@@ -95,21 +95,25 @@ export const DATA_TABLES = 'table:not([role="presentation"]):not([role="none"]),
 
 const tableTitle = dom((selector) =>
   [...document.querySelectorAll(selector)]
+    .filter((t) => window.__rgaa.visible(t))
     .filter((t) => !(t.querySelector(":scope > caption")?.textContent.trim() || t.getAttribute("aria-label") || t.getAttribute("aria-labelledby") || t.getAttribute("title")))
     .map((t) => window.__rgaa.failure(t, "data table without a title (caption, aria-labelledby or aria-label)")),
 DATA_TABLES);
 
 const layoutTable = dom(() =>
   [...document.querySelectorAll('table[role="presentation"], table[role="none"]')]
+    .filter((t) => window.__rgaa.visible(t))
     .filter((t) => t.querySelector("caption, th, thead, tfoot, [scope], [headers]") || t.hasAttribute("summary"))
     .map((t) => window.__rgaa.failure(t, "layout table with data table markup (caption, th, scope, headers)")),
 );
 
 const groupLegend = dom(() => [
   ...[...document.querySelectorAll("fieldset")]
+    .filter((f) => window.__rgaa.visible(f))
     .filter((f) => !f.querySelector(":scope > legend")?.textContent.trim())
     .map((f) => window.__rgaa.failure(f, "fieldset without a legend")),
   ...[...document.querySelectorAll('[role="group"], [role="radiogroup"]')]
+    .filter((g) => window.__rgaa.visible(g))
     .filter((g) => !(g.getAttribute("aria-label") || g.getAttribute("aria-labelledby")))
     .map((g) => window.__rgaa.failure(g, "group without a name (aria-labelledby or aria-label)")),
 ]);
@@ -206,18 +210,37 @@ const textSpacing = (page) =>
     () => clippedText("text cut with the WCAG text spacing (line 1.5, letters 0.12em, words 0.16em)")(page),
   );
 
-async function orientation(page) {
-  const lengths = [];
-  for (const size of [{ width: 800, height: 1280 }, DESKTOP]) {
-    await page.setViewportSize(size);
-    await settleLayout(page);
-    lengths.push(await page.evaluate(() => document.body.innerText.trim().length));
+// Content locked to one orientation: rules under an `orientation` media query that hide or rotate
+// elements of the page (a responsive layout change at a width breakpoint is not a lock).
+const orientation = dom(() => {
+  const out = [];
+  const visit = (rules, media) => {
+    for (const rule of rules) {
+      if (rule instanceof CSSMediaRule) {
+        visit(rule.cssRules, /orientation/i.test(rule.conditionText) ? rule.conditionText : media);
+      } else if (media && rule instanceof CSSStyleRule) {
+        const { display, visibility, transform, rotate } = rule.style;
+        const locks = display === "none" || visibility === "hidden" || /rotate/i.test(transform) || (rotate && rotate !== "none");
+        if (!locks) continue;
+        let element = null;
+        try {
+          element = document.querySelector(rule.selectorText);
+        } catch {
+          continue;
+        }
+        if (element) out.push(window.__rgaa.failure(element, `"${rule.selectorText}" is hidden or rotated under @media ${media}`));
+      }
+    }
+  };
+  for (const sheet of document.styleSheets) {
+    try {
+      visit(sheet.cssRules, null);
+    } catch {
+      // Cross-origin stylesheet: not readable, axe css-orientation-lock still applies.
+    }
   }
-  const [portrait, landscape] = lengths;
-  return landscape > 0 && portrait < landscape * 0.5
-    ? [{ target: "body", html: "", message: `portrait shows ${portrait} characters of text, landscape ${landscape}` }]
-    : [];
-}
+  return out;
+});
 
 // --- Keyboard and hover (they move the focus) -------------------------------------------------
 
@@ -226,6 +249,8 @@ async function orientation(page) {
 async function keyboardWalk(page) {
   const prepared = await page.evaluate(() => {
     document.activeElement?.blur?.();
+    const modal = window.__rgaa.modalRoot();
+    if (modal) modal.dataset.rgaaModal = "";
     const list = window.__rgaa.tabbables();
     list.forEach((el, i) => {
       el.dataset.rgaaTab = String(i);
@@ -240,10 +265,14 @@ async function keyboardWalk(page) {
     visits.push(
       await page.evaluate(() => {
         const el = document.activeElement;
-        if (!el || el === document.body) return { index: null };
+        const modal = document.querySelector("[data-rgaa-modal]");
+        // Focus outside the keyboard scope: on the body / browser UI, or behind the open modal.
+        const outside = !el || el === document.body || (modal !== null && !modal.contains(el));
+        if (!el || el === document.body) return { index: null, outside };
         const style = window.__rgaa.focusStyle(el);
         const ring = getComputedStyle(el, ":focus-visible");
         return {
+          outside,
           index: el.dataset.rgaaTab ?? null,
           failure: window.__rgaa.failure(el, ""),
           visible: style !== el.dataset.rgaaStyle || (ring.outlineStyle !== "none" && parseFloat(ring.outlineWidth) > 0),
@@ -254,11 +283,17 @@ async function keyboardWalk(page) {
       }),
     );
   }
-  await page.evaluate(() => document.querySelectorAll("[data-rgaa-tab]").forEach((el) => {
-    delete el.dataset.rgaaTab;
-    delete el.dataset.rgaaStyle;
-  }));
-  return { count: prepared, visits };
+  const modal = await page.evaluate(() => {
+    const root = document.querySelector("[data-rgaa-modal]");
+    const failure = root ? window.__rgaa.failure(root, "") : null;
+    delete root?.dataset.rgaaModal;
+    document.querySelectorAll("[data-rgaa-tab]").forEach((el) => {
+      delete el.dataset.rgaaTab;
+      delete el.dataset.rgaaStyle;
+    });
+    return failure;
+  });
+  return { count: prepared, visits, modal };
 }
 
 const walks = new WeakMap();
@@ -267,15 +302,30 @@ const walk = (page) => {
   return walks.get(page);
 };
 
+// Keyboard trap: the focus keeps cycling inside part of the scope and never gets out of it, while
+// other controls are never reached. Leaving the scope (body, browser UI) is the normal way out.
 async function keyboard(page) {
-  const { count, visits } = await walk(page);
+  const { count, visits, modal } = await walk(page);
   if (count === 0) return [];
   const reached = new Set(visits.map((v) => v.index).filter((i) => i !== null));
   if (reached.size >= count) return [];
+  // An open modal that lets the focus out is a broken dialog (modal-focus, 7.1), not a trap.
+  if (visits.some((v) => v.outside)) return [];
+  if (modal) return [];
   // Focus stuck on a few elements while others were never reached.
   const tail = visits.slice(-Math.min(visits.length, 5)).filter((v) => v.failure);
   const stuck = [...new Map(tail.map((v) => [v.failure.target, v.failure])).values()];
   return stuck.map((f) => ({ ...f, message: `keyboard focus loops here: ${reached.size} of ${count} focusable elements reached with Tab` }));
+}
+
+// An open modal dialog must keep the keyboard focus inside it (WAI-ARIA dialog pattern, 7.1).
+async function modalFocus(page) {
+  const { visits, modal } = await walk(page);
+  if (!modal) return [];
+  const escaped = visits.find((v) => v.outside && v.failure);
+  return escaped
+    ? [{ ...modal, message: `the keyboard focus leaves the open modal dialog with Tab (reaches ${escaped.failure.target})` }]
+    : [];
 }
 
 async function focusVisible(page) {
@@ -363,6 +413,7 @@ export const SCENARIOS = {
   "text-spacing": textSpacing,
   orientation,
   keyboard,
+  "modal-focus": modalFocus,
   "focus-visible": focusVisible,
   "skip-link": skipLink,
   "hover-content": hoverContent,

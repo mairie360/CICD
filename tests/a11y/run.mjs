@@ -22,6 +22,33 @@ import { playState } from "./states.mjs";
 import { loadScope } from "./validate.mjs";
 
 export const REPORT_VERSION = 1;
+export const DEFAULT_CONCURRENCY = 4;
+
+// RGAA_CONCURRENCY: states played at the same time (default 4, the vCPUs of a GitHub runner).
+export function parallelism(env = process.env) {
+  const raw = (env.RGAA_CONCURRENCY ?? "").trim();
+  if (raw === "") return DEFAULT_CONCURRENCY;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 16) {
+    throw new Error(`RGAA_CONCURRENCY must be an integer between 1 and 16, got "${raw}"`);
+  }
+  return value;
+}
+
+// Runs `fn` on every item with at most `limit` at once; results keep the order of `items`.
+export async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await fn(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 const cell = (text) => String(text).replaceAll("|", "\\|").replaceAll("\n", " ");
 
@@ -74,6 +101,13 @@ async function main([scopeFile, reportDir]) {
     for (const detail of error.details ?? [error.message]) console.log(`::error file=rgaa.yaml::${detail}`);
     return 2;
   }
+  let concurrency;
+  try {
+    concurrency = parallelism();
+  } catch (error) {
+    console.log(`::error title=RGAA::${error.message}`);
+    return 2;
+  }
 
   const criteria = loadCriteria();
   mkdirSync(join(reportDir, "failures"), { recursive: true });
@@ -81,8 +115,11 @@ async function main([scopeFile, reportDir]) {
   const states = [];
   const undeclared = [];
   try {
-    for (const state of scope.states) {
+    // States run in parallel, each in its own browser context, then are reported in scope order
+    // (undeclared items too), so the report does not depend on the scheduling.
+    const playOne = async (state) => {
       const dir = join(reportDir, "states", state.id);
+      const found = [];
       const result = await playState(browser, scope, state, {
         onReached: async (page, res) => {
           const capture = await captureState(page, { scope, criteria, dir });
@@ -92,12 +129,17 @@ async function main([scopeFile, reportDir]) {
             Object.entries(capture.files).map(([k, v]) => [k, Array.isArray(v) ? v.map((f) => `states/${state.id}/${f}`) : `states/${state.id}/${v}`]),
           );
           res.checks = capture.checks;
-          undeclared.push(...capture.undeclared.map((u) => ({ state: state.id, ...u })));
+          found.push(...capture.undeclared.map((u) => ({ state: state.id, ...u })));
         },
         onFailure: (page) => page.screenshot({ path: join(reportDir, "failures", `${state.id}.png`), fullPage: true }),
       });
       console.log(`${result.reached ? "ok    " : "FAILED"} ${state.id}${result.error ? `: ${result.error}` : ""}`);
+      return { result, found };
+    };
+    const results = await mapLimit(scope.states, concurrency, playOne);
+    for (const { result, found } of results) {
       states.push(result);
+      undeclared.push(...found);
     }
   } finally {
     await browser.close();

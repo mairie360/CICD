@@ -199,7 +199,7 @@ criteria:
     topic: scripts
     level: semi
     coverage: partial
-    checks: [axe:aria-allowed-attr, axe:aria-required-attr, axe:aria-required-children, axe:aria-required-parent, axe:aria-roles, axe:aria-valid-attr, axe:aria-valid-attr-value, axe:aria-allowed-role, axe:aria-command-name, axe:aria-toggle-field-name, axe:aria-dialog-name, axe:aria-prohibited-attr, axe:nested-interactive]
+    checks: [scenario:modal-focus, axe:aria-allowed-attr, axe:aria-required-attr, axe:aria-required-children, axe:aria-required-parent, axe:aria-roles, axe:aria-valid-attr, axe:aria-valid-attr-value, axe:aria-allowed-role, axe:aria-command-name, axe:aria-toggle-field-name, axe:aria-dialog-name, axe:aria-prohibited-attr, axe:nested-interactive]
   "7.2":
     topic: scripts
     level: manual

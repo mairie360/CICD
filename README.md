@@ -463,8 +463,8 @@ There are two kinds of checks. `axe:<rule>` runs axe-core 4.14, pinned, injected
 | `doctype`, `duplicate-ids`, `lang-fr`, `page-title` | 8.1, 8.2, 8.4, 8.6 | DOM checks: `<!doctype html>`, unique ids, `lang="fr…"`, a non-generic title |
 | `presentational-attrs`, `new-window`, `decorative-svg`, `figure-caption` | 10.1, 13.2, 1.2, 1.9 | presentational markup, `target="_blank"` without a warning, an unnamed svg that is not `aria-hidden`, a caption not repeated in `aria-label` |
 | `table-title`, `layout-table`, `group-legend`, `invalid-fields` | 5.4, 5.8, 11.6, 11.10 | a data table without a title, data markup in a layout table, a `fieldset` / group without a name, an `aria-invalid` field without a linked message |
-| `reflow-320`, `zoom-200`, `text-spacing`, `orientation` | 10.11, 10.4, 10.12, 13.9 | horizontal scroll at 320×256 (outside scrollable containers), text cut by its box at 200 % or with the WCAG spacing, content lost in portrait |
-| `keyboard`, `focus-visible`, `skip-link` | 12.9, 7.3, 12.8, 10.7, 12.7 | one Tab walk: focus stuck before every control is reached (the open modal dialog is the scope when there is one), no visible change on focus, first stop is not a skip link to an existing target |
+| `reflow-320`, `zoom-200`, `text-spacing`, `orientation` | 10.11, 10.4, 10.12, 13.9 | horizontal scroll at 320×256 (outside scrollable containers), text cut by its box at 200 % or with the WCAG spacing, elements hidden or rotated under an `@media (orientation: …)` rule (a layout change at a width breakpoint is not a lock) |
+| `keyboard`, `modal-focus`, `focus-visible`, `skip-link` | 12.9, 7.3, 12.8, 7.1, 10.7, 12.7 | one Tab walk: focus cycling inside part of the page without ever getting out while other controls are never reached (trap), focus leaving the open modal dialog (7.1), no visible change on focus, first stop is not a skip link to an existing target |
 | `hover-content` | 10.13, 12.11 | hovers each control (40 at most). What appears must stay when the pointer moves onto it, close with Escape and also show on keyboard focus |
 | `status-messages` | 7.5 | `status-observer.js` records the DOM changes made by the state's steps. **Failure**: a live region (`status`, `alert`, `log`, `aria-live`, `output`) inserted together with its text, which is never announced; this includes toasts that close themselves. **Review**: text that appeared after a step outside any live region, while the focus did not move into it and no dialog opened. Only states with steps (save, create, search…) exercise it |
 
@@ -480,6 +480,10 @@ front's `rgaa.yaml` fails the run, with the element.
   and `message`;
 - `states[]`: `id`, `reached`, `url`, `fingerprint` and `files`;
 - `undeclared[]`.
+
+States run in parallel, 4 at a time by default (`RGAA_CONCURRENCY`, 1-16), each in its own browser
+context; the report keeps the order of `rgaa.yaml`. Table, group and legend checks only look at
+visible elements (Storybook keeps hidden docs markup in its iframe).
 
 The runner copies the engine out of its read-only `/engine` mount before `npm ci`, so it never
 writes a root-owned `node_modules` into the consumer's `cicd-repo/`.
