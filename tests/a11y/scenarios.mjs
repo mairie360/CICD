@@ -339,6 +339,10 @@ async function focusVisible(page) {
 async function skipLink(page) {
   const { count, visits } = await walk(page);
   if (count === 0) return [];
+  // Nothing to bypass when the keyboard already starts in the main content (a login form alone on
+  // its page): a skip link is only required in front of repeated blocks (header, navigation).
+  const startsInMain = await page.evaluate(() => Boolean(window.__rgaa.tabbables()[0]?.closest('main, [role="main"]')));
+  if (startsInMain) return [];
   return visits[0]?.skip
     ? []
     : [{ ...(visits[0]?.failure ?? { target: "body", html: "" }), message: "the first focusable element is not a visible skip link to the main content" }];

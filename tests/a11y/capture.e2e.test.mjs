@@ -40,9 +40,13 @@ const GOOD = page(
   "<style>.skip{position:absolute;left:-999px}.skip:focus{left:0}a:focus,button:focus,input:focus{outline:3px solid #000}</style>",
 );
 
+// A form alone on its page, inside main: the keyboard starts in the content, nothing to bypass.
+const FORM = page("fr", `<main><h1>Connexion</h1><label for="e">Email</label><input id="e"><button>Se connecter</button></main>`);
+
 const BAD = page(
   "en",
-  `<main><h1>Projets</h1>
+  `<header><a href="/">Accueil</a></header>
+  <main><h1>Projets</h1>
     <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="10" height="10">
     <svg width="10" height="10"><circle r="4"></circle></svg>
     <p id="dup">a</p><p id="dup">b</p>
@@ -128,7 +132,7 @@ const target = () => `http://127.0.0.1:${server.address().port}`;
 before(async () => {
   if (!e2e) return;
   server = createServer((request, response) => {
-    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE }[new URL(request.url, "http://x").pathname];
+    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE, "/form": FORM }[new URL(request.url, "http://x").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" }).end(body ?? "");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -187,6 +191,11 @@ test("each seeded defect fails its criterion", { skip: !e2e }, async () => {
     assert.ok(failing(bad, criterion).some((f) => f.check === check), `${criterion} should fail through ${check}`);
   }
   assert.deepEqual(bad.undeclared.map((u) => u.criterion), ["5.6"]);
+});
+
+test("no skip link is required when the keyboard starts in the main content", { skip: !e2e }, async () => {
+  const form = await capture("/form");
+  assert.deepEqual(failing(form, "12.7"), []);
 });
 
 test("run.mjs writes the report and fails on undeclared criteria", { skip: !e2e }, async () => {
