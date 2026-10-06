@@ -107,8 +107,17 @@ tag and no prod image (the front provides `accessibility_test.sh` +
 `docker-compose-accessibility.yml`). In `front-libs-cicd.yml` it is the `accessibility_tests` job (main only, `needs: test`: release
 time, after the unit tests)
 (serves `storybook-static` as `http://storybook:6006`; required by `storybook` / `package`).
-MAIR-317 also moved the front ZAP / k6 jobs to `IMAGE_REF=<image>:dev-<sha_tag>`. The checks
-(MAIR-318) and the rate / 80 % gate (MAIR-319) come next.
+MAIR-317 also moved the front ZAP / k6 jobs to `IMAGE_REF=<image>:dev-<sha_tag>`. Checks
+(MAIR-318): `criteria.yaml` (106 criteria: checklist `level`, `checks` = `axe:<rule>` /
+`scenario:<id>`, `coverage` full/partial/none; `criteria.test.mjs` keeps it consistent with
+axe-core and `SCENARIOS`), `capture.mjs` (`captureState`: injects `page-helpers.js` and axe-core
+4.14 (pinned, no `@axe-core/playwright` wrapper), writes the snapshot, fingerprint = sha256 of
+normalized HTML + ARIA snapshot, runs only the checks of the declared criteria, detects elements of
+undeclared criteria through `PRESENCE`), `scenarios.mjs` (order matters: DOM checks, layout checks
+that restore viewport/styles, then keyboard/hover which move the focus), `criteria.mjs`
+(`aggregate` per declared criterion). The context uses `bypassCSP` (the fronts' CSP blocks the
+injected scripts), a fixed clock and reduced motion for stable fingerprints. `capture.e2e.test.mjs`
+seeds known defects (one per main scenario). The rate / 80 % gate (MAIR-319) comes next.
 
 ## Node version drift
 

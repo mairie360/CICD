@@ -5,6 +5,8 @@ import { sessionCookie } from "./session.mjs";
 
 const ACTION_TIMEOUT = 10_000;
 const NAVIGATION_TIMEOUT = 30_000;
+// Date seen by the page (Date.now, new Date), so that relative dates render the same at every run.
+export const FIXED_TIME = new Date("2026-01-15T09:00:00+01:00");
 
 export function locate(page, locator) {
   const exact = locator.exact ?? false;
@@ -55,7 +57,12 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
     viewport: { width: 1280, height: 800 },
     locale: "fr-FR",
     timezoneId: "Europe/Paris",
+    // The engine injects its helpers and axe-core: the fronts' CSP would block them.
+    bypassCSP: true,
+    // Same rendering at every run (MAIR-318 fingerprints): no animation, a fixed date.
+    reducedMotion: "reduce",
   });
+  await context.clock.setFixedTime(FIXED_TIME);
   context.setDefaultTimeout(ACTION_TIMEOUT);
   context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
   if (state.as) await context.addCookies([sessionCookie(scope, state.as)]);

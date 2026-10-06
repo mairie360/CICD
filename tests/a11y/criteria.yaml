@@ -1,0 +1,542 @@
+# RGAA 4.1.2 criteria and how the engine tests them (MAIR-318). Testing logic only: which
+# criteria apply to a front is declared in its own rgaa.yaml.
+#
+# level:    automation level of the Mairie 360 checklist (Checklist_RGAA_Mairie360.pdf):
+#            auto (a tool decides), semi (a tool finds failures, a human confirms the rest),
+#            manual (human judgement).
+# checks:   axe:<rule> (axe-core rule) or scenario:<id> (scenarios.mjs).
+# coverage: full    - the checks cover the whole checklist line: their verdict is final;
+#           partial - a failing check invalidates the criterion, a pass still needs a review;
+#           none    - no automated check, always reviewed.
+# A semi or manual criterion moves to `coverage: full` once its checks cover its checklist.
+criteria:
+  "1.1":
+    topic: images
+    level: auto
+    coverage: full
+    checks: [axe:image-alt, axe:svg-img-alt, axe:role-img-alt, axe:input-image-alt, axe:area-alt, axe:object-alt]
+  "1.2":
+    topic: images
+    level: semi
+    coverage: partial
+    checks: [scenario:decorative-svg, axe:presentation-role-conflict]
+  "1.3":
+    topic: images
+    level: manual
+    coverage: none
+    checks: []
+  "1.4":
+    topic: images
+    level: manual
+    coverage: none
+    checks: []
+  "1.5":
+    topic: images
+    level: manual
+    coverage: none
+    checks: []
+  "1.6":
+    topic: images
+    level: manual
+    coverage: none
+    checks: []
+  "1.7":
+    topic: images
+    level: manual
+    coverage: none
+    checks: []
+  "1.8":
+    topic: images
+    level: manual
+    coverage: none
+    checks: []
+  "1.9":
+    topic: images
+    level: semi
+    coverage: partial
+    checks: [scenario:figure-caption]
+  "2.1":
+    topic: frames
+    level: auto
+    coverage: full
+    checks: [axe:frame-title]
+  "2.2":
+    topic: frames
+    level: manual
+    coverage: none
+    checks: []
+  "3.1":
+    topic: colours
+    level: manual
+    coverage: none
+    checks: []
+  "3.2":
+    topic: colours
+    level: auto
+    coverage: full
+    checks: [axe:color-contrast]
+  "3.3":
+    topic: colours
+    level: semi
+    coverage: none
+    checks: []
+  "4.1":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.2":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.3":
+    topic: multimedia
+    level: manual
+    coverage: partial
+    checks: [axe:video-caption]
+  "4.4":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.5":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.6":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.7":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.8":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.9":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.10":
+    topic: multimedia
+    level: semi
+    coverage: partial
+    checks: [axe:no-autoplay-audio]
+  "4.11":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.12":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "4.13":
+    topic: multimedia
+    level: manual
+    coverage: none
+    checks: []
+  "5.1":
+    topic: tables
+    level: manual
+    coverage: none
+    checks: []
+  "5.2":
+    topic: tables
+    level: manual
+    coverage: none
+    checks: []
+  "5.3":
+    topic: tables
+    level: manual
+    coverage: none
+    checks: []
+  "5.4":
+    topic: tables
+    level: semi
+    coverage: partial
+    checks: [scenario:table-title]
+  "5.5":
+    topic: tables
+    level: manual
+    coverage: none
+    checks: []
+  "5.6":
+    topic: tables
+    level: semi
+    coverage: partial
+    checks: [axe:th-has-data-cells, axe:td-has-header]
+  "5.7":
+    topic: tables
+    level: semi
+    coverage: partial
+    checks: [axe:td-headers-attr, axe:scope-attr-valid]
+  "5.8":
+    topic: tables
+    level: semi
+    coverage: partial
+    checks: [scenario:layout-table]
+  "6.1":
+    topic: links
+    level: manual
+    coverage: none
+    checks: []
+  "6.2":
+    topic: links
+    level: auto
+    coverage: full
+    checks: [axe:link-name]
+  "7.1":
+    topic: scripts
+    level: semi
+    coverage: partial
+    checks: [axe:aria-allowed-attr, axe:aria-required-attr, axe:aria-required-children, axe:aria-required-parent, axe:aria-roles, axe:aria-valid-attr, axe:aria-valid-attr-value, axe:aria-allowed-role, axe:aria-command-name, axe:aria-toggle-field-name, axe:aria-dialog-name, axe:aria-prohibited-attr, axe:nested-interactive]
+  "7.2":
+    topic: scripts
+    level: manual
+    coverage: none
+    checks: []
+  "7.3":
+    topic: scripts
+    level: semi
+    coverage: partial
+    checks: [axe:scrollable-region-focusable, scenario:keyboard]
+  "7.4":
+    topic: scripts
+    level: manual
+    coverage: none
+    checks: []
+  "7.5":
+    topic: scripts
+    level: semi
+    coverage: none
+    checks: []
+  "8.1":
+    topic: mandatory-elements
+    level: auto
+    coverage: full
+    checks: [scenario:doctype]
+  "8.2":
+    topic: mandatory-elements
+    level: auto
+    coverage: partial
+    checks: [scenario:duplicate-ids, axe:duplicate-id-aria, axe:list, axe:listitem]
+  "8.3":
+    topic: mandatory-elements
+    level: auto
+    coverage: full
+    checks: [axe:html-has-lang]
+  "8.4":
+    topic: mandatory-elements
+    level: semi
+    coverage: full
+    checks: [axe:html-lang-valid, scenario:lang-fr]
+  "8.5":
+    topic: mandatory-elements
+    level: auto
+    coverage: full
+    checks: [axe:document-title]
+  "8.6":
+    topic: mandatory-elements
+    level: semi
+    coverage: partial
+    checks: [scenario:page-title]
+  "8.7":
+    topic: mandatory-elements
+    level: manual
+    coverage: none
+    checks: []
+  "8.8":
+    topic: mandatory-elements
+    level: semi
+    coverage: partial
+    checks: [axe:valid-lang]
+  "8.9":
+    topic: mandatory-elements
+    level: manual
+    coverage: none
+    checks: []
+  "8.10":
+    topic: mandatory-elements
+    level: manual
+    coverage: none
+    checks: []
+  "9.1":
+    topic: structure
+    level: semi
+    coverage: partial
+    checks: [axe:page-has-heading-one, axe:heading-order, axe:empty-heading]
+  "9.2":
+    topic: structure
+    level: semi
+    coverage: partial
+    checks: [axe:landmark-one-main, axe:landmark-no-duplicate-main, axe:landmark-no-duplicate-banner, axe:landmark-no-duplicate-contentinfo, axe:landmark-main-is-top-level, axe:landmark-banner-is-top-level, axe:landmark-contentinfo-is-top-level, axe:landmark-complementary-is-top-level, axe:landmark-unique]
+  "9.3":
+    topic: structure
+    level: auto
+    coverage: full
+    checks: [axe:list, axe:listitem, axe:definition-list, axe:dlitem]
+  "9.4":
+    topic: structure
+    level: manual
+    coverage: none
+    checks: []
+  "10.1":
+    topic: presentation
+    level: semi
+    coverage: full
+    checks: [scenario:presentational-attrs]
+  "10.2":
+    topic: presentation
+    level: manual
+    coverage: none
+    checks: []
+  "10.3":
+    topic: presentation
+    level: manual
+    coverage: none
+    checks: []
+  "10.4":
+    topic: presentation
+    level: semi
+    coverage: partial
+    checks: [axe:meta-viewport, axe:meta-viewport-large, scenario:zoom-200]
+  "10.5":
+    topic: presentation
+    level: manual
+    coverage: none
+    checks: []
+  "10.6":
+    topic: presentation
+    level: semi
+    coverage: partial
+    checks: [axe:link-in-text-block]
+  "10.7":
+    topic: presentation
+    level: semi
+    coverage: partial
+    checks: [scenario:focus-visible]
+  "10.8":
+    topic: presentation
+    level: semi
+    coverage: partial
+    checks: [axe:aria-hidden-focus, axe:aria-hidden-body]
+  "10.9":
+    topic: presentation
+    level: manual
+    coverage: none
+    checks: []
+  "10.10":
+    topic: presentation
+    level: manual
+    coverage: none
+    checks: []
+  "10.11":
+    topic: presentation
+    level: semi
+    coverage: partial
+    checks: [scenario:reflow-320]
+  "10.12":
+    topic: presentation
+    level: semi
+    coverage: partial
+    checks: [axe:avoid-inline-spacing, scenario:text-spacing]
+  "10.13":
+    topic: presentation
+    level: manual
+    coverage: partial
+    checks: [scenario:hover-content]
+  "10.14":
+    topic: presentation
+    level: manual
+    coverage: none
+    checks: []
+  "11.1":
+    topic: forms
+    level: auto
+    coverage: full
+    checks: [axe:label, axe:select-name, axe:aria-input-field-name, axe:aria-toggle-field-name]
+  "11.2":
+    topic: forms
+    level: manual
+    coverage: none
+    checks: []
+  "11.3":
+    topic: forms
+    level: manual
+    coverage: none
+    checks: []
+  "11.4":
+    topic: forms
+    level: manual
+    coverage: none
+    checks: []
+  "11.5":
+    topic: forms
+    level: manual
+    coverage: none
+    checks: []
+  "11.6":
+    topic: forms
+    level: semi
+    coverage: partial
+    checks: [scenario:group-legend]
+  "11.7":
+    topic: forms
+    level: manual
+    coverage: none
+    checks: []
+  "11.8":
+    topic: forms
+    level: manual
+    coverage: none
+    checks: []
+  "11.9":
+    topic: forms
+    level: semi
+    coverage: partial
+    checks: [axe:button-name, axe:input-button-name, axe:label-content-name-mismatch]
+  "11.10":
+    topic: forms
+    level: semi
+    coverage: partial
+    checks: [scenario:invalid-fields]
+  "11.11":
+    topic: forms
+    level: manual
+    coverage: none
+    checks: []
+  "11.12":
+    topic: forms
+    level: manual
+    coverage: none
+    checks: []
+  "11.13":
+    topic: forms
+    level: semi
+    coverage: partial
+    checks: [axe:autocomplete-valid]
+  "12.1":
+    topic: navigation
+    level: manual
+    coverage: none
+    checks: []
+  "12.2":
+    topic: navigation
+    level: manual
+    coverage: none
+    checks: []
+  "12.3":
+    topic: navigation
+    level: manual
+    coverage: none
+    checks: []
+  "12.4":
+    topic: navigation
+    level: manual
+    coverage: none
+    checks: []
+  "12.5":
+    topic: navigation
+    level: manual
+    coverage: none
+    checks: []
+  "12.6":
+    topic: navigation
+    level: semi
+    coverage: partial
+    checks: [axe:region, axe:landmark-one-main]
+  "12.7":
+    topic: navigation
+    level: semi
+    coverage: full
+    checks: [scenario:skip-link, axe:skip-link]
+  "12.8":
+    topic: navigation
+    level: semi
+    coverage: partial
+    checks: [axe:tabindex, scenario:keyboard]
+  "12.9":
+    topic: navigation
+    level: semi
+    coverage: full
+    checks: [scenario:keyboard]
+  "12.10":
+    topic: navigation
+    level: manual
+    coverage: none
+    checks: []
+  "12.11":
+    topic: navigation
+    level: manual
+    coverage: partial
+    checks: [scenario:hover-content]
+  "13.1":
+    topic: consultation
+    level: manual
+    coverage: partial
+    checks: [axe:meta-refresh, axe:meta-refresh-no-exceptions]
+  "13.2":
+    topic: consultation
+    level: semi
+    coverage: partial
+    checks: [scenario:new-window]
+  "13.3":
+    topic: consultation
+    level: manual
+    coverage: none
+    checks: []
+  "13.4":
+    topic: consultation
+    level: manual
+    coverage: none
+    checks: []
+  "13.5":
+    topic: consultation
+    level: manual
+    coverage: none
+    checks: []
+  "13.6":
+    topic: consultation
+    level: manual
+    coverage: none
+    checks: []
+  "13.7":
+    topic: consultation
+    level: manual
+    coverage: none
+    checks: []
+  "13.8":
+    topic: consultation
+    level: semi
+    coverage: partial
+    checks: [axe:blink, axe:marquee]
+  "13.9":
+    topic: consultation
+    level: semi
+    coverage: full
+    checks: [axe:css-orientation-lock, scenario:orientation]
+  "13.10":
+    topic: consultation
+    level: manual
+    coverage: none
+    checks: []
+  "13.11":
+    topic: consultation
+    level: manual
+    coverage: none
+    checks: []
+  "13.12":
+    topic: consultation
+    level: manual
+    coverage: none
+    checks: []
