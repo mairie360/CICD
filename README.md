@@ -364,8 +364,9 @@ same engine on the lib's Storybook stories in an `accessibility_tests` job, at r
 on `main`, once the unit tests pass, and `storybook` / `package` need it. Neither runs on pull
 requests or other branches. Both fail right away when the scope is missing, keep `rgaa-report/` as an artifact (`report.json`,
 `summary.md`, a full-page screenshot per failed state under `failures/`) and add `summary.md` to
-the job summary. The checks and the rate gate are added by MAIR-318 / MAIR-319; today the job
-fails when a state cannot be reached (HTTP error, step that times out).
+the job summary. The job fails when a state cannot be reached, a criterion is undeclared, the scope
+is invalid or the rate is below the minimum (see below). The front steps live in the `rgaa-front`
+composite action (`actions/rgaa-front`), called by `release-prod`.
 
 The runner image is pinned by version and digest in `tests/a11y/runner-image`, matching the
 `playwright` dependency of the engine (a test keeps them in sync): consumers never write it.

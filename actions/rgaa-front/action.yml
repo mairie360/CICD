@@ -1,0 +1,115 @@
+name: "RGAA front check"
+description: >
+  RGAA gate of a front (epic MAIR-297): starts the front's `accessibility_test.sh` /
+  `docker-compose-accessibility.yml` stack on a published image, whose runner plays the states of
+  `rgaa.yaml` with the engine of `cicd-repo/tests/a11y` and writes `rgaa-report/` (job summary +
+  `rgaa-report` artifact). AI verdicts are kept between runs with actions/cache (MAIR-320). Fails
+  when a state is unreachable, a criterion is undeclared, `rgaa.yaml` is invalid or the rate is
+  below `min_rate`. The caller checks out the front and `mairie360/CICD` into `cicd-repo/` first.
+
+inputs:
+  image_ref:
+    description: "Front image to test (release-prod passes <image>:staging-<sha>)"
+    required: true
+  github_token:
+    description: "Token that can pull the stack's images from GHCR (and the npm packages of a local build)"
+    required: true
+  min_rate:
+    description: "Minimum rate (percent) of the automatically decided criteria (MAIR-319)"
+    required: false
+    default: "60"
+  ai_model:
+    description: "Claude model of the AI pre-audit (MAIR-320)"
+    required: false
+    default: ""
+  anthropic_api_key:
+    description: "Anthropic API key; without it the AI pre-audit is skipped"
+    required: false
+    default: ""
+  anthropic_workspace_id:
+    description: "Anthropic workspace id, only when the key is not scoped to a workspace"
+    required: false
+    default: ""
+  timeout_minutes:
+    description: "Bound of the stack run (MAIR-468)"
+    required: false
+    default: "15"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check the accessibility scope
+      shell: bash
+      run: |
+        missing=0
+        for f in rgaa.yaml accessibility_test.sh docker-compose-accessibility.yml; do
+          if [ ! -f "$f" ]; then
+            echo "::error title=RGAA::$f is missing: every front declares its RGAA scope and stack (see the mairie360/CICD README, \"RGAA scope\")"
+            missing=1
+          fi
+        done
+        exit "$missing"
+
+    - name: Log in to GHCR
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.github_token }}
+      run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    # AI verdicts by element fingerprint, so that only new or changed elements are sent to Claude
+    # (until the n8n store, MAIR-275, holds them).
+    - name: Restore RGAA AI verdicts
+      uses: actions/cache/restore@v6
+      with:
+        path: .rgaa-ai-cache
+        key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: rgaa-ai-${{ github.repository }}-
+
+    # Composite steps take no timeout-minutes: the run is bounded by `timeout` instead.
+    - name: Run accessibility tests via Docker Compose
+      shell: bash
+      run: timeout "$((TIMEOUT_MINUTES * 60))" ./accessibility_test.sh
+      env:
+        TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+        NODE_AUTH_TOKEN: ${{ inputs.github_token }}
+        IMAGE_REF: ${{ inputs.image_ref }}
+        # The runner service forwards them to the engine (exit 3 below RGAA_MIN_RATE).
+        RGAA_MIN_RATE: ${{ inputs.min_rate }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        ANTHROPIC_WORKSPACE_ID: ${{ inputs.anthropic_workspace_id }}
+        RGAA_AI_MODEL: ${{ inputs.ai_model }}
+
+    - name: Save RGAA AI verdicts
+      if: always() && hashFiles('.rgaa-ai-cache/verdicts.json') != ''
+      uses: actions/cache/save@v6
+      with:
+        path: .rgaa-ai-cache
+        key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+    - name: RGAA job summary
+      if: always()
+      shell: bash
+      run: |
+        if [ -f rgaa-report/summary.md ]; then
+          cat rgaa-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "No RGAA report (the stack or the runner did not start, see the logs)." >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Upload RGAA report
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: rgaa-report
+        path: rgaa-report/
+        if-no-files-found: ignore
+
+    - name: Dump container logs
+      if: failure()
+      shell: bash
+      run: |
+        for c in $(docker ps -aq); do
+          echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+          docker logs --tail 200 "$c" 2>&1 || true
+          echo "::endgroup::"
+        done

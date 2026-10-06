@@ -40,6 +40,12 @@ on:
         type: string
         default: "claude-sonnet-5-5"
         description: "Claude model of the RGAA AI pre-audit (MAIR-320); the pre-audit only runs when the ANTHROPIC_API_KEY secret is set"
+      # [TEMPORAIRE] MAIR-320: CI test of the RGAA check from a front's branch, removed before the release.
+      rgaa_preview_image:
+        required: false
+        type: string
+        default: ""
+        description: "TEMPORARY: runs the RGAA check (rgaa-front action) on this published image, on any branch"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -378,81 +384,19 @@ jobs:
           path: cicd-repo
 
       # [NOUVEAU] MAIR-317 (epic MAIR-297): RGAA gate between staging and prod. It runs once the
-      # Prod approval is given and before anything is tagged or promoted: the front's
-      # `accessibility_test.sh` starts its `docker-compose-accessibility.yml` stack on the
-      # `staging-<sha>` image, the runner plays the states of `rgaa.yaml` with the engine of
-      # `cicd-repo/tests/a11y` and writes `rgaa-report/` (artifact + job summary, input of the n8n
-      # release chain, MAIR-298). A failure stops the job: no tag, no prod image.
-      - name: Check the accessibility scope
-        run: |
-          missing=0
-          for f in rgaa.yaml accessibility_test.sh docker-compose-accessibility.yml; do
-            if [ ! -f "$f" ]; then
-              echo "::error title=RGAA::$f is missing: every front declares its RGAA scope and stack (see the mairie360/CICD README, \"RGAA scope\")"
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      # [NOUVEAU] MAIR-320: AI verdicts by element fingerprint, kept between runs so that only new or
-      # changed elements are sent to Claude (until the n8n store, MAIR-275, holds them).
-      - name: Restore RGAA AI verdicts
-        uses: actions/cache/restore@v6
+      # Prod approval is given and before anything is tagged or promoted, on the `staging-<sha>`
+      # image (the steps live in the rgaa-front action, also used by rgaa-preview). Its report is the
+      # input of the n8n release chain (MAIR-298). A failure stops the job: no tag, no prod image.
+      - name: RGAA check
+        uses: ./cicd-repo/actions/rgaa-front
         with:
-          path: .rgaa-ai-cache
-          key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: rgaa-ai-${{ github.repository }}-
-
-      - name: Run accessibility tests via Docker Compose
-        timeout-minutes: 15
-        run: ./accessibility_test.sh
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:staging-${{ needs.release-dev.outputs.sha_tag }}
-          # [NOUVEAU] MAIR-319: the runner service forwards it to the engine (exit 3 below it).
-          RGAA_MIN_RATE: ${{ inputs.rgaa_min_rate }}
-          # [NOUVEAU] MAIR-320: forwarded to the runner service with the .rgaa-ai-cache mount.
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
-          RGAA_AI_MODEL: ${{ inputs.rgaa_ai_model }}
-
-      - name: Save RGAA AI verdicts
-        if: always() && hashFiles('.rgaa-ai-cache/verdicts.json') != ''
-        uses: actions/cache/save@v6
-        with:
-          path: .rgaa-ai-cache
-          key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: RGAA job summary
-        if: always()
-        run: |
-          if [ -f rgaa-report/summary.md ]; then
-            cat rgaa-report/summary.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No RGAA report (the stack or the runner did not start, see the logs)." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload RGAA report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: rgaa-report
-          path: rgaa-report/
-          if-no-files-found: ignore
-
-      - name: Dump container logs
-        if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
+          image_ref: ${{ needs.release-dev.outputs.image }}:staging-${{ needs.release-dev.outputs.sha_tag }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # [NOUVEAU] MAIR-319 / MAIR-320
+          min_rate: ${{ inputs.rgaa_min_rate }}
+          ai_model: ${{ inputs.rgaa_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
 
       # [CHANGEMENT] Correction du chemin d'appel vers le dépôt centralisé 'cicd-repo'.
       - name: Calculate & Create Tag
@@ -470,6 +414,35 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release_published: ${{ steps.set_tag.outputs.new_release_published }}
           release_version: ${{ steps.set_tag.outputs.new_release_version }}
+
+  # [TEMPORAIRE] MAIR-320: the RGAA check of release-prod (same action) on a published image, from a
+  # front's branch, to test it in the CI before the release. Removed before the release.
+  rgaa-preview:
+    if: inputs.rgaa_preview_image != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: RGAA check
+        uses: ./cicd-repo/actions/rgaa-front
+        with:
+          image_ref: ${{ inputs.rgaa_preview_image }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          min_rate: ${{ inputs.rgaa_min_rate }}
+          ai_model: ${{ inputs.rgaa_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
 
   notify-cicd-failure:
     name: Notify n8n on failure
