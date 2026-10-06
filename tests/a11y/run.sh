@@ -7,6 +7,9 @@
 # The engine is copied out of the mount before `npm ci`: the container runs as root, and a
 # node_modules written into the consumer's cicd-repo/ would be root-owned on the host.
 set -eu
+# The consumer may run the container as its own user (so that rgaa-report/ is not root-owned on
+# the host): that user usually has no writable home, which npm needs.
+[ -w "${HOME:-/nonexistent}" ] || export HOME=/tmp
 mkdir -p /tmp/engine
 tar -C /engine --exclude=./node_modules -cf - . | tar -C /tmp/engine -xf -
 cd /tmp/engine

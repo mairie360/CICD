@@ -364,8 +364,9 @@ same engine on the lib's Storybook stories in an `accessibility_tests` job, at r
 on `main`, once the unit tests pass, and `storybook` / `package` need it. Neither runs on pull
 requests or other branches. Both fail right away when the scope is missing, keep `rgaa-report/` as an artifact (`report.json`,
 `summary.md`, a full-page screenshot per failed state under `failures/`) and add `summary.md` to
-the job summary. The checks and the rate gate are added by MAIR-318 / MAIR-319; today the job
-fails when a state cannot be reached (HTTP error, step that times out).
+the job summary. The job fails when a state cannot be reached, a criterion is undeclared, the scope
+is invalid or the rate is below the minimum (see below). The front steps live in the `rgaa-front`
+composite action (`actions/rgaa-front`), called by `release-prod`.
 
 The runner image is pinned by version and digest in `tests/a11y/runner-image`, matching the
 `playwright` dependency of the engine (a test keeps them in sync): consumers never write it.
@@ -376,22 +377,62 @@ Besides `rgaa.yaml`, a front provides two files. `IMAGE_REF` is also exported to
 their compose stacks must read `${IMAGE_REF}` too (no `build:` block), like the APIs and BFFs.
 
 `docker-compose-accessibility.yml`: the stack of `docker-compose-security.yml` (database + seed,
-APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
+APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP. Lessons from the eight
+fronts:
+
+- **Every env var the front reads** (`grep -rn process.env src`): its BFF URL(s), every
+  `*_FRONT_URL` (dummy `http://<x>-front.invalid/` values, the front's own URL pointing at itself)
+  and `COOKIE_DOMAIN` (the front service name). A missing one renders an error page instead of
+  the page under test (Login: "Connexion temporairement indisponible", every login a 503).
+- **The data the states need** in an `init-accessibility.sql`, run by a second seeder service
+  after `seeder`, in this stack only: ZAP / k6 keep `init-test.sql` and their thresholds. Every
+  seeded user needs a `user_roles` row (core-api answers 502 without a role); roles come from the
+  database (`Admin`, `Responsable`, …), the BFFs ignore the JWT `role` claim. Insert the users and
+  their roles in one transaction (a deferred trigger adds `Guest` otherwise), use fixed dates
+  (the engine fixes the browser clock at 2026-01-15T09:00+01:00, the servers keep the real one)
+  and ids that do not clash with `init-test.sql`.
+- **States run in parallel** (4 at a time): a state that writes data uses its own seed user, so
+  that the others never see its writes.
 
 ```yaml
+  seeder-a11y:
+    image: postgres:18-alpine
+    depends_on:
+      seeder:
+        condition: service_completed_successfully
+    volumes:
+      - ./init-accessibility.sql:/init-accessibility.sql:ro
+    environment:
+      PGPASSWORD: password
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-h", "postgres", "-U", "postgres", "-d", "mairie_360_database", "-f", "/init-accessibility.sql"]
+    networks:
+      - backend
+    # the services that depended on `seeder` depend on `seeder-a11y`
+
   settings-front:
     image: ${IMAGE_REF:?}
-    # ... environment, healthcheck, networks as in docker-compose-security.yml
+    environment:
+      SETTINGS_BFF_URL: http://bff-settings:4008
+      LOGIN_FRONT_URL: http://login-front.invalid/
+      SETTINGS_FRONT_URL: http://settings-front:5000/
+      # ... every other *_FRONT_URL
+      COOKIE_DOMAIN: settings-front
+    # ... healthcheck, networks as in docker-compose-security.yml
 
   a11y:
     image: ${A11Y_RUNNER_IMAGE:?}
+    user: "${RGAA_UID:-0}:${RGAA_GID:-0}"   # the script exports them: rgaa-report/ is not root-owned
     depends_on:
       settings-front:
         condition: service_healthy
     command: ["sh", "/engine/run.sh"]
     environment:
       RGAA_MIN_RATE: ${RGAA_MIN_RATE:-}   # set by the job from the rgaa_min_rate input
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # AI pre-audit (MAIR-320), optional
+      ANTHROPIC_WORKSPACE_ID: ${ANTHROPIC_WORKSPACE_ID:-}
+      RGAA_AI_MODEL: ${RGAA_AI_MODEL:-}
     volumes:
+      - ./.rgaa-ai-cache:/ai-cache        # AI verdicts kept between runs by the job
       - ./cicd-repo/tests/a11y:/engine:ro
       - ./rgaa.yaml:/scope/rgaa.yaml:ro
       - ./rgaa-report:/report
@@ -405,7 +446,7 @@ APIs, BFF), the front on `${IMAGE_REF}`, and the runner instead of ZAP:
 #!/usr/bin/env bash
 COMPOSE_FILE="docker-compose-accessibility.yml"
 
-# The CI exports IMAGE_REF (dev-<sha>). Locally, build the front under test.
+# The CI exports IMAGE_REF (staging-<sha>). Locally, build the front under test.
 if [ -z "${IMAGE_REF:-}" ]; then
   docker build -t settings-front:local --secret id=node_auth_token,env=NODE_AUTH_TOKEN . || exit 1
   export IMAGE_REF="settings-front:local"
@@ -418,17 +459,22 @@ if [ ! -f cicd-repo/tests/a11y/run.sh ]; then
   git clone --quiet --depth 1 --branch "$CICD_VERSION" https://github.com/mairie360/CICD cicd-repo || exit 1
 fi
 export A11Y_RUNNER_IMAGE="$(cat cicd-repo/tests/a11y/runner-image)"
+export RGAA_UID="$(id -u)" RGAA_GID="$(id -g)"   # run the runner as the caller
 
-mkdir -p rgaa-report
+mkdir -p rgaa-report .rgaa-ai-cache
 docker compose -f "$COMPOSE_FILE" up -d
 docker compose -f "$COMPOSE_FILE" wait a11y
 EXIT_CODE=$?
 docker compose -f "$COMPOSE_FILE" logs a11y
+# The stack is removed below: print it now when something failed (a seeder or an API that did not
+# start), the job cannot dump the containers afterwards.
+[ "$EXIT_CODE" -eq 0 ] || docker compose -f "$COMPOSE_FILE" logs --tail 100
 docker compose -f "$COMPOSE_FILE" down -v
 exit $EXIT_CODE
 ```
 
-The report stays in `rgaa-report/` (add it, and `cicd-repo/`, to `.gitignore`).
+The report stays in `rgaa-report/` (add it, `.rgaa-ai-cache/` and `cicd-repo/` to `.gitignore`;
+add the RGAA files and `init-accessibility.sql` to `.dockerignore`).
 
 ### Wiring lib-components
 
@@ -509,3 +555,55 @@ promoting the front (for the lib, `accessibility_tests` fails and blocks `storyb
 
 The release gate of the n8n chain (MAIR-298, at least 60 % per front and 50 % overall) uses the
 full rate, once the reviewed criteria are in.
+
+## RGAA AI pre-audit (MAIR-320)
+
+Most criteria end up `to_review` because they are about relevance: is this `alt` right, is this
+link explicit. The engine extracts the elements those criteria judge, and Claude proposes a
+verdict for each one. The proposals **never change the gating rate**. They give the RGAA reviewer
+of the n8n chain (MAIR-298) a pre-filled answer and the report an **estimated rate**.
+
+| Criterion | Element sent (JSON, plus a screenshot for images) |
+| --- | --- |
+| 1.3 | informative images: `alt` / accessible name, `src`, surrounding text, screenshot. Decorative ones (`alt=""`) belong to 1.2 |
+| 6.1 | links: name, `href`, surrounding text |
+| 11.2 | fields: label, type, placeholder, required |
+| 11.9 | buttons: accessible name, visible text |
+| 13.5 / 13.6 | emoji, symbols or ASCII art used as content, with their alternative |
+
+Only the criteria declared in `rgaa.yaml` are extracted.
+
+**How each element is judged.** Each element has a fingerprint: SHA-256 of the criterion, the
+extracted fields and `EXTRACTION_VERSION` (bump it when a prompt changes). An element already in
+the verdict cache is never sent again: a run without change makes no API call.
+
+The other elements go to Claude (`@anthropic-ai/sdk`), with these settings:
+- 15 elements per request, 3 requests in parallel;
+- one system prompt per criterion, prompt-cached;
+- structured output (`valid` / `invalid` / `uncertain`, plus a reason in French);
+- effort `low`;
+- `fallbacks: "default"` on the models that accept it.
+
+API errors and refusals give `uncertain` and are not cached, so they are retried at the next run. When **every** request fails (key, workspace or model name), the pre-audit fails instead: a
+`::warning`, `ai.error` in the report and the summary, with the API message.
+
+**What a criterion gets.** One `invalid` element proposes `invalidated`. All elements `valid`
+proposes `validated`. Anything else is `uncertain`. The estimated rate counts these proposals for
+the criteria left `to_review`. Both appear in `report.json` (`ai`, with `ai.elements`: every judged element and its verdict, the input of the reviewer form, MAIR-298) and in the job summary, with the
+invalid elements, the model, the number of judged and cached elements, and the cost.
+
+**Settings.**
+
+| Setting | Value |
+| --- | --- |
+| Secret `ANTHROPIC_API_KEY` | optional; without it the pre-audit is skipped and the run is unchanged |
+| Secret `ANTHROPIC_WORKSPACE_ID` | only when the key is not scoped to a workspace (the API otherwise answers 400 "must include the anthropic-workspace-id header"); sent as the `anthropic-workspace-id` header |
+| Input `rgaa_ai_model` (`RGAA_AI_MODEL`) | default `claude-sonnet-5-5` |
+| `RGAA_AI=off` | disables the pre-audit |
+
+The verdict cache (`.rgaa-ai-cache/verdicts.json`, mounted as `/ai-cache`) is restored and saved
+by the job with `actions/cache`, per repository, until the n8n store (MAIR-275) holds the
+verdicts.
+
+What is sent is the rendered UI of the test stack: seed data and Storybook demo data, never
+production data.

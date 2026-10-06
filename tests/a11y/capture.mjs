@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { extractItems } from "./extract.mjs";
 import { DATA_TABLES, SCENARIOS } from "./scenarios.mjs";
 
 const require = createRequire(import.meta.url);
@@ -51,7 +52,7 @@ async function runAxe(page, rules) {
 
 // `scope` is the validated rgaa.yaml, `criteria` the parsed criteria.yaml. Returns
 // { fingerprint, files, checks, undeclared } and writes the snapshot under <dir>.
-export async function captureState(page, { scope, criteria, dir }) {
+export async function captureState(page, { scope, criteria, dir, stateId = "", ai = false }) {
   mkdirSync(dir, { recursive: true });
   await page.addScriptTag({ content: HELPERS_SOURCE });
 
@@ -65,6 +66,9 @@ export async function captureState(page, { scope, criteria, dir }) {
     await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
     files.screenshots.push(`${name}.png`);
   };
+
+  // Elements for the AI pre-audit (MAIR-320), before the scenarios move the focus and the layout.
+  const aiItems = ai ? await extractItems(page, scope, stateId) : [];
 
   const declared = new Set(scope.criteria);
   const undeclared = await page.evaluate(
@@ -93,5 +97,5 @@ export async function captureState(page, { scope, criteria, dir }) {
   }
   if (!files.screenshots.includes("mobile-320.png")) await screenshot("mobile-320");
 
-  return { fingerprint: fingerprint(html, aria), files, checks, undeclared };
+  return { fingerprint: fingerprint(html, aria), files, checks, undeclared, aiItems };
 }
