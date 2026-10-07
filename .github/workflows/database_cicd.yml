@@ -202,9 +202,52 @@ jobs:
           expected_digest: ${{ needs.release-dev.outputs.digest }}
           expected_extra_digest: ${{ needs.release-dev.outputs.extra_digest }}
 
+  # [NOUVEAU] MAIR-491: release folder gate, between staging and the Prod approval. Computes the
+  # version release-prod will tag (semantic-release dry run on this commit) and checks that the
+  # Liquibase release changesets match it: changesets shipped by the last tag unchanged, new ones
+  # in releases/v<next>/ closed by a tag-v<next> changeset, none when no release is cut. The
+  # report goes to the job summary; a finding skips release-prod and the fix goes through a PR
+  # (rename the folder), which the changeset identity convention of the Database repo makes safe
+  # for dev and staging.
+  release_folder:
+    name: Liquibase release folder
+    needs: release-staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # semantic-release checks that it could push, even in dry-run; nothing is pushed.
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Compute the next version (dry run)
+        id: next
+        uses: ./cicd-repo/actions/semantic-tag
+        with:
+          dry_run: "true"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check the release folder
+        uses: ./cicd-repo/actions/release-folder
+        with:
+          last_tag: ${{ steps.next.outputs.last_release_git_tag }}
+          next_version: ${{ steps.next.outputs.new_release_published == 'true' && steps.next.outputs.new_release_version || '' }}
+
   release-prod:
     name: Release to Prod
-    needs: release-staging
+    # [CHANGEMENT] MAIR-491: also waits for the release folder gate.
+    needs: [release-staging, release_folder]
     runs-on: ubuntu-latest
     environment: Prod
     permissions:
@@ -251,6 +294,7 @@ jobs:
       - release-dev
       - performance_tests
       - release-staging
+      - release_folder
       - release-prod
     runs-on: ubuntu-latest
     steps:
