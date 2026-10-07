@@ -1,6 +1,13 @@
 name: "Semantic Tag & Release"
 description: "Calcule la version, crée le tag et la release GitHub via Semantic Release"
 
+# [NOUVEAU] MAIR-491: dry_run computes the version without tagging (release_folder gate).
+inputs:
+  dry_run:
+    description: "'true' to compute the next version without creating the tag nor the release"
+    required: false
+    default: "false"
+
 outputs:
   new_release_published:
     description: "true si une nouvelle version est publiée"
@@ -8,6 +15,9 @@ outputs:
   new_release_version:
     description: "La version calculée (ex: 1.2.0)"
     value: ${{ steps.semantic.outputs.new_release_version }}
+  last_release_git_tag:
+    description: "Le tag de la dernière release (ex: v1.2.0), vide sans release précédente"
+    value: ${{ steps.semantic.outputs.last_release_git_tag }}
 
 runs:
   using: "composite"
@@ -23,6 +33,7 @@ runs:
       id: semantic
       uses: cycjimmy/semantic-release-action@v6.0.0
       with:
+        dry_run: ${{ inputs.dry_run }}
         extra_plugins: |
           semantic-release-cargo
           conventional-changelog-conventionalcommits@7.0.2
