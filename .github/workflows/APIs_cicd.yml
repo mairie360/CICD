@@ -422,8 +422,39 @@ jobs:
           version: 0.0.0-staging.${{ steps.release.outputs.sha_tag }}
           dist_tag: staging
 
+  # [NOUVEAU] MAIR-290: personal data in logs test, between staging and the Prod approval (like the
+  # GDPR inventory of database_cicd.yml): the repo's marker stack runs the image promoted to
+  # staging (by digest) and a runner that plays the journey of gdpr-marker.yaml with a marker user;
+  # the logs of every container are then searched for its values. The summary is read before the
+  # Prod approval; a leak skips `release-prod`. Skipped with a warning without gdpr-marker.yaml.
+  gdpr_marker:
+    name: GDPR log marker (staging image)
+    needs: [release-dev, release-staging]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run the GDPR log marker test
+        uses: ./cicd-repo/actions/gdpr-marker
+        with:
+          image_ref: ${{ needs.release-dev.outputs.image }}@${{ needs.release-staging.outputs.digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
   release-prod:
-    needs: release-staging
+    # [CHANGEMENT] MAIR-290: also waits for the GDPR log marker test.
+    needs: [release-staging, gdpr_marker]
     runs-on: ubuntu-latest
     environment: Prod
     permissions:
@@ -492,6 +523,7 @@ jobs:
       - integration_and_security
       - performance_isolated
       - release-staging
+      - gdpr_marker
       - release-prod
     runs-on: ubuntu-latest
     steps:
