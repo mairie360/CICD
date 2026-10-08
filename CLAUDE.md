@@ -144,6 +144,18 @@ the PR when the repo holds it, `inventory_path`; else a non-placeholder `Invento
 `gdpr-pr-cicd.yml`, called by a per-repo `gdpr-pr.yml` on `pull_request` with the `edited` type (the
 stack workflows do not get `edited` events).
 
+## GDPR simulation (`tests/gdpr/simulation/`, MAIR-497)
+
+`guard.mjs` (refuses without `GDPR_SIMULATION=test-stack` or with a target outside the stack
+network), `personas.mjs` (marker values per persona), `simulate.mjs` (journey per persona + `erase`
+steps, writes `personas.json`), `db.mjs` / `sql.mjs` (erasure, retention and content queries from
+the inventory and `schema.sql`), `templates.mjs` (log templates and fingerprints), `ai.mjs` (Haiku 4.5
+by default, `temperature: 0`, no `effort` for Haiku, cache by `model:fingerprint`), `accepted.mjs`
+(`gdpr-accepted-risks.yaml`), `analyze.mjs` (the gate: deterministic leak or unaccepted `high`
+blocks; erasure / retention are expected failures until MAIR-289, `GDPR_SIMULATION_ERASURE=enforce`).
+Action `actions/gdpr/simulation`, job `gdpr_simulation` of `APIs_cicd.yml` / `BFFs-cicd.yml` after
+`release-staging`, `release-prod` needs it; skipped without `gdpr-simulation.yaml`.
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, `front-libs-cicd.yml`, and both composite actions pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
