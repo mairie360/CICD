@@ -5,7 +5,7 @@ description: >
   GDPR_SIMULATION=test-stack is exported, the engine refuses anything else), which leaves the run
   in `gdpr-simulation/` (personas, logs of every container, browser console and storage for the
   fronts, database checks), then tests/gdpr/simulation/analyze.mjs: deterministic checks and the AI
-  review (Haiku 4.5 by default) of the log templates, console, storage and free-text columns.
+  review (Haiku 5.5 by default) of the log templates, console, storage and free-text columns.
   A persona value found, or an unaccepted high risk, fails the step; accepted risks live in the
   repo's `gdpr-accepted-risks.yaml`. Skipped with a warning while the repo has no
   `gdpr-simulation.yaml`. The caller checks out the repo and `mairie360/CICD` into `cicd-repo/`.
@@ -28,7 +28,7 @@ inputs:
   ai_model:
     description: "Claude model of the AI review"
     required: false
-    default: "claude-haiku-4-5"
+    default: "claude-haiku-5-5"
   anthropic_api_key:
     description: "Anthropic API key; without it there is no AI review (the deterministic checks still run)"
     required: false

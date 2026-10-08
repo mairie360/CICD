@@ -40,7 +40,7 @@ on:
       gdpr_simulation_ai_model:
         required: false
         type: string
-        default: "claude-haiku-4-5"
+        default: "claude-haiku-5-5"
         description: "Claude model of the AI review of the GDPR simulation (MAIR-497); only used when ANTHROPIC_API_KEY is set"
     secrets:
       CODECOV_TOKEN:

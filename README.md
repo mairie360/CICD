@@ -376,7 +376,7 @@ The run (`tests/gdpr/simulation/`):
 3. `analyze.mjs` is the gate. **Deterministic**: a persona value (or a captured token) in any log,
    browser console message or browser storage entry fails. The erasure and retention checks are
    reported as expected failures until the erasure exists (MAIR-289); `GDPR_SIMULATION_ERASURE=enforce`
-   makes them block. **AI review** (`gdpr_simulation_ai_model`, `claude-haiku-4-5` by default,
+   makes them block. **AI review** (`gdpr_simulation_ai_model`, `claude-haiku-5-5` by default,
    `ANTHROPIC_API_KEY`): the log lines grouped into templates (numbers, ids, dates, addresses
    replaced, persona values masked), the console, the storage and the database sample, each with a
    risk (`none` / `low` / `medium` / `high`), a justification and a fingerprint. Verdicts are cached

@@ -1,4 +1,4 @@
-// AI review of the GDPR simulation (MAIR-497): Claude (Haiku 4.5 by default) reads the log
+// AI review of the GDPR simulation (MAIR-497): Claude (Haiku 5.5 by default) reads the log
 // templates, the browser console and storage, and samples of the free-text and JSON columns, and
 // rates the risk that each one exposes personal data beyond what the processing needs. Every item
 // carries a fingerprint; verdicts are cached by fingerprint and model, so two runs on the same code
@@ -7,10 +7,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 
-export const DEFAULT_MODEL = "claude-haiku-4-5";
+export const DEFAULT_MODEL = "claude-haiku-5-5";
 const BATCH_SIZE = 40;
-// Models that accept `effort` (Haiku 4.5 does not).
-const EFFORT_MODELS = /^claude-(opus|sonnet|fable)-/;
+// Models that accept `effort` (Haiku 4.5 does not, Haiku 5.5 does).
+const EFFORT_MODELS = /^claude-(opus|sonnet|fable|haiku-5)-/;
 
 const SYSTEM = `You review, for GDPR, what the test stack of Mairie 360 (a platform French town halls
 use for their agents) wrote while fictitious users went through every operation. Values of those
@@ -58,7 +58,6 @@ export async function review(items, { client, model, cache }) {
       const response = await client.beta.messages.parse({
         model,
         max_tokens: 8000,
-        temperature: 0,
         output_config: { ...(EFFORT_MODELS.test(model) ? { effort: "low" } : {}), format: betaZodOutputFormat(Verdicts) },
         system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: JSON.stringify(batch.map(({ id, kind, where, text }) => ({ id, kind, where, text: text.slice(0, 2000) }))) }],
