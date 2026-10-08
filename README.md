@@ -424,7 +424,7 @@ docker compose -f "$COMPOSE_FILE" down -v
 ```
 
 The action then runs `analyze.mjs`. The fronts add `gdpr-simulation/browser/console.json` and
-`storage.json`, written by the RGAA engine while it plays their states (MAIR-292). Only the masked
+`storage.json`, collected by `tests/gdpr/privacy` on their pages (MAIR-292). Only the masked
 report (`summary.md`, `report.json`) is uploaded.
 
 ## GDPR in the browser (`tests/gdpr/privacy`, MAIR-292)
