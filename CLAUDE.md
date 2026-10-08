@@ -117,6 +117,23 @@ excerpts; exit 0 / 1 leak or journey failed / 2 missing input). Placement: `gdpr
 before `release-prod`'s approval. `marker.test.mjs` includes an end-to-end run against a local
 HTTP server (clean and leaky).
 
+## GDPR contract and Semgrep rules (`tests/gdpr/contract/`, `tests/semgrep/gdpr/`, MAIR-291)
+
+`contract/contract.mjs` walks every response schema of an OpenAPI document (`$ref` with cycle
+guard, `allOf`/`oneOf`/`anyOf`, `items`, `additionalProperties`) and fails on a field carrying a
+`credentials` column of the inventory (same name, or mapped under `fields` in the consumer's
+`gdpr-contract.yaml`), unless `allow` lists it with a reason; `contract/ai.mjs` asks Claude a column
+for the unmapped names, cached by fingerprint (`GDPR_AI_CACHE`, `actions/cache` in the action),
+never deciding; `contract/check.mjs` is the CLI (exit 0 / 1 violation / 2 invalid input). The
+inventory comes from mairie360/Database (`gdpr_inventory_ref`). The action is
+`actions/gdpr/contract` (new GDPR actions go under `actions/gdpr/`, MAIR-493 moves the others
+there), the `gdpr_contract` job of `APIs_cicd.yml` (on `cargo open_api`) and `BFFs-cicd.yml` (on the
+`openapi-spec` artifact) runs on every event, `release-prod` needs it. The per-operation personal
+columns of `report.json` are the input of the access matrix (MAIR-288, not decided yet). The
+Semgrep rules (`tests/semgrep/gdpr/<rule>.yml` + annotated `<rule>.<ext>`, `semgrep --test` in
+`lint.yml`) are in every workflow's default `semgrep_config`. Gitleaks already runs everywhere
+(MAIR-416); the subcontractor-domain rule waits for the decision file of MAIR-294.
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, `front-libs-cicd.yml`, and both composite actions pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.

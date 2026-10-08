@@ -34,7 +34,7 @@ on:
       semgrep_config:
         required: false
         type: string
-        default: "p/typescript p/owasp-top-ten p/nodejs p/expressjs p/secrets p/dockerfile p/github-actions"
+        default: "p/typescript p/owasp-top-ten p/nodejs p/expressjs p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr"
         description: "Semgrep rulesets (space-separated) run by the SAST job"
       semgrep_fail_on_findings:
         required: false
@@ -46,11 +46,27 @@ on:
         type: boolean
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the image (accepted risks go in .trivyignore)"
+      # [NOUVEAU] MAIR-291: GDPR contract check.
+      gdpr_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model that proposes field-to-column mappings in the GDPR contract check (MAIR-291); only used when the ANTHROPIC_API_KEY secret is set"
+      gdpr_inventory_ref:
+        required: false
+        type: string
+        default: "main"
+        description: "Ref of mairie360/Database whose gdpr/inventory.yaml the GDPR contract check reads (MAIR-291)"
     secrets:
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
         required: true
+      # [NOUVEAU] MAIR-291: optional; without it the GDPR contract check runs without AI proposals.
+      ANTHROPIC_API_KEY:
+        required: false
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
     outputs:
       release_published:
         description: "'true' si une nouvelle version a été publiée en prod"
@@ -550,10 +566,45 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           npm_scope: ${{ inputs.npm_scope }}
           node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+  # [NOUVEAU] MAIR-291: the responses of the OpenAPI contract carry no credentials column of the
+  # GDPR inventory (tests/gdpr/contract). Runs on every event; release-prod needs it.
+  gdpr_contract:
+    name: GDPR contract (OpenAPI)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Download the OpenAPI spec
+        uses: actions/download-artifact@v8
+        with:
+          name: openapi-spec
+          path: ${{ runner.temp }}/openapi
+
+      - name: Check the contract
+        uses: ./cicd-repo/actions/gdpr/contract
+        with:
+          spec_file: ${{ runner.temp }}/openapi/openapi-spec.json
+          inventory_ref: ${{ inputs.gdpr_inventory_ref }}
+          ai_model: ${{ inputs.gdpr_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+
   release-prod:
     name: Release Prod
-    # [CHANGEMENT] MAIR-290: also waits for the GDPR log marker test.
-    needs: [release-dev, release-staging, gdpr_marker]
+    # [CHANGEMENT] MAIR-290 / MAIR-291: also waits for the GDPR log marker test and contract check.
+    needs: [release-dev, release-staging, gdpr_marker, gdpr_contract]
     runs-on: ubuntu-latest
     environment: Prod
     timeout-minutes: 20

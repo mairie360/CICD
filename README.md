@@ -31,13 +31,21 @@ publish jobs for front libs) waits for it.
 
 | Workflow | Default rulesets (`semgrep_config`) | Blocking by default (`semgrep_fail_on_findings`) |
 | --- | --- | --- |
-| `BFFs-cicd.yml` | `p/typescript p/owasp-top-ten p/nodejs p/expressjs p/secrets p/dockerfile p/github-actions` | yes |
-| `APIs_cicd.yml` | `p/rust p/secrets p/dockerfile p/github-actions` | yes (since MAIR-416) |
-| `back-lib-cicd.yml` | `p/rust p/secrets p/github-actions` | no, report-only |
-| `frontend-cicd.yml` | `p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions` | yes (since MAIR-416) |
-| `front-libs-cicd.yml` | `p/typescript p/react p/secrets p/github-actions` | no, report-only |
-| `bffs-lib-cicd.yml` | `p/typescript p/nodejs p/expressjs p/secrets p/github-actions` | no, report-only |
-| `database_cicd.yml` | `p/secrets p/dockerfile p/github-actions` | yes (since MAIR-416) |
+| `BFFs-cicd.yml` | `p/typescript p/owasp-top-ten p/nodejs p/expressjs p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr` | yes |
+| `APIs_cicd.yml` | `p/rust p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr` | yes (since MAIR-416) |
+| `back-lib-cicd.yml` | `p/rust p/secrets p/github-actions cicd-repo/tests/semgrep/gdpr` | no, report-only |
+| `frontend-cicd.yml` | `p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr` | yes (since MAIR-416) |
+| `front-libs-cicd.yml` | `p/typescript p/react p/secrets p/github-actions cicd-repo/tests/semgrep/gdpr` | no, report-only |
+| `bffs-lib-cicd.yml` | `p/typescript p/nodejs p/expressjs p/secrets p/github-actions cicd-repo/tests/semgrep/gdpr` | no, report-only |
+| `database_cicd.yml` | `p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr` | yes (since MAIR-416) |
+
+`cicd-repo/tests/semgrep/gdpr` holds the GDPR rules of MAIR-291 (one file per language, each
+tested by `semgrep --test` against the file of the same name in the `semgrep-rules` job of
+`lint.yml`): `gdpr-rust-log-personal-value` and `gdpr-ts-log-personal-value` (a logging call that
+prints an `email`, `password`, `token`, `accessToken`, `refreshToken` or request `body` value),
+`gdpr-sql-whole-row-json` (`to_jsonb(OLD|NEW)` / `row_to_json` without removing the columns the
+inventory marks `audit_log: false`). A consumer that overrides `semgrep_config` adds the folder to
+its list to keep them. A false positive gets `// nosemgrep: <rule id>` with the reason.
 
 The Semgrep registry has no SQL/PostgreSQL ruleset (`p/sql` and `p/postgres` do not exist), and
 `p/nextjs` is currently empty, so neither is used.
@@ -285,6 +293,36 @@ exit $EXIT_CODE
 Add `/gdpr-report/` to `.gitignore` (and `gdpr-report`, `gdpr-marker.yaml`,
 `gdpr_marker_test.sh` to `.dockerignore`). BFFs: the job writes the same build `.npmrc` as the ZAP
 job, for stacks that build an image.
+
+## GDPR contract (`actions/gdpr/contract`, MAIR-291)
+
+`APIs_cicd.yml` and `BFFs-cicd.yml` run a `gdpr_contract` job on every event (APIs: after `lint`,
+on `cargo open_api`; BFFs: after `build`, on the `openapi-spec` artifact); `release-prod` needs it.
+It reads the personal data inventory of the database (`gdpr/inventory.yaml` of
+mairie360/Database, input `gdpr_inventory_ref`, `main` by default) and walks every response schema
+of the spec (`$ref`, `allOf`/`oneOf`/`anyOf`, arrays, maps): a field that carries a `credentials`
+column (`users.password`, `sessions.token_hash`) fails the job. A field carries a column when it has
+its name, or when the repo maps it in its decision file. Claude (`gdpr_ai_model`, secret
+`ANTHROPIC_API_KEY`, optional) proposes a column for the other field names, cached by fingerprint
+(field name, schemas, model) with `actions/cache`: the proposals fill the summary, a human writes
+the mapping. The job summary also lists the allowed exceptions; `report.json` (artifact
+`gdpr-contract`) adds, per operation, the personal columns its responses carry, the input of the
+access matrix (MAIR-288).
+
+**`gdpr-contract.yaml`** (optional, at the root of the repo): the decisions.
+
+```yaml
+version: 1
+fields:                     # API field names that carry a column under another name
+  phone: users.phone_number
+allow:                      # credentials a response may carry, and why
+  - operation: POST /api/v1/auth/login
+    field: refresh_token
+    reason: the client keeps its own refresh token, Core only stores its hash
+```
+
+Locally: `cd tests/gdpr && npm ci && node contract/check.mjs <openapi.json> <inventory.yaml> <report dir> [gdpr-contract.yaml]`
+(`GDPR_AI=off` to skip the proposals, `GDPR_AI_CACHE=<file>` to keep them).
 
 ## OpenAPI coverage gate (ZAP + k6)
 
