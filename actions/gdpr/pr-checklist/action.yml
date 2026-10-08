@@ -87,6 +87,13 @@ runs:
         git diff --name-only "$BASE_SHA...$HEAD_SHA" -- . ':!cicd-repo' ':!gdpr-inventory-repo' > "$work/changed.txt" || exit 2
         git diff "$BASE_SHA...$HEAD_SHA" -- . ':!cicd-repo' ':!gdpr-inventory-repo' > "$work/diff.patch" || exit 2
         if [ -n "$INVENTORY_PATH" ]; then inventory="$INVENTORY_PATH"; else inventory="gdpr-inventory-repo/gdpr/inventory.yaml"; fi
+        # The inventory only feeds the AI review: without it (not merged yet on that ref), the
+        # deterministic check still runs and Claude reads the diff alone.
+        if [ ! -f "$inventory" ]; then
+          echo "::warning title=GDPR checklist::$inventory not found: the AI review runs without the inventory."
+          inventory="$work/no-inventory.yaml"
+          printf '# no inventory on this ref\n' > "$inventory"
+        fi
         (cd cicd-repo/tests/gdpr && npm ci --no-audit --no-fund --silent) || exit 2
         node cicd-repo/tests/gdpr/pr/check.mjs "$work/body.md" "$work/changed.txt" "$work/diff.patch" "$inventory" "$work/report" "$INVENTORY_PATH"
         code=$?
