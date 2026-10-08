@@ -163,14 +163,14 @@ jobs:
       # inline `semgrep/semgrep:latest` run. Still blocking by default; the previous rulesets
       # (p/typescript, p/owasp-top-ten) are kept and extended (0 new findings on the BFFs' main).
       - name: Run Semgrep Security Scan
-        uses: ./cicd-repo/actions/semgrep
+        uses: ./cicd-repo/actions/security/semgrep
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
 
       # [NOUVEAU] MAIR-416: secret scan of the new commits.
       - name: Run Gitleaks Secret Scan
-        uses: ./cicd-repo/actions/gitleaks
+        uses: ./cicd-repo/actions/security/gitleaks
 
   build:
     name: Build & OpenAPI Spec
@@ -329,7 +329,7 @@ jobs:
       # même artefact) est préservé via `build_secret_files`/`build_secret_envs`.
       - name: Build & Push Image (Dev)
         id: release
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -353,7 +353,7 @@ jobs:
           path: .
 
       - name: Publish OpenAPI (Dev)
-        uses: ./cicd-repo/actions/publish-openapi-typescript
+        uses: ./cicd-repo/actions/release/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -494,7 +494,7 @@ jobs:
       # against release-dev's digest and signature), never the mobile `dev` tag.
       - name: Promote Image to Staging
         id: release
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         with:
           stage: staging
           package_name: ${{ inputs.package_name }}
@@ -508,7 +508,7 @@ jobs:
           path: .
 
       - name: Publish OpenAPI (Staging)
-        uses: ./cicd-repo/actions/publish-openapi-typescript
+        uses: ./cicd-repo/actions/release/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -548,12 +548,12 @@ jobs:
 
       - name: Calculate & Create Tag
         id: set_tag
-        uses: ./cicd-repo/actions/semantic-tag
+        uses: ./cicd-repo/actions/release/semantic-tag
 
       # [CHANGEMENT] MAIR-416: promotes the digest of `staging-<sha>` (checked against
       # release-staging's digest and signature) to <version> / latest.
       - name: Promote Image to Prod
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         with:
           stage: prod
           expected_digest: ${{ needs.release-staging.outputs.digest }}
@@ -573,7 +573,7 @@ jobs:
 
       - name: Publish OpenAPI (Prod)
         if: steps.set_tag.outputs.new_release_published == 'true'
-        uses: ./cicd-repo/actions/publish-openapi-typescript
+        uses: ./cicd-repo/actions/release/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -605,6 +605,6 @@ jobs:
           path: cicd-repo
 
       - name: Notify n8n
-        uses: ./cicd-repo/actions/notify-cicd-failure
+        uses: ./cicd-repo/actions/notify/cicd-failure
         with:
           n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}
