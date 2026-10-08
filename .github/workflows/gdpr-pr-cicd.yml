@@ -1,0 +1,65 @@
+# [NOUVEAU] MAIR-295: GDPR checklist of the pull requests, called by a small workflow of each repo
+# (see README, "GDPR PR checklist") on `pull_request: types: [opened, edited, synchronize, reopened]`,
+# so that ticking the answer in the description re-runs it.
+name: GDPR PR checklist
+
+on:
+  workflow_call:
+    inputs:
+      cicd_version:
+        required: true
+        type: string
+      inventory_path:
+        required: false
+        type: string
+        default: ""
+        description: "Path of gdpr/inventory.yaml when the calling repo holds it (Database); empty elsewhere"
+      gdpr_inventory_ref:
+        required: false
+        type: string
+        default: "main"
+        description: "Ref of mairie360/Database whose inventory the AI review reads"
+      gdpr_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model of the AI review (never blocking); only used when ANTHROPIC_API_KEY is set"
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  gdpr_checklist:
+    name: GDPR checklist
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Check the GDPR checklist
+        uses: ./cicd-repo/actions/gdpr/pr-checklist
+        with:
+          pr_body: ${{ github.event.pull_request.body }}
+          base_sha: ${{ github.event.pull_request.base.sha }}
+          head_sha: ${{ github.event.pull_request.head.sha }}
+          inventory_path: ${{ inputs.inventory_path }}
+          inventory_ref: ${{ inputs.gdpr_inventory_ref }}
+          ai_model: ${{ inputs.gdpr_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}

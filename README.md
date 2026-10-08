@@ -324,6 +324,38 @@ allow:                      # credentials a response may carry, and why
 Locally: `cd tests/gdpr && npm ci && node contract/check.mjs <openapi.json> <inventory.yaml> <report dir> [gdpr-contract.yaml]`
 (`GDPR_AI=off` to skip the proposals, `GDPR_AI_CACHE=<file>` to keep them).
 
+## GDPR PR checklist (`gdpr-pr-cicd.yml`, MAIR-295)
+
+The organization pull request template (mairie360/.github) asks in its **Personal data** section
+whether the PR touches personal data (`- [x] No` / `- [x] Yes` + an `Inventory:` line). The reusable
+workflow fails the PR check when no answer or both are ticked, or when "Yes" comes without the
+inventory: in Database, `gdpr/inventory.yaml` must change in the PR; elsewhere the `Inventory:`
+line links the Database PR that updates it, or says why it does not change. Claude
+(`gdpr_ai_model`, secret `ANTHROPIC_API_KEY`, optional) reads the diff (lock files and generated
+contracts left out) with the inventory of mairie360/Database and, **without blocking**, warns in
+the job summary and as an annotation when a PR answered "No" seems to touch personal data, or when
+a "Yes" seems to need an inventory change. Reviews are cached by fingerprint (model, diff, answer)
+with `actions/cache`, so editing the description does not ask again.
+
+A repo opts in with its own workflow, so that ticking the answer (an `edited` event) re-runs it:
+
+```yaml
+# .github/workflows/gdpr-pr.yml
+name: GDPR PR checklist
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  gdpr:
+    uses: mairie360/CICD/.github/workflows/gdpr-pr-cicd.yml@vX.Y.Z
+    with:
+      cicd_version: vX.Y.Z
+      # Database only: inventory_path: gdpr/inventory.yaml
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
+```
+
 ## OpenAPI coverage gate (ZAP + k6)
 
 `openapi.json` is the contract of every API and BFF. Two shared files turn it into a coverage

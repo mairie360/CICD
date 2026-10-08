@@ -134,6 +134,16 @@ Semgrep rules (`tests/semgrep/gdpr/<rule>.yml` + annotated `<rule>.<ext>`, `semg
 `lint.yml`) are in every workflow's default `semgrep_config`. Gitleaks already runs everywhere
 (MAIR-416); the subcontractor-domain rule waits for the decision file of MAIR-294.
 
+## GDPR PR checklist (`tests/gdpr/pr/`, `gdpr-pr-cicd.yml`, MAIR-295)
+
+`pr/checklist.mjs` reads the "Personal data" section of the PR description (template of
+mairie360/.github): exactly one of `- [x] No` / `- [x] Yes`, and for "Yes" the inventory (changed in
+the PR when the repo holds it, `inventory_path`; else a non-placeholder `Inventory:` line).
+`pr/ai.mjs` asks Claude about the diff (cached by model + diff + answer), warning only.
+`pr/check.mjs` is the CLI (exit 0 / 1 / 2). Action `actions/gdpr/pr-checklist`, reusable workflow
+`gdpr-pr-cicd.yml`, called by a per-repo `gdpr-pr.yml` on `pull_request` with the `edited` type (the
+stack workflows do not get `edited` events).
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, `front-libs-cicd.yml`, and both composite actions pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
