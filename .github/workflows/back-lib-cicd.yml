@@ -36,17 +36,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Download Dependencies
-        run: cargo fetch
-
-      - name: Pre-compile dependencies
-        run: cargo check --release
+      - name: Download & Pre-compile Dependencies
+        uses: ./cicd-repo/actions/dependencies/back-lib
 
   # [NOUVEAU] Job dédié aux audits de sécurité de la bibliothèque
   security_audit:
@@ -57,21 +58,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run Cargo Audit (Vulnerability Check)
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
-
-      - name: Run Cargo Deny (License & Advisory Check)
-        run: |
-          cargo install cargo-deny --locked
-          cargo deny check advisories licenses
+      - name: Run Cargo Audit & Cargo Deny
+        uses: ./cicd-repo/actions/security/back-lib
 
   lint:
     name: Check lint
@@ -81,16 +79,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          components: rustfmt, clippy
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Run lint check
-        run: cargo lint_check
+        uses: ./cicd-repo/actions/lint/back-lib
 
   # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
   security_sast:
@@ -129,21 +129,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Build
-        run: cargo build --release
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-artifact
-          path: target/release/
-          retention-days: 1
+        uses: ./cicd-repo/actions/build/back-lib
 
   unit_test:
     name: Unit Tests
@@ -154,32 +151,20 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          components: llvm-tools-preview
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      # [CHANGEMENT] MAIR-467: the tests run once. `cargo llvm-cov` runs them and writes
-      # `codecov.json` in the same pass (it used to be `cargo test --release`, then a second
-      # instrumented run on main / PRs to main). Same as `cargo cov` in APIs_cicd.yml.
       - name: Run Rust Tests & Generate Coverage
-        run: cargo llvm-cov --workspace --codecov --output-path codecov.json
-
-      - name: Envoyer à Codecov
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-        uses: codecov/codecov-action@v7
+        uses: ./cicd-repo/actions/unit-tests/back-lib
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: codecov.json
-          # [CHANGEMENT] MAIR-467: a Codecov outage (expired certificate on 2026-10-05) must not
-          # block the release; coverage is only reported here, never enforced.
-          fail_ci_if_error: false
+          codecov_token: ${{ secrets.CODECOV_TOKEN }}
 
   publish_release:
     if: github.ref == 'refs/heads/main'

@@ -77,17 +77,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Use Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: ${{ inputs.node_version }}
-          cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: ${{ inputs.npm_scope }}
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install dependencies
+        uses: ./cicd-repo/actions/dependencies/bffs
+        with:
+          node_version: ${{ inputs.node_version }}
+          npm_scope: ${{ inputs.npm_scope }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
 
   security_audit:
     name: Security Audit (npm audit)
@@ -100,20 +105,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Use Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: ${{ inputs.node_version }}
-          cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: ${{ inputs.npm_scope }}
-
-      - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Run npm audit (Block on High/Critical)
-        run: npm audit --audit-level=high
+        uses: ./cicd-repo/actions/dependencies/bffs
+        with:
+          node_version: ${{ inputs.node_version }}
+          npm_scope: ${{ inputs.npm_scope }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          audit: 'true'
 
   lint:
     name: Lint code
@@ -126,19 +134,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Use Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: ${{ inputs.node_version }}
-          cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: ${{ inputs.npm_scope }}
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - run: npm run lint
+      - name: Lint code
+        uses: ./cicd-repo/actions/lint/bffs
+        with:
+          node_version: ${{ inputs.node_version }}
+          npm_scope: ${{ inputs.npm_scope }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
 
   security_sast:
     name: Code Security Audit (Semgrep, Gitleaks)
@@ -183,55 +194,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Use Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: ${{ inputs.node_version }}
-          cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: ${{ inputs.npm_scope }}
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - run: npm run build
-
-      # La spec est copiée sous un nom fixe pour que son emplacement dans
-      # l'artefact ne dépende pas de l'arborescence du repo.
-      - name: Vérifier et isoler la spec OpenAPI
-        env:
-          SPEC_PATH: ${{ inputs.openapi_spec_path }}
-        run: |
-          set -euo pipefail
-          if [ ! -s "$SPEC_PATH" ]; then
-            echo "::error::Spec OpenAPI introuvable ou vide : '$SPEC_PATH' (input openapi_spec_path)"
-            exit 1
-          fi
-          if ! jq empty "$SPEC_PATH"; then
-            echo "::error::'$SPEC_PATH' n'est pas un JSON valide"
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/openapi"
-          cp "$SPEC_PATH" "$RUNNER_TEMP/openapi/openapi-spec.json"
-
-      - name: Upload Build
-        uses: actions/upload-artifact@v7
+      - name: Build & OpenAPI Spec
+        uses: ./cicd-repo/actions/build/bffs
         with:
-          name: bff-assets
-          path: dist/
-          if-no-files-found: error
-          retention-days: ${{ inputs.artifact_retention_days }}
-          overwrite: true
-
-      - name: Upload OpenAPI Spec
-        uses: actions/upload-artifact@v7
-        with:
-          name: openapi-spec
-          path: ${{ runner.temp }}/openapi/openapi-spec.json
-          if-no-files-found: error
-          retention-days: ${{ inputs.artifact_retention_days }}
-          overwrite: true
+          node_version: ${{ inputs.node_version }}
+          npm_scope: ${{ inputs.npm_scope }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          openapi_spec_path: ${{ inputs.openapi_spec_path }}
+          artifact_retention_days: ${{ inputs.artifact_retention_days }}
 
   test:
     name: Test Check
@@ -245,29 +225,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Use Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: ${{ inputs.node_version }}
-          cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: ${{ inputs.npm_scope }}
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - run: npm test
-
-      - name: Upload Coverage to Codecov
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-        uses: codecov/codecov-action@v7
+      - name: Test Check
+        uses: ./cicd-repo/actions/unit-tests/bffs
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/lcov.info
-          # [CHANGEMENT] MAIR-467: Codecov only reports coverage, so an outage on its side (expired
-          # certificate on 2026-10-05) must not fail the job and block the release.
-          fail_ci_if_error: false
+          node_version: ${{ inputs.node_version }}
+          npm_scope: ${{ inputs.npm_scope }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          codecov_token: ${{ secrets.CODECOV_TOKEN }}
 
   # ==========================================================================
   # DEV : l'image est construite UNE SEULE FOIS ici.
@@ -373,11 +347,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
       # [NOUVEAU] MAIR-194: exposes the shared OpenAPI coverage gate
       # (`cicd-repo/tests/zap/zap_hooks.py`) to the consumer's compose stack, which
       # mounts it into the ZAP container and passes it with `--hook`.
@@ -388,31 +357,12 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      # docker-compose-security.yml monte ./.npmrc comme secret BuildKit pour
-      # que le service bff-user puisse installer les packages @mairie360/* :
-      # ce fichier n'existe pas après un simple checkout (il est gitignored).
-      - name: Générer le .npmrc de build
-        env:
-          NPM_SCOPE: ${{ inputs.npm_scope }}
-        run: |
-          set -euo pipefail
-          umask 077
-          printf '%s\n' \
-            "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
-            '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
-            > .npmrc
-
-      # IMAGE_REF pointe sur le tag dev-<sha_tag> exact buildé par ce run
-      # (plus fiable que dev-latest si plusieurs pushs se suivent).
       - name: Run ZAP Security Scan via Docker Compose
-        env:
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash ./security_test.sh
-
-      - name: Supprimer le .npmrc de build
-        if: always()
-        run: rm -f .npmrc
+        uses: ./cicd-repo/actions/security/bffs
+        with:
+          image_ref: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
+          npm_scope: ${{ inputs.npm_scope }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   performance_tests:
     name: Isolated Performance Tests (k6)
@@ -426,11 +376,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
       # [NOUVEAU] MAIR-194: exposes the shared OpenAPI coverage gate
       # (`cicd-repo/tests/k6/coverage.js`) to the consumer's compose stack, which mounts
       # it into the k6 container next to `openapi.json` and imports it from `load-test.js`.
@@ -441,29 +386,12 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      # docker-compose-performance.yml monte ./.npmrc comme secret BuildKit pour
-      # que le service bff-user puisse installer les packages @mairie360/* :
-      # ce fichier n'existe pas après un simple checkout (il est gitignored).
-      - name: Générer le .npmrc de build
-        env:
-          NPM_SCOPE: ${{ inputs.npm_scope }}
-        run: |
-          set -euo pipefail
-          umask 077
-          printf '%s\n' \
-            "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
-            '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
-            > .npmrc
-
       - name: Run Performance Tests via Docker Compose
-        env:
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash ./performance_test.sh
-
-      - name: Supprimer le .npmrc de build
-        if: always()
-        run: rm -f .npmrc
+        uses: ./cicd-repo/actions/performance/bffs
+        with:
+          image_ref: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
+          npm_scope: ${{ inputs.npm_scope }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   # ==========================================================================
   # STAGING : tags staging-<sha_tag> et staging sur l'image de dev

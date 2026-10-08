@@ -1,0 +1,41 @@
+name: "Dependencies (fronts)"
+description: >-
+  Node.js setup against GitHub Packages and `npm ci` of a Next.js front (`dependencies` job of
+  frontend-cicd.yml); with `audit: 'true'`, also `npm audit --audit-level=high`
+  (`security_audit` job).
+
+inputs:
+  node_version:
+    description: "Node.js version (the workflow input node_version)"
+    required: true
+  node_auth_token:
+    description: "Token for the GitHub Packages registry (the caller passes secrets.GITHUB_TOKEN)"
+    required: true
+  audit:
+    description: "'true' to run npm audit after the install (blocks on high/critical)"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    # [CHANGEMENT] Utilisation native du cache npm de setup-node (sur ~/.npm)
+    # plus léger et performant que la sauvegarde complète du dossier node_modules.
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node_version }}
+        registry-url: 'https://npm.pkg.github.com'
+        scope: '@mairie360'
+        cache: 'npm'
+
+    - name: Install Dependencies
+      shell: bash
+      run: npm ci
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+
+    - name: Run npm audit (Block on High/Critical)
+      if: inputs.audit == 'true'
+      shell: bash
+      run: npm audit --audit-level=high

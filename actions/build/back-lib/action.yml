@@ -1,0 +1,24 @@
+name: "Build (back-lib)"
+description: >-
+  Release build of the Rust library, uploaded as `build-artifact` (`build` job of
+  back-lib-cicd.yml).
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build
+      shell: bash
+      run: cargo build --release
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: build-artifact
+        path: target/release/
+        retention-days: 1

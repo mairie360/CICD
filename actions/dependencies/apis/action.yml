@@ -1,0 +1,23 @@
+name: "Dependencies (APIs)"
+description: >-
+  Rust toolchain, `cargo fetch` and `cargo audit` of a Rust API (`dependencies` job of
+  APIs_cicd.yml).
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Download Dependencies
+      shell: bash
+      run: cargo fetch
+
+    - name: Security Audit (cargo-audit)
+      shell: bash
+      run: |
+        cargo install cargo-audit --locked
+        cargo audit

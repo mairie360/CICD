@@ -33,16 +33,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check dependencies vulnerabilities (npm audit)
-        run: npm audit --audit-level=high
+      - name: Install & Security Audit
+        uses: ./cicd-repo/actions/dependencies/bffs-lib
 
   lint:
     name: Lint code
@@ -51,16 +53,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Run linter
-        run: npm run lint
+        uses: ./cicd-repo/actions/lint/bffs-lib
 
   security_sast:
     name: Code Security Audit (Semgrep, Gitleaks)
@@ -97,24 +101,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Install dependencies
-        run: npm ci
-
-      # `npm run build` runs `tsc`, so it also type-checks the library.
       - name: Build package
-        run: npm run build
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: library-dist
-          path: dist/
-          retention-days: 1
+        uses: ./cicd-repo/actions/build/bffs-lib
 
   test:
     name: Run Tests
@@ -123,27 +121,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Install dependencies
-        run: npm ci
-
-      # The repo's jest config collects coverage and enforces its own thresholds.
       - name: Run tests
-        run: npm test
-
-      - name: Upload Coverage to Codecov
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-        uses: codecov/codecov-action@v7
+        uses: ./cicd-repo/actions/unit-tests/bffs-lib
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/lcov.info
-          # [CHANGEMENT] MAIR-467: Codecov only reports coverage, so an outage on its side (expired
-          # certificate on 2026-10-05) must not fail the job and block the release.
-          fail_ci_if_error: false
+          codecov_token: ${{ secrets.CODECOV_TOKEN }}
 
   package:
     name: Package Publish

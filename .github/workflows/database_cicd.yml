@@ -41,23 +41,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
       - name: Run tests
         timeout-minutes: 15
-        run: ./test.sh
+        uses: ./cicd-repo/actions/unit-tests/db
 
-      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
-      # leaving a `*-ready` service polling forever), the step timeout kills the script before
-      # its `docker compose down`, so the containers are still there: print their state and
-      # logs to see why the service under test did not start.
+      # [NOUVEAU] MAIR-468: dumps the containers left behind when the step timeout kills the stack.
       - name: Dump container logs
         if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
+        uses: ./cicd-repo/actions/integration/container-logs
 
+      # Outside the action so that the 15 min timeout above only covers `./test.sh`, as before.
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
@@ -155,15 +158,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
       - name: Run schema bench
         timeout-minutes: 20
-        run: |
-          if [ ! -x ./performance_test.sh ]; then
-            echo "::warning::No executable ./performance_test.sh in this repo, schema bench skipped."
-            exit 0
-          fi
-          ./performance_test.sh
+        uses: ./cicd-repo/actions/performance/db
 
+      # Outside the action so that it still runs when the 20 min timeout above kills the bench.
       - name: Upload bench results
         if: always()
         uses: actions/upload-artifact@v7
