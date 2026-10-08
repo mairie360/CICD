@@ -1,0 +1,112 @@
+name: "GDPR contract"
+description: >
+  OpenAPI contract check (MAIR-291, epic MAIR-284) of an API or a BFF. Reads the spec the run
+  publishes and the personal data inventory of the database (`gdpr/inventory.yaml` of
+  mairie360/Database): a response field that carries a `credentials` column (password hash,
+  session token hash) fails the step, unless the repo allows it in `gdpr-contract.yaml` with its
+  reason (tests/gdpr/contract). Claude proposes field-to-column mappings for the other field
+  names, cached by fingerprint between runs; they never decide. Job summary + `gdpr-contract`
+  artifact. The caller checks out the repo and `mairie360/CICD` into `cicd-repo/`.
+
+inputs:
+  spec_file:
+    description: "OpenAPI document (JSON) the run publishes"
+    required: true
+  decision_file:
+    description: "Decision file of the repo (field mappings and allowed credentials); optional"
+    required: false
+    default: "gdpr-contract.yaml"
+  inventory_repository:
+    description: "Repository that holds the inventory"
+    required: false
+    default: "mairie360/Database"
+  inventory_ref:
+    description: "Ref of the inventory repository"
+    required: false
+    default: "main"
+  inventory_path:
+    description: "Path of the inventory in that repository"
+    required: false
+    default: "gdpr/inventory.yaml"
+  ai_model:
+    description: "Claude model of the mapping proposals"
+    required: false
+    default: "claude-sonnet-5-5"
+  anthropic_api_key:
+    description: "Anthropic API key; without it there is no AI proposal (the check still runs)"
+    required: false
+    default: ""
+  anthropic_workspace_id:
+    description: "Anthropic workspace id, only for a key that is not scoped to a workspace"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout the GDPR inventory
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ inputs.inventory_repository }}
+        ref: ${{ inputs.inventory_ref }}
+        path: gdpr-inventory-repo
+        sparse-checkout: ${{ inputs.inventory_path }}
+        sparse-checkout-cone-mode: false
+
+    - name: Setup Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    # Mapping proposals by fingerprint, so that only the field names never seen are sent to Claude.
+    - name: Restore the AI answers
+      uses: actions/cache/restore@v6
+      with:
+        path: .gdpr-ai-cache
+        key: gdpr-contract-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: gdpr-contract-ai-${{ github.repository }}-
+
+    - name: Check the contract
+      shell: bash
+      env:
+        SPEC_FILE: ${{ inputs.spec_file }}
+        DECISION_FILE: ${{ inputs.decision_file }}
+        INVENTORY: gdpr-inventory-repo/${{ inputs.inventory_path }}
+        GDPR_AI_MODEL: ${{ inputs.ai_model }}
+        GDPR_AI_CACHE: ${{ github.workspace }}/.gdpr-ai-cache/contract.json
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        ANTHROPIC_WORKSPACE_ID: ${{ inputs.anthropic_workspace_id }}
+      run: |
+        set -uo pipefail
+        for f in "$SPEC_FILE" "$INVENTORY"; do
+          if [ ! -s "$f" ]; then
+            echo "::error::GDPR contract: $f is missing or empty."
+            exit 1
+          fi
+        done
+        (cd cicd-repo/tests/gdpr && npm ci --no-audit --no-fund --silent) || exit 1
+        report="$RUNNER_TEMP/gdpr-contract"
+        node cicd-repo/tests/gdpr/contract/check.mjs "$SPEC_FILE" "$INVENTORY" "$report" "$DECISION_FILE" > /dev/null
+        code=$?
+        [ -f "$report/summary.md" ] && cat "$report/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        case "$code" in
+          0) ;;
+          1) echo "::error::A response of the contract carries a credentials column (see the job summary and the gdpr-contract artifact)." ;;
+          *) echo "::error::GDPR contract check could not run (invalid spec, inventory or $DECISION_FILE, see the log)." ;;
+        esac
+        exit "$code"
+
+    - name: Save the AI answers
+      if: always() && hashFiles('.gdpr-ai-cache/contract.json') != ''
+      uses: actions/cache/save@v6
+      with:
+        path: .gdpr-ai-cache
+        key: gdpr-contract-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+    - name: Upload the contract report
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: gdpr-contract
+        path: ${{ runner.temp }}/gdpr-contract/
+        if-no-files-found: ignore
