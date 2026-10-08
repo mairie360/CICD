@@ -158,3 +158,24 @@ test("check.mjs blocks on a gap, reports the changes and the AI proposals", asyn
   const invalid = write("invalid.yaml", INVENTORY.replace("category: contact", "category: phone"));
   assert.equal(await main([invalid, complete, report], {}), 2);
 });
+
+test("the redis section declares every key prefix with its maximum TTL (MAIR-499)", () => {
+  const withRedis = `${INVENTORY}redis:
+  "revoked:": {personal: false, max_ttl_seconds: 3600, note: "revocation list of the sessions"}
+  "core-api:forgot_password_token": {personal: true, category: credentials, max_ttl_seconds: 900}
+`;
+  const { errors, redis } = parseInventory(withRedis);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(redis.get("core-api:forgot_password_token"), { personal: true, category: "credentials", max_ttl_seconds: 900 });
+  const bad = parseInventory(`${INVENTORY}redis:
+  "a:": {personal: true, max_ttl_seconds: 0}
+  "b:": {personal: false, category: identity, max_ttl_seconds: 10, ttl: 3}
+`).errors;
+  assert.deepEqual(bad, [
+    "redis a:: category must be one of identifier, identity, contact, credentials, connection, account, activity, content, preferences",
+    "redis a:: max_ttl_seconds must be a whole number of seconds (every Redis key expires)",
+    "redis b:: unknown key `ttl`",
+    "redis b:: category only applies to a personal prefix",
+  ]);
+  assert.equal(parseInventory(INVENTORY).redis.size, 0, "the section is optional");
+});
