@@ -197,6 +197,38 @@
       "items": {
         "$ref": "#/$defs/state"
       }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GDPR checks in the browser (MAIR-292): every request stays on the target's origin, only the session cookies are set, every page links to the legal notice and the privacy policy. Report-only for now.",
+      "properties": {
+        "allowed_origins": {
+          "type": "array",
+          "description": "Other origins the front's pages may call, each with the reason (a subcontractor listed in the processing record).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "origin",
+              "reason"
+            ],
+            "properties": {
+              "origin": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https?://[^/]+/?$",
+                "description": "Origin, e.g. https://tiles.example.org."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Why the front calls it."
+              }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {

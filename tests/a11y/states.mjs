@@ -2,6 +2,7 @@
 // user, loads the route (or the Storybook story) and runs its steps. The capture and the checks
 // of each state are added on top of this (MAIR-318).
 import { readFileSync } from "node:fs";
+import { finishPrivacy, watchPrivacy } from "./privacy.mjs";
 import { sessionCookie } from "./session.mjs";
 
 const STATUS_OBSERVER = readFileSync(new URL("./status-observer.js", import.meta.url), "utf8");
@@ -66,8 +67,9 @@ async function settle(page) {
 }
 
 // Plays one state on a fresh context. `onReached(page)` runs once the steps are done and the page
-// is settled; the context is closed afterwards. Returns { id, reached, error?, failed_step?, url }.
-export async function playState(browser, scope, state, { onReached, onFailure } = {}) {
+// is settled; the context is closed afterwards. Returns { id, reached, error?, failed_step?, url },
+// plus `privacy` (requests, cookies, legal links of the state, MAIR-292) with `privacy: true`.
+export async function playState(browser, scope, state, { onReached, onFailure, privacy = false } = {}) {
   const context = await browser.newContext({
     baseURL: scope.target,
     viewport: { width: 1280, height: 800 },
@@ -83,7 +85,13 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
   await context.addInitScript({ content: STATUS_OBSERVER });
   context.setDefaultTimeout(ACTION_TIMEOUT);
   context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
-  if (state.as) await context.addCookies([sessionCookie(scope, state.as)]);
+  const injected = [];
+  if (state.as) {
+    const cookie = sessionCookie(scope, state.as);
+    await context.addCookies([cookie]);
+    injected.push(cookie.name);
+  }
+  const recorder = privacy ? watchPrivacy(context) : null;
 
   const page = await context.newPage();
   const result = { id: state.id, reached: false };
@@ -104,6 +112,7 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
     result.reached = true;
     result.url = page.url();
     if (onReached) await onReached(page, result);
+    if (recorder) result.privacy = await finishPrivacy(recorder, context, { page, injected });
   } catch (error) {
     result.error = error.message.split("\n")[0];
     if (step >= 0 && step < (state.steps ?? []).length) result.failed_step = step;

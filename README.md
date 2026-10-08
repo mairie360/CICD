@@ -607,3 +607,26 @@ verdicts.
 
 What is sent is the rendered UI of the test stack: seed data and Storybook demo data, never
 production data.
+
+## GDPR in the browser (MAIR-292)
+
+While it plays the states, the RGAA engine also records, per state (`tests/a11y/privacy.mjs`):
+every request of the browser, the cookies the front sets (`Set-Cookie` answers and
+`document.cookie`; the session cookie the engine injects for `as` is not counted), and on every
+page (not on the Storybook stories) the links to the legal notice (`Mentions légales`, or an
+address with `mentions-legales`) and to the privacy policy (`confidentialité`, `données
+personnelles`). Findings: a request outside the front's origin, a cookie other than `accessToken` /
+`passwordChangeToken`, a cookie without `HttpOnly`, `Secure` or `SameSite`, a page without one of
+the two links. They go to `report.json` (`privacy`) and to the job summary, **report-only**: the
+exit code of the engine does not change until the fronts carry their legal pages. A front that must
+call another origin (a subcontractor) declares it in `rgaa.yaml`:
+
+```yaml
+privacy:
+  allowed_origins:
+    - origin: https://tiles.example.org
+      reason: map tiles of the events (subcontractor listed in the processing record)
+```
+
+On the test stacks the fronts run over HTTP: an `accessToken` set without `Secure` there is reported
+as such, so the front must set the flag from its configuration, not from the scheme.

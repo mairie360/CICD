@@ -137,6 +137,14 @@ problem must not look like hundreds of uncertain verdicts; `ANTHROPIC_WORKSPACE_
 `report.ai` and never touch `report.rate`. No `ANTHROPIC_API_KEY` → skipped. `ai.test.mjs`
 mocks the client; no test calls the real API.
 
+GDPR in the browser (MAIR-292, `privacy.mjs`): `playState(..., { privacy: true })` records the
+requests and the cookies of the state (`watchPrivacy` before the page opens, `finishPrivacy` once
+reached: legal links of the page, cookies set by `document.cookie` minus the injected session),
+`run.mjs` evaluates them (`evaluatePrivacy`: other origins than the target and
+`privacy.allowed_origins` of `rgaa.yaml`, non-session cookies or cookies without HttpOnly / Secure /
+SameSite, pages without legal-notice or privacy-policy link) into `report.json.privacy` and the
+summary. Report-only: the exit code does not change yet.
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, `front-libs-cicd.yml`, and both composite actions pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.

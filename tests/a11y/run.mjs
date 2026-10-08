@@ -21,6 +21,7 @@ import { aiSettings, createClient, elements, estimatedRate, judge, loadCache, pr
 import { captureState } from "./capture.mjs";
 import { aggregate, loadCriteria } from "./criteria.mjs";
 import { computeRate, criterionStatus, minRate } from "./rate.mjs";
+import { evaluatePrivacy, summarizePrivacy } from "./privacy.mjs";
 import { playState } from "./states.mjs";
 import { loadScope } from "./validate.mjs";
 
@@ -201,6 +202,7 @@ async function main([scopeFile, reportDir]) {
       let result;
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         result = await playState(browser, scope, state, {
+          privacy: true,
           onReached: async (page, res) => {
             const capture = await captureState(page, { scope, criteria, dir, stateId: state.id, ai: ai.enabled });
             aiItems.push(...capture.aiItems.map((item) => ({ ...item, order: stateOrder.get(state.id) })));
@@ -236,17 +238,23 @@ async function main([scopeFile, reportDir]) {
   const criterionOrder = new Map(scope.criteria.map((id, i) => [id, i]));
   aiItems.sort((a, b) => a.order - b.order || criterionOrder.get(a.criterion) - criterionOrder.get(b.criterion) || a.index - b.index);
   const aiReport = await preAudit(ai, aiItems.map(({ order, ...item }) => item), results);
+  // GDPR checks in the browser (MAIR-292): report-only, they do not change the exit code.
+  const privacy = evaluatePrivacy(
+    scope.states.map((state, i) => ({ id: state.id, story: Boolean(state.story), privacy: states[i]?.privacy ?? null })),
+    { target: scope.target, allowedOrigins: scope.privacy?.allowed_origins ?? [] },
+  );
   const report = {
     version: REPORT_VERSION,
     target: scope.target,
     rate: computeRate(results, min),
     criteria: results,
-    states: states.map(({ checks, ...rest }) => rest),
+    states: states.map(({ checks, privacy: recorded, ...rest }) => rest),
     undeclared,
     ai: aiReport,
+    privacy,
   };
   writeFileSync(join(reportDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-  writeFileSync(join(reportDir, "summary.md"), summarize(report));
+  writeFileSync(join(reportDir, "summary.md"), `${summarize(report)}\n${summarizePrivacy(privacy)}`);
   for (const u of undeclared) console.log(`::error title=RGAA::${u.state}: ${u.message} (${u.target})`);
   const { rate } = report;
   console.log(`CI rate: ${rate.value === null ? "nothing decided" : `${rate.value} %`} (minimum ${rate.min} %)`);
