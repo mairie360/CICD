@@ -27,6 +27,7 @@ test("the simulation refuses to run outside a test stack", () => {
 test("log lines are grouped into stable templates", () => {
   assert.equal(templateOf("2026-10-08T11:32:56.364Z WARN user 42 session 2f9a1c74-5b3e-4d21-9c8a-7e6f0b1d4a35 from 172.18.0.6 in 12ms"),
     "<date> WARN user <n> session <uuid> from <ip> in <n>");
+  assert.equal(templateOf('{"password": "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"}'), '{"password": "<hash>"}', "salted hashes do not change the template");
   const groups = groupTemplates([
     { service: "core-1", text: "GET /users/1 200" },
     { service: "core-1", text: "GET /users/2 200" },

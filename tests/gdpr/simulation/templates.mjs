@@ -4,6 +4,10 @@
 import { createHash } from "node:crypto";
 
 const RULES = [
+  // Password hashes and other salted secrets change at every run: masked, or each one would get
+  // its own fingerprint and the cached verdicts would never apply.
+  [/\$argon2(?:id|i|d)\$[^\s"'}\]]+/g, "<hash>"],
+  [/\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}/g, "<hash>"],
   [/\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g, "<date>"],
   [/\b\d{4}-\d{2}-\d{2}\b/g, "<date>"],
   [/\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b/g, "<time>"],
