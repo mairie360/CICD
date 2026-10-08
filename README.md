@@ -376,7 +376,8 @@ The run (`tests/gdpr/simulation/`):
    erased personas outside the `keep` columns of the inventory, rows past their retention, a sample
    of the free-text and JSON columns);
 3. `analyze.mjs` is the gate. **Deterministic**: a persona value (or a captured token) in any log,
-   browser console message or browser storage entry fails. The erasure and retention checks are
+   browser console message or browser storage entry fails, and so does a Redis key without TTL,
+   above the maximum TTL or outside the prefixes of the inventory's `redis` section (MAIR-499). The erasure and retention checks are
    reported as expected failures until the erasure exists (MAIR-289); `GDPR_SIMULATION_ERASURE=enforce`
    makes them block. **AI review** (`gdpr_simulation_ai_model`, `claude-haiku-5-5` by default,
    `ANTHROPIC_API_KEY`): the log lines grouped into templates (numbers, ids, dates, addresses
@@ -421,6 +422,8 @@ node cicd-repo/tests/gdpr/simulation/sql.mjs "$INVENTORY" gdpr-simulation/schema
 for q in erasure retention content; do
   docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U postgres -d "$DB" -At -f - < "gdpr-simulation/db/$q.sql" > "gdpr-simulation/db/$q.sql.json"
 done
+mkdir -p gdpr-simulation/redis
+docker compose -f "$COMPOSE_FILE" exec -T redis sh -c 'redis-cli --scan | while read -r k; do printf "%s\t%s\n" "$k" "$(redis-cli TTL "$k")"; done' > gdpr-simulation/redis/keys.tsv
 docker compose -f "$COMPOSE_FILE" logs --no-color > gdpr-simulation/containers.log
 docker compose -f "$COMPOSE_FILE" down -v
 ```

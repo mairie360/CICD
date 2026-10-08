@@ -14,7 +14,7 @@ export function main([inventoryFile, schemaFile, runDir]) {
     console.error("usage: node simulation/sql.mjs <inventory.yaml> <schema.json> <run dir>");
     return 2;
   }
-  const { errors, entries } = parseInventory(readFileSync(inventoryFile, "utf8"));
+  const { errors, entries, redis } = parseInventory(readFileSync(inventoryFile, "utf8"));
   if (errors.length > 0) {
     console.error(`${inventoryFile} is invalid:\n${errors.map((e) => `  - ${e}`).join("\n")}`);
     return 2;
@@ -31,6 +31,8 @@ export function main([inventoryFile, schemaFile, runDir]) {
   writeFileSync(join(runDir, "db", "erasure.sql"), `${erasureSql(entries, schema, personas)}\n`);
   writeFileSync(join(runDir, "db", "retention.sql"), `${retentionSql(columns)}\n`);
   writeFileSync(join(runDir, "db", "content.sql"), `${contentSampleSql(entries, schema)}\n`);
+  // Declared Redis key prefixes (MAIR-499), for the Redis check of analyze.mjs.
+  writeFileSync(join(runDir, "redis_prefixes.json"), `${JSON.stringify(Object.fromEntries(redis ?? new Map()), null, 2)}\n`);
   return 0;
 }
 
