@@ -1,0 +1,52 @@
+name: "Performance tests (BFFs)"
+description: >-
+  k6 load test of a BFF through the consumer's `performance_test.sh`, with the OpenAPI coverage gate
+  (`tests/k6/coverage.js`) (`performance_tests` job of BFFs-cicd.yml). Runs against the published
+  `dev-<sha_tag>` image given in `image_ref`.
+
+inputs:
+  image_ref:
+    description: "Image under test, `<image>:dev-<sha_tag>` from the release-dev outputs (exported as IMAGE_REF)"
+    required: true
+  npm_scope:
+    description: "npm scope hosted on GitHub Packages (the workflow input npm_scope)"
+    required: true
+  github_token:
+    description: "Token used to pull from GHCR and GitHub Packages (the caller passes secrets.GITHUB_TOKEN)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Log in to GHCR
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.github_token }}
+      run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    # docker-compose-performance.yml monte ./.npmrc comme secret BuildKit pour
+    # que le service bff-user puisse installer les packages @mairie360/* :
+    # ce fichier n'existe pas après un simple checkout (il est gitignored).
+    - name: Générer le .npmrc de build
+      shell: bash
+      env:
+        NPM_SCOPE: ${{ inputs.npm_scope }}
+      run: |
+        set -euo pipefail
+        umask 077
+        printf '%s\n' \
+          "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
+          '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+          > .npmrc
+
+    - name: Run Performance Tests via Docker Compose
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image_ref }}
+        NODE_AUTH_TOKEN: ${{ inputs.github_token }}
+      run: bash ./performance_test.sh
+
+    - name: Supprimer le .npmrc de build
+      if: always()
+      shell: bash
+      run: rm -f .npmrc

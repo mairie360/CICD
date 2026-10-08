@@ -1,0 +1,26 @@
+name: "Build (APIs)"
+description: >-
+  Release build of a Rust API, uploaded with its OpenAPI spec as the `api-assets` artifact that the
+  release jobs download (`build` job of APIs_cicd.yml).
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build Project
+      shell: bash
+      run: cargo build --release
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: api-assets
+        path: |
+          target/release/
+          openapi-spec.json
+        retention-days: 1 # [CHANGEMENT] Limitation de la rétention pour économiser l'espace

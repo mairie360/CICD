@@ -1,7 +1,7 @@
 # CICD
 
 Centralized CI/CD of the Mairie360 org: reusable GitHub workflows (`.github/workflows/*_cicd.yml`),
-the composite actions they call (`actions/`), and the test files shared by every service (`tests/`).
+the composite actions they call (`actions/<type>/<stack>`), and the test files shared by every service (`tests/`).
 
 Each application repo calls one reusable workflow and pins a release of this repo with
 `cicd_version`:
@@ -19,10 +19,35 @@ jobs:
 The jobs that need something from this repo check it out at that same `cicd_version` into
 `cicd-repo/` at the root of the consumer checkout.
 
-## Semgrep SAST (`actions/semgrep`)
+## Composite actions (`actions/`, MAIR-493)
+
+The steps of every job live in composite actions sorted by check type, then by stack:
+
+| Folder | Content | Stacks |
+| --- | --- | --- |
+| `actions/dependencies/<stack>` | toolchain setup, install, dependency audit where the stack runs one (`audit: 'true'` for the BFF / front `security_audit` jobs) | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
+| `actions/lint/<stack>` | lint command | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
+| `actions/build/<stack>` | build and its artifacts | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
+| `actions/unit-tests/<stack>` | tests and the Codecov upload | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib`, `db` |
+| `actions/integration/<stack>` | integration tests against the dev image; `container-logs` is the log dump shared by every job that starts a Docker stack | `apis` |
+| `actions/security/<stack>` | stack-specific security check: OWASP ZAP (`apis`, `bffs`, `fronts`), `cargo audit` + `cargo deny` (`back-lib`), npm audit + typecheck (`front-lib`) | `apis`, `bffs`, `fronts`, `back-lib`, `front-lib` |
+| `actions/security/semgrep`, `actions/security/gitleaks` | cross-stack SAST and secret scan, `security_sast` job of every workflow | all |
+| `actions/performance/<stack>` | k6 load test (`apis`, `bffs`, `fronts`), schema bench (`db`) | `apis`, `bffs`, `fronts`, `db` |
+| `actions/release/` | `docker-release`, `semantic-tag`, `publish-openapi-rust`, `publish-openapi-typescript`, `release-folder` (database), `docker-manual-build` | — |
+| `actions/promote/` | reserved for the staging → prod gates of the next tickets of epic MAIR-492 | — |
+| `actions/notify/cicd-failure` | n8n notification of a failed run | all |
+
+A job therefore reads as: checkout, checkout of this repo into `cicd-repo/`, then
+`uses: ./cicd-repo/actions/<type>/<stack>`. Secrets are passed to the actions as inputs, and the
+step timeouts stay on the workflow steps (a composite step cannot take `timeout-minutes`). The
+jobs that did not use this repo before MAIR-493 only check out `actions/`
+(`sparse-checkout: actions`), so that the consumer's tools (`eslint .`, jest, cargo, Docker build
+contexts) never see this repo's files.
+
+## Semgrep SAST (`actions/security/semgrep`)
 
 Every stack workflow has a `security_sast` job ("Code Security Audit (Semgrep, Gitleaks)") that calls the
-`semgrep` composite action. The action runs a pinned image
+`security/semgrep` composite action. The action runs a pinned image
 (`semgrep/semgrep:<version>@sha256:<digest>`, input `image`), writes a SARIF report and uploads
 it as the `semgrep-sarif` workflow artifact. Its verdict comes from the Semgrep exit code: findings
 fail the job when `fail_on_findings` is `true`, and only raise a warning annotation when it is
@@ -69,11 +94,11 @@ Every consumer `cicd.yml` sets a top-level `permissions:` block without it, so a
 make those callers fail at startup. To enable it, grant `security-events: write` in the consumer
 callers first, then turn the upload on in the workflows.
 
-**Bumping Semgrep.** Update the `image` default in `actions/semgrep/action.yml`, and update the
+**Bumping Semgrep.** Update the `image` default in `actions/security/semgrep/action.yml`, and update the
 version tag and the digest together. The digest is the one of the multi-arch tag
 (`docker buildx imagetools inspect semgrep/semgrep:<version>`).
 
-## Gitleaks (`actions/gitleaks`)
+## Gitleaks (`actions/security/gitleaks`)
 
 The `security_sast` job of every workflow also runs Gitleaks (pinned
 `zricethezav/gitleaks:<version>@sha256:<digest>` image, not the `gitleaks-action`, which needs a
@@ -82,7 +107,7 @@ request, `before..after` of a push, the last commit for a new branch. A secret a
 history therefore does not fail every later build: rotate it first, then add its fingerprint to a
 `.gitleaksignore` at the root of the repo. The job checks the repo out with `fetch-depth: 0`.
 
-## Image release (`actions/docker-release`, MAIR-416)
+## Image release (`actions/release/docker-release`, MAIR-416)
 
 `APIs_cicd.yml`, `BFFs-cicd.yml`, `frontend-cicd.yml` and `database_cicd.yml` release their images
 through the same action:

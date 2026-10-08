@@ -1,0 +1,13 @@
+name: "Unit tests (db)"
+description: >-
+  The Database repo's `./test.sh` (pgTAP in a Docker stack, writes `coverage/coverage.lcov`)
+  (`tests` job of database_cicd.yml). The caller keeps the 15 min step timeout on the step that
+  uses this action, then dumps the container logs on failure (`integration/container-logs`) and
+  uploads the coverage in steps of its own, outside that timeout.
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run tests
+      shell: bash
+      run: ./test.sh

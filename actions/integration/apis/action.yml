@@ -1,0 +1,23 @@
+name: "Integration tests (APIs)"
+description: >-
+  Integration tests of a Rust API through the consumer's `integration_test.sh` (`integration_tests`
+  job of APIs_cicd.yml). Runs against the published `dev-<sha_tag>` image given in `image_ref`. The
+  caller logs in to GHCR first, keeps the 15 min step timeout on the step that uses this action and
+  dumps the container logs on failure (`integration/container-logs`).
+
+inputs:
+  image_ref:
+    description: "Image under test, `<image>:dev-<sha_tag>` from the release-dev outputs (exported as IMAGE_REF)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    # [CHANGEMENT] Integration tests are owned by the consumer repo: `integration_test.sh`
+    # (same shape as `security_test.sh`) starts `docker-compose-integration.yml`, waits for
+    # the test-runner service and returns its exit code. No external service is involved.
+    - name: Run integration tests via Docker Compose
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image_ref }}
+      run: ./integration_test.sh
