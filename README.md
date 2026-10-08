@@ -163,6 +163,129 @@ psql -At -q -d core -f schema.sql > /tmp/schema.json
 node check.mjs ../../../Database/gdpr/inventory.yaml /tmp/schema.json /tmp/gdpr-report
 ```
 
+## GDPR log marker (`actions/gdpr-marker`, MAIR-290)
+
+`APIs_cicd.yml` and `BFFs-cicd.yml` run a `gdpr_marker` job after `release-staging`, on the image
+promoted to staging (by digest); `release-prod` needs it, so its summary is read before the Prod
+approval. A runner creates a **marker user** with unique values (e-mail, first and last name,
+phone, password), plays the journey the repo declares, deliberate errors included, and the logs of
+**every container** of the stack are then searched for those values: raw, URL-encoded,
+JSON-escaped, in base64, the phone also as the national number the database stores, plus the
+values the journey captures as `sensitive` (tokens). One line found fails the job. Rule: a log
+describes an error by its type and context, never by the value it received.
+
+The job summary lists the leaks per service (values masked), the journey with each status, the
+marker fields the journey never sends (so not tested) and the services left out with their
+reason. The `gdpr-marker` artifact holds the same report; the raw logs never leave the runner.
+The job is skipped with a warning while the repo has no `gdpr-marker.yaml`.
+
+### Wiring an API or a BFF
+
+Three files at the root of the repo.
+
+**`gdpr-marker.yaml`**: the journey. Placeholders: `{{marker.email}}`, `{{marker.first_name}}`,
+`{{marker.last_name}}`, `{{marker.phone}}` (French mobile, `06…`), `{{marker.password}}`,
+`{{env.NAME}}` for the variables listed in `env` (passed to the runner by the compose file), and
+the captures of earlier steps. `expect` defaults to any 2xx; list the codes of the deliberate
+errors. A capture comes from `body.<path>`, `header.<name>` or `cookie.<name>`; mark tokens
+`sensitive: true` so that they are searched too (a captured `Authorization: Bearer <jwt>` header
+is also searched for the JWT alone). Put the values in query strings and in bodies of the wrong
+type too: a request logger that prints the URL, or an error that quotes the refused value, leaks
+them. The journey stops at the first step that does not
+answer as expected (the logs then prove nothing).
+
+```yaml
+version: 1
+target: http://core:3000        # the service under test, inside the stack
+wait: /ready                    # polled until it answers below 400 (3 min)
+env: [ADMIN_JWT]
+ignore:                         # services allowed to hold the marker, with the reason
+  - service: mailpit
+    reason: SMTP sink of the stack, it receives the marker's e-mails by design
+steps:
+  - name: register the marker
+    request:
+      method: POST
+      path: /api/v1/auth/register
+      json: {email: "{{marker.email}}", password: "{{marker.password}}", first_name: "{{marker.first_name}}", last_name: "{{marker.last_name}}", phone: "{{marker.phone}}"}
+    expect: [201]
+  - name: register the same e-mail again (deliberate error)
+    request: {method: POST, path: /api/v1/auth/register, json: {email: "{{marker.email}}", password: "{{marker.password}}", first_name: "{{marker.first_name}}", last_name: "{{marker.last_name}}"}}
+    expect: [409]
+  - name: log in with a wrong password (deliberate error)
+    request: {method: POST, path: /api/v1/auth/login, json: {email: "{{marker.email}}", password: "x{{marker.password}}"}}
+    expect: [401]
+  - name: log in
+    request: {method: POST, path: /api/v1/auth/login, json: {email: "{{marker.email}}", password: "{{marker.password}}"}}
+    capture:
+      token: {from: body.token, sensitive: true}
+  - name: read the profile
+    request: {method: GET, path: /api/v1/user/me, headers: {Authorization: "Bearer {{token}}"}}
+```
+
+**`docker-compose-gdpr-marker.yml`**: the security stack without ZAP (the service under test on
+`${IMAGE_REF}`, its databases, seeders and upstreams), plus the runner:
+
+```yaml
+  gdpr-marker:
+    image: node:24-bookworm-slim
+    user: "${GDPR_UID:-0}:${GDPR_GID:-0}"
+    depends_on:
+      core-ready:
+        condition: service_completed_successfully
+    environment:
+      ADMIN_JWT: ${ADMIN_JWT}           # only the variables listed in `env`
+    volumes:
+      - ./cicd-repo/tests/gdpr:/engine:ro
+      - ./gdpr-marker.yaml:/journey/gdpr-marker.yaml:ro
+      - ./gdpr-report:/report
+    command: ["/engine/marker/run.sh"]
+    networks:
+      - backend
+```
+
+**`gdpr_marker_test.sh`**: starts the stack, waits for the runner, saves the logs of every
+container **before** `down`, then scans them (plain Node, no dependency):
+
+```bash
+#!/usr/bin/env bash
+# GDPR log marker test (MAIR-290). The CI exports IMAGE_REF (the image promoted to staging).
+COMPOSE_FILE="docker-compose-gdpr-marker.yml"
+REPORT_DIR="gdpr-report"
+
+if [ -z "${IMAGE_REF:-}" ]; then
+    IMAGE_REF="core-api:local"
+    docker build -f development.Dockerfile -t "$IMAGE_REF" . || exit 1
+fi
+export IMAGE_REF
+source ./stack_secrets.sh || exit 1   # APIs: random JWT_SECRET and ADMIN_JWT of the run
+
+CICD_DIR="cicd-repo"
+if [ ! -f "$CICD_DIR/tests/gdpr/marker/scan.mjs" ]; then
+    CICD_VERSION="${CICD_VERSION:-$(sed -n 's/^[[:space:]]*cicd_version:[[:space:]]*\([^[:space:]#]*\).*/\1/p' .github/workflows/cicd.yml | head -n 1)}"
+    rm -rf "$CICD_DIR"
+    git clone --quiet --depth 1 --branch "$CICD_VERSION" https://github.com/mairie360/CICD "$CICD_DIR" || exit 1
+fi
+
+rm -rf "$REPORT_DIR" && mkdir -p "$REPORT_DIR"
+trap 'docker compose -f "$COMPOSE_FILE" down -v >/dev/null 2>&1' EXIT   # also on timeout
+docker compose -f "$COMPOSE_FILE" up -d
+docker compose -f "$COMPOSE_FILE" wait gdpr-marker
+docker compose -f "$COMPOSE_FILE" logs --no-color > "$REPORT_DIR/containers.log"
+docker compose -f "$COMPOSE_FILE" logs --no-color --tail 30 gdpr-marker
+docker compose -f "$COMPOSE_FILE" down -v
+
+docker run --rm -v "$PWD/$REPORT_DIR:/report" -v "$PWD/$CICD_DIR/tests/gdpr:/engine:ro" \
+    node:24-bookworm-slim node /engine/marker/scan.mjs /report
+EXIT_CODE=$?
+echo "Final exit code: $EXIT_CODE"
+exit $EXIT_CODE
+```
+
+Add `/gdpr-report/` to `.gitignore` (and `gdpr-report`, `gdpr-marker.yaml`,
+`gdpr_marker_test.sh` to `.dockerignore`). BFFs: the job writes the same build `.npmrc` as the ZAP
+job, for stacks that build an image.
+
 ## OpenAPI coverage gate (ZAP + k6)
 
 `openapi.json` is the contract of every API and BFF. Two shared files turn it into a coverage
