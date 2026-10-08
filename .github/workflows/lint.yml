@@ -55,9 +55,19 @@ jobs:
 
       - name: Install
         run: npm ci --no-audit --no-fund
+        env:
+          # The browser comes with the Playwright image (end-to-end step below).
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Test
         run: npm test
+
+      # [NOUVEAU] MAIR-292: the browser checks (tests/gdpr/privacy) on real pages, inside the pinned
+      # Playwright image, on a copy of the package with its own node_modules.
+      - name: Run the browser end-to-end tests
+        run: |
+          docker run --rm -v "$PWD:/engine:ro" -e GDPR_E2E=1 "$(cat privacy/runner-image)" sh -c \
+            'mkdir /tmp/engine && tar -C /engine --exclude=./node_modules -cf - . | tar -C /tmp/engine -xf - && cd /tmp/engine && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund --loglevel=error && node --test privacy/*.test.mjs'
 
   # [NOUVEAU] MAIR-291: the GDPR Semgrep rules against their annotated test files.
   semgrep-rules:

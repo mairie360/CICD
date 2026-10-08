@@ -427,6 +427,22 @@ The action then runs `analyze.mjs`. The fronts add `gdpr-simulation/browser/cons
 `storage.json`, written by the RGAA engine while it plays their states (MAIR-292). Only the masked
 report (`summary.md`, `report.json`) is uploaded.
 
+## GDPR in the browser (`tests/gdpr/privacy`, MAIR-292)
+
+`privacy.mjs` records, on a Playwright browser context, every request of the browser, the cookies
+the front sets (`Set-Cookie` answers and `document.cookie`, the session a driver injects excluded),
+the links of the page, the console messages and `localStorage` / `sessionStorage`. Findings
+(`evaluatePrivacy`): a request outside the front's origin (unless allowed with a reason), a cookie
+other than `accessToken` / `passwordChangeToken` or without `HttpOnly`, `Secure` or `SameSite`, a page
+without a link to the legal notice (`Mentions légales`) and the privacy policy (`confidentialité`).
+Report-only until the fronts carry their legal pages. The console and storage feed the GDPR
+simulation (`browser/console.json`, `browser/storage.json`).
+
+The module is standalone: `recordPage(browser, url, { cookies })` drives one page. The RGAA engine
+(`tests/a11y`) will call it for every state it plays in a follow-up PR, once the RGAA and GDPR stacks
+are both merged. On the HTTP test stacks a front that sets `Secure` from the scheme is reported:
+set it from the front's configuration.
+
 ## OpenAPI coverage gate (ZAP + k6)
 
 `openapi.json` is the contract of every API and BFF. Two shared files turn it into a coverage

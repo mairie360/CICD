@@ -156,6 +156,14 @@ blocks; erasure / retention are expected failures until MAIR-289, `GDPR_SIMULATI
 Action `actions/gdpr/simulation`, job `gdpr_simulation` of `APIs_cicd.yml` / `BFFs-cicd.yml` after
 `release-staging`, `release-prod` needs it; skipped without `gdpr-simulation.yaml`.
 
+## GDPR in the browser (`tests/gdpr/privacy/`, MAIR-292)
+
+Standalone module, no import from `tests/a11y` (the RGPD and RGAA stacks stay separate): `watchPrivacy`
+(on a context, before the page), `finishPrivacy` (cookies, legal links, console, storage),
+`evaluatePrivacy`, `summarizePrivacy`, `recordPage`. Unit tests in `npm test`; the end-to-end test
+needs a browser (`GDPR_E2E=1` in the pinned Playwright image `privacy/runner-image`, `gdpr` job of
+`lint.yml`). Wiring it into the RGAA engine is a follow-up once both stacks are merged.
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, `front-libs-cicd.yml`, and both composite actions pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
