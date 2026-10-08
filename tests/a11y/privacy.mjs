@@ -37,7 +37,9 @@ export function parseSetCookie(line) {
 // Starts recording on a browser context, before any page opens. Returns the recorder that
 // `finishPrivacy` turns into the state's result.
 export function watchPrivacy(context) {
-  const recorder = { requests: new Map(), setCookies: [], pending: [] };
+  const recorder = { requests: new Map(), setCookies: [], pending: [], console: [] };
+  // Browser console of the state, for the GDPR simulation (MAIR-497): a value logged there is a leak.
+  context.on("console", (message) => recorder.console.push({ type: message.type(), text: message.text().slice(0, 2000) }));
   context.on("request", (request) => {
     let url;
     try {
@@ -91,11 +93,24 @@ export async function finishPrivacy(recorder, context, { page = null, injected =
   const jsCookies = (await context.cookies())
     .filter((c) => !injected.includes(c.name) && !fromHeaders.has(c.name))
     .map((c) => ({ name: c.name, httpOnly: c.httpOnly, secure: c.secure, sameSite: c.sameSite }));
+  // localStorage and sessionStorage of the page's origin, for the GDPR simulation (MAIR-497).
+  const storage = page
+    ? await page.evaluate(() => {
+      const dump = (area, store) => Array.from({ length: store.length }, (_, i) => store.key(i)).map((key) => ({ area, key, value: String(store.getItem(key)).slice(0, 2000) }));
+      try {
+        return [...dump("local", window.localStorage), ...dump("session", window.sessionStorage)];
+      } catch {
+        return [];
+      }
+    }).catch(() => [])
+    : [];
   return {
     requests: [...recorder.requests.values()],
     set_cookies: recorder.setCookies,
     js_cookies: jsCookies,
     legal: page ? await legalLinks(page) : null,
+    console: recorder.console,
+    storage,
   };
 }
 

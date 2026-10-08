@@ -28,7 +28,7 @@ before(async () => {
       });
       response.end(`<!doctype html><html lang="fr"><title>t</title><link rel="stylesheet" href="${thirdParty}/font.css">
         <body><main><h1>Connexion</h1></main><footer><a href="/mentions-legales">Mentions légales</a></footer>
-        <script>document.cookie = "theme=dark; path=/";</script></body></html>`);
+        <script>document.cookie = "theme=dark; path=/"; console.log("login page"); localStorage.setItem("draft", "hello");</script></body></html>`);
       return;
     }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -56,6 +56,8 @@ test("records the requests, the cookies and the legal links of each state", { sk
   const home = await playState(browser, scope, { id: "home", route: "/", as: "agent" }, { privacy: true });
   assert.ok(login.reached && home.reached);
   assert.deepEqual(home.privacy.js_cookies, [], "the session the engine injects is not the front's");
+  assert.ok(login.privacy.console.some((m) => m.type === "log" && m.text === "login page"), "the console is recorded");
+  assert.deepEqual(login.privacy.storage, [{ area: "local", key: "draft", value: "hello" }], "the storage is dumped");
   const result = evaluatePrivacy(
     [{ id: "login", story: false, privacy: login.privacy }, { id: "home", story: false, privacy: home.privacy }],
     { target: scope.target },

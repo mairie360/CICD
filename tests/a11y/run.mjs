@@ -254,6 +254,11 @@ async function main([scopeFile, reportDir]) {
     privacy,
   };
   writeFileSync(join(reportDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  // Browser console and storage of every state, read by the GDPR simulation (MAIR-497).
+  mkdirSync(join(reportDir, "browser"), { recursive: true });
+  const browserOf = (key) => scope.states.flatMap((state, i) => (states[i]?.privacy?.[key] ?? []).map((entry) => ({ state: state.id, ...entry })));
+  writeFileSync(join(reportDir, "browser", "console.json"), `${JSON.stringify(browserOf("console"), null, 2)}\n`);
+  writeFileSync(join(reportDir, "browser", "storage.json"), `${JSON.stringify(browserOf("storage"), null, 2)}\n`);
   writeFileSync(join(reportDir, "summary.md"), `${summarize(report)}\n${summarizePrivacy(privacy)}`);
   for (const u of undeclared) console.log(`::error title=RGAA::${u.state}: ${u.message} (${u.target})`);
   const { rate } = report;
