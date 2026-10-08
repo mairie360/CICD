@@ -56,6 +56,10 @@ export function needles(marker, sensitive = {}) {
   for (const [name, value] of Object.entries(sensitive)) {
     add(name, "raw", value);
     add(name, "url-encoded", encodeURIComponent(value));
+    // A captured `Authorization` header ("Bearer <jwt>"): the credential is the part after the
+    // scheme, and a log may print it alone.
+    const credential = /^(?:bearer|basic)\s+(\S{8,})$/i.exec(value)?.[1];
+    if (credential) add(name, "credential", credential);
   }
   return list;
 }

@@ -188,7 +188,10 @@ Three files at the root of the repo.
 `{{env.NAME}}` for the variables listed in `env` (passed to the runner by the compose file), and
 the captures of earlier steps. `expect` defaults to any 2xx; list the codes of the deliberate
 errors. A capture comes from `body.<path>`, `header.<name>` or `cookie.<name>`; mark tokens
-`sensitive: true` so that they are searched too. The journey stops at the first step that does not
+`sensitive: true` so that they are searched too (a captured `Authorization: Bearer <jwt>` header
+is also searched for the JWT alone). Put the values in query strings and in bodies of the wrong
+type too: a request logger that prints the URL, or an error that quotes the refused value, leaks
+them. The journey stops at the first step that does not
 answer as expected (the logs then prove nothing).
 
 ```yaml
@@ -265,6 +268,7 @@ if [ ! -f "$CICD_DIR/tests/gdpr/marker/scan.mjs" ]; then
 fi
 
 rm -rf "$REPORT_DIR" && mkdir -p "$REPORT_DIR"
+trap 'docker compose -f "$COMPOSE_FILE" down -v >/dev/null 2>&1' EXIT   # also on timeout
 docker compose -f "$COMPOSE_FILE" up -d
 docker compose -f "$COMPOSE_FILE" wait gdpr-marker
 docker compose -f "$COMPOSE_FILE" logs --no-color > "$REPORT_DIR/containers.log"

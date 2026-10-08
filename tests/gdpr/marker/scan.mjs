@@ -21,8 +21,12 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // `docker compose logs --no-color` prefixes each line with "<service>-<n>  | " (or the
 // container_name when the service sets one).
+// Terminal colour codes (tracing and most loggers colour their output): removed before the
+// search, so that a code between two fields neither hides a value nor clutters the excerpt.
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+
 export function parseLogs(text) {
-  return text.split("\n").filter((line) => line.trim()).map((line, index) => {
+  return text.replace(ANSI, "").split("\n").filter((line) => line.trim()).map((line, index) => {
     const at = line.indexOf(" | ");
     return at > 0
       ? { number: index + 1, service: line.slice(0, at).trim(), text: line.slice(at + 3) }

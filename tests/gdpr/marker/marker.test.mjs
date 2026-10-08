@@ -51,11 +51,12 @@ test("the marker values are unique and pass the usual validations", () => {
 
 test("needles cover the encodings of a value and the stored phone number", () => {
   const marker = { email: "gdpr.abcdefghij@example.com", phone: "0612345678" };
-  const list = needles(marker, { token: "tok.en+/=" });
+  const list = needles(marker, { token: "tok.en+/=", authorization: "Bearer eyJhbGciOi.payload.sig" });
   const texts = (field) => list.filter((n) => n.field === field).map((n) => n.text);
   assert.ok(texts("email").includes("gdpr.abcdefghij%40example.com"));
   assert.ok(texts("phone").includes("612345678"));
   assert.ok(texts("token").includes("tok.en%2B%2F%3D"));
+  assert.ok(texts("authorization").includes("eyJhbGciOi.payload.sig"), "the credential of a captured header alone");
   // Whatever its alignment inside a longer string, the base64 form is found.
   for (const prefix of ["", "a", "ab", '{"sub":"1","email":"']) {
     const encoded = Buffer.from(`${prefix}${marker.email}"}`).toString("base64");
@@ -96,6 +97,7 @@ test("placeholders are rendered in nested values", () => {
 test("compose log lines are attributed to their service", () => {
   const lines = parseLogs("core-1  | started\nmairie360-mailpit  | mail to x\nno prefix\n");
   assert.deepEqual(lines.map((l) => l.service), ["core-1", "mairie360-mailpit", "?"]);
+  assert.equal(parseLogs("core-1  | \u001b[3merror\u001b[0m\u001b[2m=\u001b[0mbad")[0].text, "error=bad", "colour codes removed");
   assert.ok(serviceMatches("mailpit-1", "mailpit"));
   assert.ok(!serviceMatches("mailpit-ui-1", "mailpit"));
 });
