@@ -35,3 +35,28 @@ jobs:
                   bad = 1
           sys.exit(bad)
           PY
+
+      - name: Test the frontend dev exception guards
+        run: python3 -m unittest discover -s actions/frontend-dev-exception/tests -v
+
+  frontend-exception-security:
+    name: frontend dev exception source scans
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan only the new frontend release policy and workflow
+        uses: ./actions/semgrep
+        with:
+          config: p/python p/secrets p/github-actions
+          paths: actions/frontend-dev-exception .github/workflows/frontend-dev-exception.yml
+          exclude: ''
+          fail_on_findings: 'true'
+          artifact_name: frontend-dev-exception-sarif
+      - name: Scan new commits for secrets
+        uses: ./actions/gitleaks
+        with:
+          fail_on_findings: 'true'
