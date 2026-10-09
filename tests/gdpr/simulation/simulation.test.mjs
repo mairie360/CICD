@@ -182,3 +182,48 @@ test("every Redis key expires within its declared prefix", async () => {
     ["cache:…", "key prefix not declared in the inventory (redis section)"],
   ]);
 });
+
+// One OTLP JSON export request, as the collector's `file` exporter writes it (MAIR-501).
+function otlpLine(service, name, attributes) {
+  return JSON.stringify({
+    resourceSpans: [{
+      resource: { attributes: [{ key: "service.name", value: { stringValue: service } }] },
+      scopeSpans: [{ spans: [{ name, attributes: Object.entries(attributes).map(([key, v]) => ({ key, value: typeof v === "number" ? { intValue: String(v) } : { stringValue: v } })) }] }],
+    }],
+  });
+}
+
+test("traces and the usage ledger carry actions only (MAIR-501)", async () => {
+  seed = 3;
+  const personas = generatePersonas(2, 1, random);
+  const email = personas[0].values.email;
+  const env = { GDPR_AI: "off" };
+  const log = () => {};
+  const clean = otlpLine("core-api", "GET /api/v1/user/me", { "http.request.method": "GET", "http.route": "/api/v1/user/me", "http.response.status_code": 200, "url.full": "http://core:3000/api/v1/user/me" });
+  const ledger = [{ service: "core-api", operation: "GET /api/v1/user/me", period: "2026-10-09T10", actions: 42, distinct_users: 7 }];
+
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-traces-"));
+  writeRun(dir, personas, { log: "core-1  | ok\n" });
+  assert.equal(await analyzeMain([dir, join(dir, "report")], { env, log }), 0);
+  assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /Not checked: traces, usage ledger/);
+
+  writeFileSync(join(dir, "traces.jsonl"), `${clean}\n`);
+  writeFileSync(join(dir, "usage.json"), JSON.stringify(ledger));
+  assert.equal(await analyzeMain([dir, join(dir, "report")], { env, log }), 0, "actions only: nothing blocks");
+  assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /1 spans/);
+
+  for (const [label, traces, usage, check] of [
+    ["persona value in a span", otlpLine("core-api", "POST /login", { "app.login": email }), ledger, "trace"],
+    ["user id attribute", otlpLine("core-api", "GET /me", { "enduser.id": 12 }), ledger, "trace attribute"],
+    ["query string", otlpLine("bff-user", "GET /search", { "url.full": `http://core:3000/api/v1/user?search=${encodeURIComponent("Dupont")}` }), ledger, "trace attribute"],
+    ["persona value in the ledger", clean, [{ ...ledger[0], operation: `GET /user?email=${email}` }], "usage"],
+    ["person key in the ledger", clean, [{ ...ledger[0], user_id: 12 }], "usage field"],
+  ]) {
+    writeFileSync(join(dir, "traces.jsonl"), `${traces}\n`);
+    writeFileSync(join(dir, "usage.json"), JSON.stringify(usage));
+    assert.equal(await analyzeMain([dir, join(dir, "report")], { env, log }), 1, label);
+    const report = JSON.parse(readFileSync(join(dir, "report", "report.json"), "utf8"));
+    assert.ok(report.deterministic.some((d) => d.check === check), `${label}: ${JSON.stringify(report.deterministic)}`);
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(email.replace(/[.+]/g, "\\$&")), `${label}: the value is masked in the report`);
+  }
+});
