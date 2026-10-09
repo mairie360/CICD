@@ -81,12 +81,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
       - name: Run strict scans
-        uses: ./cicd-repo/actions/semgrep
+        uses: ./cicd-repo/actions/frontend-semgrep-pypi
         with:
           config: p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions
           fail_on_findings: 'true'
           artifact_name: dev-exception-semgrep
-      - uses: ./cicd-repo/actions/gitleaks
+      - uses: ./cicd-repo/actions/frontend-gitleaks
         with:
           fail_on_findings: 'true'
       - run: npm run contracts:check
