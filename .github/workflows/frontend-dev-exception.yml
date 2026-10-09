@@ -1,0 +1,264 @@
+name: Frontend dev dependency exception
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        required: true
+        type: string
+      cicd_ref:
+        required: true
+        type: string
+      reason:
+        required: true
+        type: string
+      node_version:
+        type: string
+        default: '24.21.0'
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  packages: read
+
+concurrency:
+  group: frontend-dev-exception-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  PACKAGE_NAME: ${{ inputs.package_name }}
+  CICD_REF: ${{ inputs.cicd_ref }}
+  EXCEPTION_REASON: ${{ inputs.reason }}
+
+jobs:
+  preflight:
+    name: Dev exception preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_ref }}
+          path: cicd-repo
+          persist-credentials: false
+      - name: Verify actual main and existing control verdicts
+        run: python3 cicd-repo/actions/frontend-dev-exception/check_policy.py preflight > preflight.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dev-exception-preflight
+          path: preflight.json
+
+  quality:
+    name: Dev exception quality
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_ref }}
+          path: cicd-repo
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ inputs.node_version }}
+          registry-url: https://npm.pkg.github.com
+          scope: '@mairie360'
+          cache: npm
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+      - name: Run strict scans
+        uses: ./cicd-repo/actions/semgrep
+        with:
+          config: p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions
+          fail_on_findings: 'true'
+          artifact_name: dev-exception-semgrep
+      - uses: ./cicd-repo/actions/gitleaks
+        with:
+          fail_on_findings: 'true'
+      - run: npm run contracts:check
+      - run: npx --no-install tsc --noEmit --incremental false
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  audit:
+    name: Dev exception original audit verdict
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ inputs.node_version }}
+          registry-url: https://npm.pkg.github.com
+          scope: '@mairie360'
+          cache: npm
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+      - name: Record both real audit exit codes
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --audit-level=high --json > full-audit.json
+          full=$?
+          npm audit --omit=dev --audit-level=high --json > production-audit.json
+          production=$?
+          printf '{"full":%s,"production":%s}\n' "$full" "$production" > audit-exit-codes.json
+          cp package-lock.json audited-lock.json
+          exit "$full"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: dev-exception-audits
+          if-no-files-found: error
+          path: |
+            full-audit.json
+            production-audit.json
+            audit-exit-codes.json
+            audited-lock.json
+
+  exception:
+    name: Dev exception narrow policy
+    if: always() && needs.preflight.result == 'success' && needs.audit.result == 'failure'
+    needs: [preflight, audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_ref }}
+          path: cicd-repo
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: dev-exception-audits
+      - name: Accept only the recorded unpatched dev dependency chain
+        run: |
+          python3 -c 'import json; d=json.load(open("audit-exit-codes.json")); assert d == {"full":1,"production":0}, "Unexpected audit exit codes"'
+          python3 cicd-repo/actions/frontend-dev-exception/check_policy.py audit full-audit.json production-audit.json audited-lock.json > exception.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dev-exception-policy
+          path: exception.json
+
+  release:
+    name: Dev exception verified image
+    if: always() && needs.quality.result == 'success' && needs.exception.result == 'success'
+    needs: [quality, exception]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: Dev
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_ref }}
+          path: cicd-repo
+          persist-credentials: false
+      - name: Compute non-deployable candidate reference
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$PACKAGE_NAME"
+          printf 'repository=%s\ncandidate=%s:candidate-%s\ndev=%s:dev-%s\n' "$image" "$image" "$GITHUB_SHA" "$image" "${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+      - name: Log in with the existing ephemeral package permission
+        shell: bash
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Recheck main and refuse an existing immutable dev tag
+        run: python3 cicd-repo/actions/frontend-dev-exception/check_policy.py tag-absent > target-before.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build candidate once with provenance and SBOM
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.candidate }}
+          provenance: mode=max
+          sbom: true
+          secret-envs: node_auth_token=NODE_AUTH_TOKEN
+      - name: Scan the candidate digest before creating a dev tag
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.repository }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress --skip-version-check --exit-code 1 "$IMAGE@$DIGEST"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign and verify the exact candidate digest
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.repository }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE@$DIGEST"
+          identity="https://github.com/mairie360/CICD/.github/workflows/frontend-dev-exception.yml@$CICD_REF"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE@$DIGEST" > signature-verification.json
+      - name: Refuse stale main before exposing the validated dev tag
+        run: python3 cicd-repo/actions/frontend-dev-exception/check_policy.py tag-absent > target-after.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Promote only the scanned and signed digest to dev
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.repository }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          DEV_REF: ${{ steps.image.outputs.dev }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --prefer-index=false --tag "$DEV_REF" "$IMAGE@$DIGEST"
+          actual="$(docker buildx imagetools inspect "$DEV_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          test "$actual" = "$DIGEST"
+          identity="https://github.com/mairie360/CICD/.github/workflows/frontend-dev-exception.yml@$CICD_REF"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$DEV_REF" > dev-signature-verification.json
+          printf '{"head":"%s","image":"%s","digest":"%s","audit":"failure","environment":"dev","deployedStateVerified":false}\n' "$GITHUB_SHA" "$DEV_REF" "$DIGEST" > release.json
+      - name: Preserve release proofs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dev-exception-release
+          path: |
+            target-before.json
+            target-after.json
+            signature-verification.json
+            dev-signature-verification.json
+            release.json
