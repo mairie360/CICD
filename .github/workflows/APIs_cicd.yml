@@ -36,6 +36,12 @@ on:
         type: string
         default: "main"
         description: "Ref of mairie360/Database whose gdpr/inventory.yaml the GDPR contract check reads (MAIR-291)"
+      # [NOUVEAU] MAIR-497: model of the AI review of the GDPR simulation.
+      gdpr_simulation_ai_model:
+        required: false
+        type: string
+        default: "claude-haiku-5-5"
+        description: "Claude model of the AI review of the GDPR simulation (MAIR-497); only used when ANTHROPIC_API_KEY is set"
     secrets:
       CODECOV_TOKEN:
         required: true
@@ -468,6 +474,35 @@ jobs:
           image_ref: ${{ needs.release-dev.outputs.image }}@${{ needs.release-staging.outputs.digest }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+  # [NOUVEAU] MAIR-497: GDPR usage simulation on the staging image (skipped without gdpr-simulation.yaml).
+  gdpr_simulation:
+    name: GDPR simulation (staging image)
+    needs: [release-dev, release-staging]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run the GDPR simulation
+        uses: ./cicd-repo/actions/gdpr/simulation
+        with:
+          image_ref: ${{ needs.release-dev.outputs.image }}@${{ needs.release-staging.outputs.digest }}
+          ai_model: ${{ inputs.gdpr_simulation_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
   # [NOUVEAU] MAIR-291: the responses of the OpenAPI contract carry no credentials column of the
   # GDPR inventory (tests/gdpr/contract). Runs on every event; release-prod needs it.
   gdpr_contract:
@@ -508,8 +543,8 @@ jobs:
           anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
 
   release-prod:
-    # [CHANGEMENT] MAIR-290 / MAIR-291: also waits for the GDPR log marker test and contract check.
-    needs: [release-staging, gdpr_marker, gdpr_contract]
+    # [CHANGEMENT] MAIR-290 / MAIR-291 / MAIR-497: also waits for the GDPR log marker test, contract check and simulation.
+    needs: [release-staging, gdpr_marker, gdpr_contract, gdpr_simulation]
     runs-on: ubuntu-latest
     environment: Prod
     permissions:

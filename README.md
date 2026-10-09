@@ -356,6 +356,95 @@ jobs:
     secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
 ```
 
+## GDPR simulation (`actions/gdpr/simulation`, MAIR-497)
+
+`APIs_cicd.yml` and `BFFs-cicd.yml` run a `gdpr_simulation` job after `release-staging`, on the
+image promoted to staging; `release-prod` needs it. It is skipped with a warning while the repo has
+no `gdpr-simulation.yaml`. **Test stacks only**: the action exports `GDPR_SIMULATION=test-stack`,
+and the engine refuses to run without it or when a target is not a host of the stack's network
+(a compose service, `localhost`, a private address, `*.test`).
+
+The run (`tests/gdpr/simulation/`):
+1. `simulate.mjs` generates fictitious personas (unique values, like the marker of MAIR-290), plays
+   the repo's journey (`gdpr-marker.yaml` format) for each of them, then the `erase` steps for the
+   ones to erase, and writes `gdpr-simulation/personas.json`;
+2. the repo's script then runs k6 once over every operation (`load-test.js`, errors included),
+   back-dates rows (`back_date`), runs the purge, saves the logs of every container, dumps the
+   schema (`tests/gdpr/schema.sql`) and runs the database checks `sql.mjs` writes (values of the
+   erased personas outside the `keep` columns of the inventory, rows past their retention, a sample
+   of the free-text and JSON columns);
+3. `analyze.mjs` is the gate. **Deterministic**: a persona value (or a captured token) in any log,
+   browser console message or browser storage entry fails. The erasure and retention checks are
+   reported as expected failures until the erasure exists (MAIR-289); `GDPR_SIMULATION_ERASURE=enforce`
+   makes them block. **AI review** (`gdpr_simulation_ai_model`, `claude-haiku-5-5` by default,
+   `ANTHROPIC_API_KEY`): the log lines grouped into templates (numbers, ids, dates, addresses
+   replaced, persona values masked), the console, the storage and the database sample, each with a
+   risk (`none` / `low` / `medium` / `high`), a justification and a fingerprint. Verdicts are cached
+   by fingerprint and model (`actions/cache`), so two runs on the same code give the same verdicts.
+   A `high` risk blocks unless the repo accepts it:
+
+```yaml
+# gdpr-accepted-risks.yaml
+version: 1
+risks:
+  - fingerprint: 0123456789abcdef01234567   # from the job summary
+    reason: the request id and the user id are needed to investigate an incident, kept 30 days
+    date: 2026-10-08
+    author: Quentintnrl
+```
+
+**`gdpr-simulation.yaml`**:
+
+```yaml
+version: 1
+journey: gdpr-marker.yaml        # played for every persona
+personas: 4
+erased: 1                        # the last ones are erased after their journey
+erase:                           # steps that erase a persona (captures of the journey available)
+  - name: archive the persona
+    request: {method: DELETE, path: "/api/v1/admin/users/{{user_id}}/", headers: {Authorization: "Bearer {{env.ADMIN_JWT}}"}}
+ignore:                          # services allowed to hold the values, with the reason
+  - service: mailpit
+    reason: SMTP sink of the stack
+```
+
+**`gdpr_simulation_test.sh`** (outline): start the stack with a `gdpr-simulation` runner service
+(`node:24`, mounts `cicd-repo/tests/gdpr`, `gdpr-simulation.yaml`, the journey and
+`gdpr-simulation/`, passes `GDPR_SIMULATION`, runs `simulate.mjs`), wait for it, run k6 once, apply
+the repo's back-dating SQL and `SELECT fn_apply_retention_policies();` on the stack's database, then
+
+```bash
+docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U postgres -d "$DB" -At -f - < cicd-repo/tests/gdpr/schema.sql > gdpr-simulation/schema.json
+node cicd-repo/tests/gdpr/simulation/sql.mjs "$INVENTORY" gdpr-simulation/schema.json gdpr-simulation
+for q in erasure retention content; do
+  docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U postgres -d "$DB" -At -f - < "gdpr-simulation/db/$q.sql" > "gdpr-simulation/db/$q.sql.json"
+done
+docker compose -f "$COMPOSE_FILE" logs --no-color > gdpr-simulation/containers.log
+docker compose -f "$COMPOSE_FILE" down -v
+```
+
+The action then runs `analyze.mjs`. The fronts add `gdpr-simulation/browser/console.json` and
+`storage.json`, collected by `tests/gdpr/privacy` on their pages (MAIR-292). Only the masked
+report (`summary.md`, `report.json`) is uploaded.
+
+**Telemetry (MAIR-501).** A stack that runs an OpenTelemetry collector adds a `file` exporter
+writing OTLP JSON to `gdpr-simulation/traces.jsonl`, and the job that builds the usage ledger
+writes it to `gdpr-simulation/usage.json`. Telemetry may only carry actions: a persona value in a
+span or in the ledger blocks, and so does a span attribute that identifies the caller
+(`enduser.*`, `user.*`, `user_id`, `session.id`, `http.request.header.authorization` / `cookie`,
+`url.query`, a query string in `url.full` / `http.url` / `http.target`) or a ledger key that names a
+person (`user_id`, `email`, `first_name`, `phone`, `ip`…). The span templates go through the AI
+review like the log templates. Without these files, the summary lists them as not checked.
+
+```yaml
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./gdpr-simulation:/out
+# otel-collector.yaml: exporters: { file: { path: /out/traces.jsonl } }, in the traces pipeline
+```
+
 ## OpenAPI coverage gate (ZAP + k6)
 
 `openapi.json` is the contract of every API and BFF. Two shared files turn it into a coverage
