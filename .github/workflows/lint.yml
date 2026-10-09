@@ -14,14 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Lint workflows
-        uses: docker://rhysd/actionlint:1.7.12
-        with:
-          # Pre-existing shellcheck info/style findings (unquoted variables, etc.) are ignored
-          # until they are cleaned up; every other actionlint/shellcheck finding fails the job.
-          args: -color -ignore SC2086 -ignore SC2016 -ignore SC2129
+      - name: Lint workflows with the verified published binary
+        run: |
+          set -euo pipefail
+          frontend_actionlint_directory=$(mktemp -d "$RUNNER_TEMP/frontend-actionlint.XXXXXX")
+          curl --fail --show-error --location \
+            --output "$frontend_actionlint_directory/actionlint.tar.gz" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$frontend_actionlint_directory/actionlint.tar.gz" | sha256sum --check --strict
+          tar -xzf "$frontend_actionlint_directory/actionlint.tar.gz" -C "$frontend_actionlint_directory" actionlint
+          # Preserve the existing shellcheck info/style exclusions.
+          "$frontend_actionlint_directory/actionlint" -color -ignore SC2086 -ignore SC2016 -ignore SC2129
 
       - name: Check composite actions are valid YAML with a runs block
         run: |
@@ -39,6 +44,9 @@ jobs:
       - name: Test the frontend dev exception guards
         run: python3 -m unittest discover -s actions/frontend-dev-exception/tests -v
 
+      - name: Test the frontend scanner evidence and verdict guards
+        run: python3 -m unittest discover -s actions/frontend-semgrep-pypi/tests -v
+
   frontend-exception-security:
     name: frontend dev exception source scans
     runs-on: ubuntu-latest
@@ -49,14 +57,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Scan only the new frontend release policy and workflow
-        uses: ./actions/semgrep
+        uses: ./actions/frontend-semgrep-pypi
         with:
           config: p/python p/secrets p/github-actions
-          paths: actions/frontend-dev-exception .github/workflows/frontend-dev-exception.yml
+          paths: actions/frontend-dev-exception actions/frontend-semgrep-pypi actions/frontend-gitleaks .github/workflows/frontend-dev-exception.yml .github/workflows/frontend-cicd.yml
           exclude: ''
           fail_on_findings: 'true'
           artifact_name: frontend-dev-exception-sarif
       - name: Scan new commits for secrets
-        uses: ./actions/gitleaks
+        uses: ./actions/frontend-gitleaks
         with:
           fail_on_findings: 'true'
