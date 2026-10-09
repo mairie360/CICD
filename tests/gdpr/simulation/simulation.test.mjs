@@ -170,6 +170,19 @@ erase:
   assert.deepEqual(personas.map((p) => p.erase), [false, false, true]);
 });
 
+test("every Redis key expires within its declared prefix", async () => {
+  const { checkRedis, parseKeys, prefixPattern } = await import("./redis.mjs");
+  assert.ok(prefixPattern("core-api:{user_id}/first_connection_token").test("core-api:42/first_connection_token"));
+  assert.ok(!prefixPattern("core-api:{user_id}/first_connection_token").test("core-api:42/x/first_connection_token"));
+  const prefixes = { "revoked:{session_id}": { max_ttl_seconds: 3600 }, "core-api:{token}/first_connection_id": { max_ttl_seconds: 86400 } };
+  const keys = parseKeys("revoked:abc\t3500\nrevoked:def\t-1\ncore-api:t1/first_connection_id\t90000\ncache:users:7\t60\ngone:x\t-2\n");
+  assert.deepEqual(checkRedis(keys, prefixes).map((f) => [f.where, f.excerpt]), [
+    ["revoked:{session_id}", "key without TTL"],
+    ["core-api:{token}/first_connection_id", "TTL 90000 s above the declared maximum of 86400 s"],
+    ["cache:…", "key prefix not declared in the inventory (redis section)"],
+  ]);
+});
+
 // One OTLP JSON export request, as the collector's `file` exporter writes it (MAIR-501).
 function otlpLine(service, name, attributes) {
   return JSON.stringify({

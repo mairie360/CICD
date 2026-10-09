@@ -12,7 +12,9 @@
 //
 // Deterministic checks: a persona value (or a captured token) in any log, console message,
 // browser storage entry, span or usage ledger blocks; so does a span attribute that identifies the
-// caller (user id, session, Authorization, query string) or a ledger key that names a person. Values of an erased persona outside the `keep` columns and rows
+// caller (user id, session, Authorization, query string), a ledger key that names a person, and a
+// Redis key without TTL, above its maximum or of an undeclared prefix (<run dir>/redis/keys.tsv,
+// MAIR-499). Values of an erased persona outside the `keep` columns and rows
 // past their retention are reported as expected failures until the erasure is implemented
 // (MAIR-289); GDPR_SIMULATION_ERASURE=enforce makes them block.
 // AI review (ai.mjs): a "high" verdict blocks unless its fingerprint is accepted in
@@ -26,6 +28,7 @@ import { needles } from "../marker/marker.mjs";
 import { mask, parseLogs, serviceMatches } from "../marker/scan.mjs";
 import { parseAccepted } from "./accepted.mjs";
 import { aiSettings, review } from "./ai.mjs";
+import { checkRedis, parseKeys } from "./redis.mjs";
 import { fingerprintOf, groupTemplates, templateOf } from "./templates.mjs";
 import { forbiddenAttributes, forbiddenLedgerKeys, parseTraces, spanText } from "./traces.mjs";
 
@@ -64,6 +67,8 @@ export function analyze(run, { accepted, verdicts = new Map(), enforceErasure = 
     const hit = find(`${s.key}=${s.value}`, list);
     if (hit) deterministic.push({ check: "storage", where: `${s.state} ${s.area}Storage`, persona: hit.persona, field: hit.field, excerpt: mask(`${s.key}=${s.value}`, list).slice(0, 240) });
   }
+  // Every Redis key expires, within its declared prefix (MAIR-499): blocking.
+  if (run.redisKeys) deterministic.push(...checkRedis(run.redisKeys, run.redisPrefixes ?? {}));
   const spans = [];
   for (const span of run.traces ?? []) {
     const text = spanText(span);
@@ -124,7 +129,7 @@ export function summary(result, { ai, notChecked }) {
   lines.push(`${result.logLines} log lines, ${result.spanCount} spans, ${result.findings.length} items reviewed.${notChecked.length ? ` Not checked: ${notChecked.join(", ")}.` : ""}`, "");
   if (result.deterministic.length > 0) {
     lines.push("### Persona values found (blocking)", "", "| Check | Where | Persona | Field | Excerpt |", "| --- | --- | --- | --- | --- |");
-    for (const d of result.deterministic.slice(0, 50)) lines.push(`| ${d.check} | ${code(d.where)} | ${d.persona} | ${d.field} | ${code(d.excerpt)} |`);
+    for (const d of result.deterministic.slice(0, 50)) lines.push(`| ${d.check} | ${code(d.where)} | ${d.persona ?? ""} | ${d.field ?? ""} | ${code(d.excerpt)} |`);
     lines.push("");
   }
   if (result.expected.length > 0) {
@@ -182,9 +187,12 @@ export async function main(argv, { env = process.env, client = null, log = conso
     erasure: optional(join(runDir, "db", "erasure.sql.json"), "erasure"),
     retention: optional(join(runDir, "db", "retention.sql.json"), "retention"),
     content: optional(join(runDir, "db", "content.sql.json"), "database content"),
+    redisKeys: existsSync(join(runDir, "redis", "keys.tsv")) ? parseKeys(readFileSync(join(runDir, "redis", "keys.tsv"), "utf8")) : null,
+    redisPrefixes: readJson(join(runDir, "redis_prefixes.json"), {}),
     traces: existsSync(join(runDir, "traces.jsonl")) ? parseTraces(readFileSync(join(runDir, "traces.jsonl"), "utf8")) : (notChecked.push("traces"), []),
     usage: existsSync(join(runDir, "usage.json")) ? readJson(join(runDir, "usage.json")) : (notChecked.push("usage ledger"), null),
   };
+  if (!run.redisKeys) notChecked.push("redis keys");
   const enforceErasure = (env.GDPR_SIMULATION_ERASURE ?? "").trim() === "enforce";
   const settings = aiSettings(env);
   const ai = { ...settings, asked: 0, cached: 0, error: null };
