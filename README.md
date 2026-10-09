@@ -44,7 +44,9 @@ tested by `semgrep --test` against the file of the same name in the `semgrep-rul
 `lint.yml`): `gdpr-rust-log-personal-value` and `gdpr-ts-log-personal-value` (a logging call that
 prints an `email`, `password`, `token`, `accessToken`, `refreshToken` or request `body` value),
 `gdpr-sql-whole-row-json` (`to_jsonb(OLD|NEW)` / `row_to_json` without removing the columns the
-inventory marks `audit_log: false`). A consumer that overrides `semgrep_config` adds the folder to
+inventory marks `audit_log: false`). `gdpr-rust-redis-write-without-ttl` and `gdpr-ts-redis-write-without-ttl` (MAIR-499):
+a Redis write without expiry (`SET` without `EX`/`PX`, `set` / `hset` / `mset` on a Redis client):
+the APIs use `set_ex` of `mairie360_api_lib`, the BFFs `createTtlRedis` of `@mairie360/bffs-lib`. A consumer that overrides `semgrep_config` adds the folder to
 its list to keep them. A false positive gets `// nosemgrep: <rule id>` with the reason.
 
 The Semgrep registry has no SQL/PostgreSQL ruleset (`p/sql` and `p/postgres` do not exist), and

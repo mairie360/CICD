@@ -14,7 +14,35 @@ const TABLE_KEYS = new Set(["audited", "personal", "not_personal"]);
 
 const isMapping = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
-// Returns { errors, entries }: entries maps "table.column" to its classification.
+const REDIS_KEYS = new Set(["personal", "category", "max_ttl_seconds", "note"]);
+
+// The optional `redis` section (MAIR-499): every key prefix the APIs and BFFs write, with whether
+// it holds personal data, its category then, and its maximum TTL in seconds (every Redis write
+// carries one). Returns { errors, prefixes: Map(prefix -> { personal, category?, max_ttl_seconds, note? }) }.
+export function parseRedisSection(section) {
+  const errors = [];
+  const prefixes = new Map();
+  if (section === undefined) return { errors, prefixes };
+  if (!isMapping(section)) return { errors: ["`redis` must map each key prefix to { personal, max_ttl_seconds }"], prefixes };
+  for (const [prefix, entry] of Object.entries(section)) {
+    const name = `redis ${prefix}`;
+    if (!isMapping(entry)) {
+      errors.push(`${name}: must be a mapping with personal and max_ttl_seconds`);
+      continue;
+    }
+    for (const key of Object.keys(entry).filter((k) => !REDIS_KEYS.has(k)).sort()) errors.push(`${name}: unknown key \`${key}\``);
+    if (typeof entry.personal !== "boolean") errors.push(`${name}: personal must be true or false`);
+    if (entry.personal === true && !CATEGORIES.includes(entry.category)) errors.push(`${name}: category must be one of ${CATEGORIES.join(", ")}`);
+    if (entry.personal === false && entry.category !== undefined) errors.push(`${name}: category only applies to a personal prefix`);
+    if (!Number.isInteger(entry.max_ttl_seconds) || entry.max_ttl_seconds < 1) errors.push(`${name}: max_ttl_seconds must be a whole number of seconds (every Redis key expires)`);
+    if (entry.note !== undefined && (typeof entry.note !== "string" || !entry.note.trim())) errors.push(`${name}: note must be a non-empty string`);
+    prefixes.set(prefix, { personal: entry.personal, ...(entry.category ? { category: entry.category } : {}), max_ttl_seconds: entry.max_ttl_seconds, ...(entry.note ? { note: entry.note } : {}) });
+  }
+  return { errors, prefixes };
+}
+
+// Returns { errors, entries, redis }: entries maps "table.column" to its classification, redis
+// the Redis key prefixes (see parseRedisSection).
 export function parseInventory(text) {
   let doc;
   try {
@@ -78,7 +106,8 @@ export function parseInventory(text) {
       else entries.set(name, { table, column, personal: false });
     }
   }
-  return { errors, entries };
+  const redis = parseRedisSection(doc.redis);
+  return { errors: [...errors, ...redis.errors], entries, redis: redis.prefixes };
 }
 
 // `schema`: the columns of the migrated database, as written by schema.sql

@@ -1,0 +1,24 @@
+# GDPR Semgrep rules of the mairie360 CI (MAIR-291, epic MAIR-284). Run by the `security_sast` job
+# of every stack workflow (`semgrep_config` default: cicd-repo/tests/semgrep/gdpr), tested by
+# `semgrep --test` (the file of the same name next to it, lint.yml).
+#
+# Rule of the epic: a log describes an error by its type and context, never by the value it
+# received. The GDPR log marker test (tests/gdpr/marker) proves it at run time; these rules catch
+# the obvious cases at review time. A finding that is a false positive gets a `nosemgrep: <rule id>`
+# comment with the reason.
+rules:
+  - id: gdpr-rust-redis-write-without-ttl
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      This Redis write has no time to live: the key would keep its data forever (sessions,
+      one-time tokens, cached rows hold personal data). Use mairie360_api_lib's set_ex /
+      secure_set_ex, or pass EX / PX in the same SET command (MAIR-499).
+    metadata:
+      category: security
+      references: ["https://mairie-360.atlassian.net/browse/MAIR-499"]
+    pattern-either:
+      # A SET built with redis::cmd whose statement never adds EX / PX / EXAT / PXAT / KEEPTTL.
+      - pattern-regex: 'redis::cmd\(\s*"(?i:set|mset|setnx|hset|hmset)"\s*\)(?:(?!\.arg\(\s*"(?i:ex|px|exat|pxat|keepttl)"\s*\))[^;])*;'
+      # The typed commands of the redis crate on a connection-like value.
+      - pattern-regex: '\b(?:conn|con|connection|redis|client|pool|cache)\w*\s*\.\s*(?:set|set_nx|set_multiple|mset|hset|hset_multiple|hset_nx)\s*(?:::<[^>]*>)?\s*\('

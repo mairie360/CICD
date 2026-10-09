@@ -129,7 +129,9 @@ inventory comes from mairie360/Database (`gdpr_inventory_ref`). The action is
 `actions/gdpr/contract` (new GDPR actions go under `actions/gdpr/`, MAIR-493 moves the others
 there), the `gdpr_contract` job of `APIs_cicd.yml` (on `cargo open_api`) and `BFFs-cicd.yml` (on the
 `openapi-spec` artifact) runs on every event, `release-prod` needs it. The per-operation personal
-columns of `report.json` are the input of the access matrix (MAIR-288, not decided yet). The
+columns of `report.json` are the input of the access matrix (MAIR-288, not decided yet). The Redis rules (MAIR-499) refuse a write without TTL in Rust and TypeScript; the inventory's
+optional `redis` section (prefix -> `personal`, `category`, `max_ttl_seconds`) is parsed by
+`parseRedisSection`. The
 Semgrep rules (`tests/semgrep/gdpr/<rule>.yml` + annotated `<rule>.<ext>`, `semgrep --test` in
 `lint.yml`) are in every workflow's default `semgrep_config`. Gitleaks already runs everywhere
 (MAIR-416); the subcontractor-domain rule waits for the decision file of MAIR-294.
