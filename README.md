@@ -427,6 +427,24 @@ The action then runs `analyze.mjs`. The fronts add `gdpr-simulation/browser/cons
 `storage.json`, collected by `tests/gdpr/privacy` on their pages (MAIR-292). Only the masked
 report (`summary.md`, `report.json`) is uploaded.
 
+**Telemetry (MAIR-501).** A stack that runs an OpenTelemetry collector adds a `file` exporter
+writing OTLP JSON to `gdpr-simulation/traces.jsonl`, and the job that builds the usage ledger
+writes it to `gdpr-simulation/usage.json`. Telemetry may only carry actions: a persona value in a
+span or in the ledger blocks, and so does a span attribute that identifies the caller
+(`enduser.*`, `user.*`, `user_id`, `session.id`, `http.request.header.authorization` / `cookie`,
+`url.query`, a query string in `url.full` / `http.url` / `http.target`) or a ledger key that names a
+person (`user_id`, `email`, `first_name`, `phone`, `ip`…). The span templates go through the AI
+review like the log templates. Without these files, the summary lists them as not checked.
+
+```yaml
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./gdpr-simulation:/out
+# otel-collector.yaml: exporters: { file: { path: /out/traces.jsonl } }, in the traces pipeline
+```
+
 ## GDPR in the browser (`tests/gdpr/privacy`, MAIR-292)
 
 `privacy.mjs` records, on a Playwright browser context, every request of the browser, the cookies
