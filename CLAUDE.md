@@ -155,6 +155,9 @@ by default, `effort: low` except for Haiku 4.5, cache by `model:fingerprint`), `
 blocks; erasure / retention are expected failures until MAIR-289, `GDPR_SIMULATION_ERASURE=enforce`).
 Action `actions/gdpr/simulation`, job `gdpr_simulation` of `APIs_cicd.yml` / `BFFs-cicd.yml` after
 `release-staging`, `release-prod` needs it; skipped without `gdpr-simulation.yaml`.
+`traces.mjs` (MAIR-501): spans of the collector's `file` export (`traces.jsonl`) and the usage
+ledger (`usage.json`) are searched like the logs; identifying span attributes and ledger keys
+block; span templates join the AI review. Both files are optional (listed as not checked).
 
 ## Node version drift
 
