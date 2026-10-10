@@ -1,7 +1,9 @@
 name: "Security and quality checks (front-lib)"
 description: >-
   `npm audit --audit-level=high` and `npm run typecheck --if-present` of the React component
-  library (`security` job of front-libs-cicd.yml).
+  library (`security` job of front-libs-cicd.yml). The audit fails the job on production dependencies
+  only (`--omit=dev`); the full audit, development tools included, is reported as a warning with the
+  report in the job summary (#161).
 
 runs:
   using: "composite"
@@ -14,9 +16,29 @@ runs:
     - shell: bash
       run: npm ci
 
-    - name: Run npm audit (Vulnerability Check)
+    # [CHANGEMENT] #161 : seules les dependances de production (ce que la lib publie dans `dist/`)
+    # font echouer le job. Les outils de developpement (lint, tests...) sont audites a part, sans
+    # bloquer, pour que leurs failles restent visibles dans le resume du job.
+    - name: Run npm audit on production dependencies (Vulnerability Check)
       shell: bash
-      run: npm audit --audit-level=high
+      run: npm audit --omit=dev --audit-level=high
+
+    # [NOUVEAU] #161 : audit complet (outils de developpement inclus), jamais bloquant.
+    - name: Report development dependencies vulnerabilities (npm audit, non-blocking)
+      shell: bash
+      run: |
+        report="$RUNNER_TEMP/npm-audit-full.txt"
+        if npm audit --audit-level=high > "$report" 2>&1; then
+          echo "No high or critical vulnerability, development tools included."
+        else
+          echo "::warning title=npm audit (development tools)::High or critical vulnerabilities in development dependencies (not blocking, see the job summary)."
+          {
+            echo "### npm audit, development tools included (not blocking)"
+            echo '```'
+            head -c 60000 "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
 
     - name: Check TypeScript types
       # S'assure que le projet compile ses types sans erreur (si un script 'typecheck' existe)
