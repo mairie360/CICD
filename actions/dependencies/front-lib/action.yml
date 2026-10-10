@@ -1,6 +1,8 @@
 name: "Dependencies (front-lib)"
 description: >-
   `npm ci` and `npm audit --audit-level=high` of the React component library (`dependencies` job of front-libs-cicd.yml).
+  The audit fails the job on production dependencies only (`--omit=dev`); the full audit, development tools
+  included, is reported as a warning with the report in the job summary (#161).
 
 runs:
   using: "composite"
@@ -14,6 +16,26 @@ runs:
       shell: bash
       run: npm ci
 
-    - name: Check dependencies vulnerabilities (npm audit)
+    # [CHANGEMENT] #161 : seules les dependances de production (ce que la lib publie dans `dist/`)
+    # font echouer le job. Les outils de developpement (lint, tests...) sont audites a part, sans
+    # bloquer, pour que leurs failles restent visibles dans le resume du job.
+    - name: Check production dependencies vulnerabilities (npm audit --omit=dev)
       shell: bash
-      run: npm audit --audit-level=high
+      run: npm audit --omit=dev --audit-level=high
+
+    # [NOUVEAU] #161 : audit complet (outils de developpement inclus), jamais bloquant.
+    - name: Report development dependencies vulnerabilities (npm audit, non-blocking)
+      shell: bash
+      run: |
+        report="$RUNNER_TEMP/npm-audit-full.txt"
+        if npm audit --audit-level=high > "$report" 2>&1; then
+          echo "No high or critical vulnerability, development tools included."
+        else
+          echo "::warning title=npm audit (development tools)::High or critical vulnerabilities in development dependencies (not blocking, see the job summary)."
+          {
+            echo "### npm audit, development tools included (not blocking)"
+            echo '```'
+            head -c 60000 "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
