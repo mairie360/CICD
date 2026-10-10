@@ -31,7 +31,7 @@ runs:
 
     - name: Semantic Release
       id: semantic
-      uses: cycjimmy/semantic-release-action@v6.0.0
+      uses: cycjimmy/semantic-release-action@v7.1.2
       with:
         dry_run: ${{ inputs.dry_run }}
         extra_plugins: |
