@@ -1,0 +1,151 @@
+name: Isolated frontend QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_repo:
+        description: Included frontend repository
+        type: choice
+        required: true
+        default: Projects_Web_Service
+        options:
+          - Login_Web_Service
+          - Projects_Web_Service
+          - Calendars_Web_Service
+          - Messages_Web_Service
+          - Elearning_Web_Service
+          - Administrator_Web_Service
+          - Dashboard_Web_Service
+          - Settings_Web_Service
+      frontend_sha:
+        description: Exact current main commit
+        type: string
+        required: true
+      image_digest:
+        description: Verified immutable dev image digest
+        type: string
+        required: true
+      test_kind:
+        description: Existing isolated scanner
+        type: choice
+        required: true
+        default: both
+        options: [both, security, performance]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: isolated-front-qa-${{ inputs.frontend_repo }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      repo: ${{ steps.target.outputs.repo }}
+      sha: ${{ steps.target.outputs.sha }}
+      image: ${{ steps.target.outputs.image }}
+      tag: ${{ steps.target.outputs.tag }}
+      matrix: ${{ steps.target.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate the bounded frontend and image inputs
+        id: target
+        env:
+          FRONT_REPO: ${{ inputs.frontend_repo }}
+          FRONT_SHA: ${{ inputs.frontend_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          TEST_KIND: ${{ inputs.test_kind }}
+        run: python3 actions/frontend-isolated-qa/target.py inputs
+
+  isolated:
+    name: ${{ matrix.kind }} against verified dev image
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
+    env:
+      TARGET_IMAGE: ${{ needs.validate.outputs.image }}
+      FRONT_TAG: ${{ needs.validate.outputs.tag }}
+      FRONT_SHA: ${{ needs.validate.outputs.sha }}
+      TEST_KIND: ${{ matrix.kind }}
+      COMPOSE_PROJECT_NAME: front-qa-${{ github.run_id }}-${{ strategy.job-index }}
+      NODE_AUTH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout this QA implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: cicd
+          persist-credentials: false
+      - name: Checkout the exact frontend main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mairie360/${{ needs.validate.outputs.repo }}
+          ref: ${{ needs.validate.outputs.sha }}
+          path: frontend
+          persist-credentials: false
+      - name: Reject a stale main
+        run: |
+          set -euo pipefail
+          actual="$(git -C frontend ls-remote origin refs/heads/main | cut -f1)"
+          test "$actual" = "$FRONT_SHA"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify the exact previously scanned and signed dev digest
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          actual="$(docker buildx imagetools inspect "$FRONT_TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          test "$TARGET_IMAGE" = "${FRONT_TAG%:dev-*}@$actual"
+          identity='https://github.com/mairie360/CICD/.github/workflows/frontend-dev-exception.yml@f5ea4257ac51aa2969f9ddb84730fbebce8f42a7'
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$TARGET_IMAGE" > reports/signature.json
+      - name: Select the existing scanner without rewriting the Compose stack
+        id: compose
+        working-directory: frontend
+        run: python3 ../cicd/actions/frontend-isolated-qa/target.py compose
+      - name: Run the existing isolated stack against the verified image
+        timeout-minutes: 15
+        working-directory: frontend
+        env:
+          COMPOSE_FILE: ${{ steps.compose.outputs.file }}
+          SCANNER: ${{ steps.compose.outputs.service }}
+        run: |
+          set -euo pipefail
+          docker compose up -d --no-build
+          docker compose wait "$SCANNER" || true
+          container="$(docker compose ps -a -q "$SCANNER")"
+          test -n "$container"
+          test "$(docker inspect --format '{{.State.Status}}' "$container")" = exited
+          verdict="$(docker inspect --format '{{.State.ExitCode}}' "$container")"
+          docker compose logs --no-color "$SCANNER" | tee "../reports/$TEST_KIND.log"
+          printf '%s\n' "$verdict" > "../reports/$TEST_KIND.exit-code"
+          test "$verdict" -eq 0
+      - name: Recheck the frontend main after the result
+        if: always() && steps.compose.outcome == 'success'
+        run: |
+          set -euo pipefail
+          actual="$(git -C frontend ls-remote origin refs/heads/main | cut -f1)"
+          test "$actual" = "$FRONT_SHA"
+      - name: Collect stack logs and remove disposable containers and volumes
+        if: always() && steps.compose.outcome == 'success'
+        working-directory: frontend
+        env:
+          COMPOSE_FILE: ${{ steps.compose.outputs.file }}
+        run: |
+          mkdir -p ../reports
+          docker compose ps -a > ../reports/containers.txt
+          docker compose logs --no-color --tail 150 > ../reports/stack.log 2>&1 || true
+          docker compose down -v --remove-orphans
+      - name: Preserve scanner results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: isolated-front-qa-${{ needs.validate.outputs.repo }}-${{ matrix.kind }}
+          path: reports/
+          if-no-files-found: warn
