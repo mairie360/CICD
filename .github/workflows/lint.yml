@@ -47,6 +47,9 @@ jobs:
       - name: Test the frontend scanner evidence and verdict guards
         run: python3 -m unittest discover -s actions/frontend-semgrep-pypi/tests -v
 
+      - name: Test isolated frontend target selection
+        run: python3 -m unittest discover -s actions/frontend-isolated-qa/tests -v
+
   frontend-exception-security:
     name: frontend dev exception source scans
     runs-on: ubuntu-latest
@@ -60,7 +63,7 @@ jobs:
         uses: ./actions/frontend-semgrep-pypi
         with:
           config: p/python p/secrets p/github-actions
-          paths: actions/frontend-dev-exception actions/frontend-semgrep-pypi actions/frontend-gitleaks .github/workflows/frontend-dev-exception.yml .github/workflows/frontend-cicd.yml
+          paths: actions/frontend-dev-exception actions/frontend-semgrep-pypi actions/frontend-gitleaks actions/frontend-isolated-qa .github/workflows/frontend-dev-exception.yml .github/workflows/frontend-cicd.yml .github/workflows/frontend-isolated-qa.yml
           exclude: ''
           fail_on_findings: 'true'
           artifact_name: frontend-dev-exception-sarif
