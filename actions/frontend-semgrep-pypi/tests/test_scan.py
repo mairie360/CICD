@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 import os
 import subprocess
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("frontend_scan", ROOT / "run_scan.py")
@@ -100,6 +101,25 @@ class FrontendScanTests(unittest.TestCase):
         for line in entries:
             self.assertRegex(line, r"^[A-Za-z0-9_.-]+==[A-Za-z0-9_.+-]+ --hash=sha256:[a-f0-9]{64}$")
         self.assertIn("semgrep==1.177.0 --hash=sha256:32d92d0cd2e18a1495b32abfef926be0ed3c972d8cd169bffe6cbb8418e3bb5e", entries)
+
+    def test_selected_runtime_matches_the_lock_abi_and_scoped_updates(self):
+        action = (ROOT / "action.yml").read_text()
+        selected = next(line.split(":", 1)[1].strip().strip("'\"")
+                        for line in action.splitlines() if "python-version:" in line)
+        lock = re.search(r"requirements-linux-python(\d)(\d+)\.lock", action)
+        self.assertIsNotNone(lock)
+        expected = tuple(int(value) for value in lock.groups())
+        self.assertEqual(tuple(int(value) for value in selected.split(".")[:2]), expected)
+        config = json.loads((ROOT.parents[1] / "renovate.json").read_text())
+        rules = [rule for rule in config["packageRules"]
+                 if rule.get("matchFileNames") == ["actions/frontend-semgrep-pypi/action.yml"]
+                 and rule.get("matchDepNames") == ["python"]]
+        self.assertEqual(len(rules), 1)
+        allowed = rules[0]["allowedVersions"]
+        self.assertTrue(allowed.startswith("/") and allowed.endswith("/"))
+        self.assertIsNotNone(re.search(allowed[1:-1], selected))
+        next_minor = f"{expected[0]}.{expected[1] + 1}.0"
+        self.assertIsNone(re.search(allowed[1:-1], next_minor))
 
 
 if __name__ == "__main__":
