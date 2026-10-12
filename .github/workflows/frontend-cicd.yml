@@ -102,7 +102,14 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run npm audit (Block on High/Critical)
+      # MAIR-510: only production dependencies gate the pipeline. Dev-only advisories
+      # (ESLint/tooling chains such as braces via eslint-config-next) never reach the
+      # shipped image, so they are reported below without blocking.
+      - name: Run npm audit on production dependencies (Block on High/Critical)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Run npm audit on all dependencies (Report only)
+        continue-on-error: true
         run: npm audit --audit-level=high
 
   # MAIR-230: frontend SAST through the verified Semgrep wheel and hash-locked dependencies.
