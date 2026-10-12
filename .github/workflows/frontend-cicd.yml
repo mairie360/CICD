@@ -196,6 +196,9 @@ jobs:
       id-token: write  # [NOUVEAU] MAIR-416: cosign keyless signature
     outputs:
       digest: ${{ steps.release.outputs.digest }}
+      # [NOUVEAU] MAIR-516: the isolated QA jobs test this exact published image on `main`.
+      image: ${{ steps.release.outputs.primary_image }}
+      sha_tag: ${{ steps.release.outputs.sha_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -229,16 +232,36 @@ jobs:
     # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
     # runner for GitHub's 6 h default and starved the whole org's queue.
     timeout-minutes: 25
-    needs: release-dev
+    # [CHANGEMENT] MAIR-516: also runs on pull requests to `main`, where `release-dev` is skipped
+    # and the front's stack builds the image locally (as before). On `main` it tests the image
+    # `release-dev` just published and signed, through `TARGET_IMAGE` (the fronts' scripts skip
+    # their local build when it is set), instead of rebuilding a different one here.
+    needs: [build, test, release-dev]
+    if: >-
+      always()
+      && needs.build.result == 'success'
+      && needs.test.result == 'success'
+      && (needs.release-dev.result == 'success' || needs.release-dev.result == 'skipped')
+      && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main'))
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Log in to GHCR
+        if: needs.release-dev.result == 'success'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Run ZAP Security Scan via Docker Compose
         timeout-minutes: 15
         run: ./security_test.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_IMAGE: ${{ needs.release-dev.result == 'success' && format('{0}:dev-{1}', needs.release-dev.outputs.image, needs.release-dev.outputs.sha_tag) || '' }}
 
       # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
       # leaving a `*-ready` service polling forever), the step timeout kills the script before
@@ -259,16 +282,36 @@ jobs:
     # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
     # runner for GitHub's 6 h default and starved the whole org's queue.
     timeout-minutes: 25
-    needs: release-dev
+    # [CHANGEMENT] MAIR-516: also runs on pull requests to `main`, where `release-dev` is skipped
+    # and the front's stack builds the image locally (as before). On `main` it tests the image
+    # `release-dev` just published and signed, through `TARGET_IMAGE` (the fronts' scripts skip
+    # their local build when it is set), instead of rebuilding a different one here.
+    needs: [build, test, release-dev]
+    if: >-
+      always()
+      && needs.build.result == 'success'
+      && needs.test.result == 'success'
+      && (needs.release-dev.result == 'success' || needs.release-dev.result == 'skipped')
+      && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main'))
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Log in to GHCR
+        if: needs.release-dev.result == 'success'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Run Performance Tests via Docker Compose
         timeout-minutes: 15
         run: ./performance_test.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_IMAGE: ${{ needs.release-dev.result == 'success' && format('{0}:dev-{1}', needs.release-dev.outputs.image, needs.release-dev.outputs.sha_tag) || '' }}
 
       # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
       # leaving a `*-ready` service polling forever), the step timeout kills the script before
