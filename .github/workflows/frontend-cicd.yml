@@ -36,6 +36,13 @@ on:
       N8N_WEBHOOK_SECRET:
         required: true
 
+# MAIR-436: jobs without their own `permissions` (lint, npm audit, build, tests, failure
+# notification) get a read-only token instead of inheriting the caller job's write scopes,
+# which only the release jobs below need and request explicitly.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   dependencies:
     name: Install Dependencies
