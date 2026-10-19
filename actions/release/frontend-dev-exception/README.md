@@ -34,6 +34,6 @@ signature verification, head and image digest. A published image does **not** pr
 deployed digest, real dev authentication, BFF permissions, persistence or feature acceptance.
 Those require separate dev evidence; unavailable accounts remain an explicit validation blocker.
 
-Local guard checks: `python3 -m unittest discover -s actions/frontend-dev-exception/tests -v`.
+Local guard checks: `python3 -m unittest discover -s actions/release/frontend-dev-exception/tests -v`.
 The existing workflow lint job also runs these checks. Runtime behavior, registry permissions,
 image scan/signature and rollout remain unvalidated until the manual workflow actually runs.

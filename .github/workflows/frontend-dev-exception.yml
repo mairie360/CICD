@@ -47,7 +47,7 @@ jobs:
           path: cicd-repo
           persist-credentials: false
       - name: Verify actual main and existing control verdicts
-        run: python3 cicd-repo/actions/frontend-dev-exception/check_policy.py preflight > preflight.json
+        run: python3 cicd-repo/actions/release/frontend-dev-exception/check_policy.py preflight > preflight.json
         env:
           GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -81,12 +81,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
       - name: Run strict scans
-        uses: ./cicd-repo/actions/frontend-semgrep-pypi
+        uses: ./cicd-repo/actions/security/semgrep-pypi
         with:
           config: p/typescript p/react p/owasp-top-ten p/secrets p/dockerfile p/github-actions
           fail_on_findings: 'true'
           artifact_name: dev-exception-semgrep
-      - uses: ./cicd-repo/actions/frontend-gitleaks
+      - uses: ./cicd-repo/actions/security/gitleaks-binary
         with:
           fail_on_findings: 'true'
       - run: npm run contracts:check
@@ -155,7 +155,7 @@ jobs:
       - name: Accept only the recorded unpatched dev dependency chain
         run: |
           python3 -c 'import json; d=json.load(open("audit-exit-codes.json")); assert d == {"full":1,"production":0}, "Unexpected audit exit codes"'
-          python3 cicd-repo/actions/frontend-dev-exception/check_policy.py audit full-audit.json production-audit.json audited-lock.json > exception.json
+          python3 cicd-repo/actions/release/frontend-dev-exception/check_policy.py audit full-audit.json production-audit.json audited-lock.json > exception.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dev-exception-policy
@@ -195,7 +195,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Recheck main and refuse an existing immutable dev tag
-        run: python3 cicd-repo/actions/frontend-dev-exception/check_policy.py tag-absent > target-before.json
+        run: python3 cicd-repo/actions/release/frontend-dev-exception/check_policy.py tag-absent > target-before.json
         env:
           GH_TOKEN: ${{ github.token }}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
@@ -234,7 +234,7 @@ jobs:
           identity="https://github.com/mairie360/CICD/.github/workflows/frontend-dev-exception.yml@$CICD_REF"
           cosign verify --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE@$DIGEST" > signature-verification.json
       - name: Refuse stale main before exposing the validated dev tag
-        run: python3 cicd-repo/actions/frontend-dev-exception/check_policy.py tag-absent > target-after.json
+        run: python3 cicd-repo/actions/release/frontend-dev-exception/check_policy.py tag-absent > target-after.json
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Promote only the scanned and signed digest to dev
