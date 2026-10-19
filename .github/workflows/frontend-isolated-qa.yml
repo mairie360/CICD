@@ -59,7 +59,7 @@ jobs:
           FRONT_SHA: ${{ inputs.frontend_sha }}
           IMAGE_DIGEST: ${{ inputs.image_digest }}
           TEST_KIND: ${{ inputs.test_kind }}
-        run: python3 actions/frontend-isolated-qa/target.py inputs
+        run: python3 actions/integration/frontend-isolated-qa/target.py inputs
 
   isolated:
     name: ${{ matrix.kind }} against verified dev image
@@ -108,7 +108,7 @@ jobs:
       - name: Select the existing scanner without rewriting the Compose stack
         id: compose
         working-directory: frontend
-        run: python3 ../cicd/actions/frontend-isolated-qa/target.py compose
+        run: python3 ../cicd/actions/integration/frontend-isolated-qa/target.py compose
       - name: Run the existing isolated stack against the verified image
         timeout-minutes: 15
         working-directory: frontend

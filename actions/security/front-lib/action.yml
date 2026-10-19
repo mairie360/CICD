@@ -1,0 +1,24 @@
+name: "Security and quality checks (front-lib)"
+description: >-
+  `npm audit --audit-level=high` and `npm run typecheck --if-present` of the React component
+  library (`security` job of front-libs-cicd.yml).
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+
+    - shell: bash
+      run: npm ci
+
+    - name: Run npm audit (Vulnerability Check)
+      shell: bash
+      run: npm audit --audit-level=high
+
+    - name: Check TypeScript types
+      # S'assure que le projet compile ses types sans erreur (si un script 'typecheck' existe)
+      shell: bash
+      run: npm run typecheck --if-present

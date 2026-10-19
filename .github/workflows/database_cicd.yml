@@ -41,23 +41,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
       - name: Run tests
         timeout-minutes: 15
-        run: ./test.sh
+        uses: ./cicd-repo/actions/unit-tests/db
 
-      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
-      # leaving a `*-ready` service polling forever), the step timeout kills the script before
-      # its `docker compose down`, so the containers are still there: print their state and
-      # logs to see why the service under test did not start.
+      # [NOUVEAU] MAIR-468: dumps the containers left behind when the step timeout kills the stack.
       - name: Dump container logs
         if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
+        uses: ./cicd-repo/actions/integration/container-logs
 
+      # Outside the action so that the 15 min timeout above only covers `./test.sh`, as before.
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
@@ -87,14 +90,14 @@ jobs:
           path: cicd-repo
 
       - name: Run Semgrep Security Scan
-        uses: ./cicd-repo/actions/semgrep
+        uses: ./cicd-repo/actions/security/semgrep
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
 
       # [NOUVEAU] MAIR-416: secret scan of the new commits.
       - name: Run Gitleaks Secret Scan
-        uses: ./cicd-repo/actions/gitleaks
+        uses: ./cicd-repo/actions/security/gitleaks
 
   # [CHANGEMENT] MAIR-416: the three release jobs go through the shared `docker-release` action
   # like the other stacks (the `database` image plus `liquibase-migrations` as secondary image):
@@ -129,7 +132,7 @@ jobs:
 
       - name: Build & Push Images (Dev)
         id: release
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         with:
           stage: dev
           package_name: ${{ inputs.package_name }}
@@ -155,15 +158,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
       - name: Run schema bench
         timeout-minutes: 20
-        run: |
-          if [ ! -x ./performance_test.sh ]; then
-            echo "::warning::No executable ./performance_test.sh in this repo, schema bench skipped."
-            exit 0
-          fi
-          ./performance_test.sh
+        uses: ./cicd-repo/actions/performance/db
 
+      # Outside the action so that it still runs when the 20 min timeout above kills the bench.
       - name: Upload bench results
         if: always()
         uses: actions/upload-artifact@v7
@@ -193,7 +202,7 @@ jobs:
 
       - name: Promote Images to Staging
         id: release
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         with:
           stage: staging
           package_name: ${{ inputs.package_name }}
@@ -232,14 +241,14 @@ jobs:
 
       - name: Compute the next version (dry run)
         id: next
-        uses: ./cicd-repo/actions/semantic-tag
+        uses: ./cicd-repo/actions/release/semantic-tag
         with:
           dry_run: "true"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check the release folder
-        uses: ./cicd-repo/actions/release-folder
+        uses: ./cicd-repo/actions/release/release-folder
         with:
           last_tag: ${{ steps.next.outputs.last_release_git_tag }}
           next_version: ${{ steps.next.outputs.new_release_published == 'true' && steps.next.outputs.new_release_version || '' }}
@@ -269,12 +278,12 @@ jobs:
 
       - name: Calculate & Create Tag
         id: set_tag
-        uses: ./cicd-repo/actions/semantic-tag
+        uses: ./cicd-repo/actions/release/semantic-tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Promote Images to Prod
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         with:
           stage: prod
           package_name: ${{ inputs.package_name }}
@@ -306,6 +315,6 @@ jobs:
           path: cicd-repo
 
       - name: Notify n8n
-        uses: ./cicd-repo/actions/notify-cicd-failure
+        uses: ./cicd-repo/actions/notify/cicd-failure
         with:
           n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

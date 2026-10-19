@@ -110,9 +110,9 @@ class FrontendScanTests(unittest.TestCase):
         self.assertIsNotNone(lock)
         expected = tuple(int(value) for value in lock.groups())
         self.assertEqual(tuple(int(value) for value in selected.split(".")[:2]), expected)
-        config = json.loads((ROOT.parents[1] / "renovate.json").read_text())
+        config = json.loads((ROOT.parents[2] / "renovate.json").read_text())
         rules = [rule for rule in config["packageRules"]
-                 if rule.get("matchFileNames") == ["actions/frontend-semgrep-pypi/action.yml"]
+                 if rule.get("matchFileNames") == ["actions/security/semgrep-pypi/action.yml"]
                  and rule.get("matchDepNames") == ["python"]]
         self.assertEqual(len(rules), 1)
         allowed = rules[0]["allowedVersions"]

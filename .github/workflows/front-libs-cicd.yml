@@ -33,16 +33,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check dependencies vulnerabilities (npm audit)
-        run: npm audit --audit-level=high
+      - name: Install & Security Audit
+        uses: ./cicd-repo/actions/dependencies/front-lib
 
   lint:
     name: Lint code
@@ -51,16 +53,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Run linter
-        run: npm run lint
+        uses: ./cicd-repo/actions/lint/front-lib
 
   build:
     name: Build library
@@ -69,23 +73,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Build package
-        run: npm run build
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: library-dist
-          path: dist/
-          retention-days: 1
+        uses: ./cicd-repo/actions/build/front-lib
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -94,23 +93,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - run: npm ci
-      - run: npm test
-
-      - name: Upload Coverage to Codecov
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-        uses: codecov/codecov-action@v7
+      - name: Run Tests
+        uses: ./cicd-repo/actions/unit-tests/front-lib
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/lcov.info
-          # [CHANGEMENT] MAIR-467: Codecov only reports coverage, so an outage on its side (expired
-          # certificate on 2026-10-05) must not fail the job and block the release.
-          fail_ci_if_error: false
+          codecov_token: ${{ secrets.CODECOV_TOKEN }}
 
   security:
     name: Security & Quality Checks
@@ -119,19 +115,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - run: npm ci
-
-      - name: Run npm audit (Vulnerability Check)
-        run: npm audit --audit-level=high
-
-      - name: Check TypeScript types
-        # S'assure que le projet compile ses types sans erreur (si un script 'typecheck' existe)
-        run: npm run typecheck --if-present
+      - name: Security & Quality Checks
+        uses: ./cicd-repo/actions/security/front-lib
 
   # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
   security_sast:
@@ -153,14 +148,14 @@ jobs:
           path: cicd-repo
 
       - name: Run Semgrep Security Scan
-        uses: ./cicd-repo/actions/semgrep
+        uses: ./cicd-repo/actions/security/semgrep
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
 
       # [NOUVEAU] MAIR-416: secret scan of the new commits.
       - name: Run Gitleaks Secret Scan
-        uses: ./cicd-repo/actions/gitleaks
+        uses: ./cicd-repo/actions/security/gitleaks
 
   storybook:
     name: Storybook Chain
@@ -253,7 +248,7 @@ jobs:
 
       - name: Calculate & Create Tag
         id: set_tag
-        uses: ./cicd-repo/actions/semantic-tag
+        uses: ./cicd-repo/actions/release/semantic-tag
 
       - name: Set package version
         if: steps.set_tag.outputs.new_release_published == 'true'
@@ -287,6 +282,6 @@ jobs:
           path: cicd-repo
 
       - name: Notify n8n
-        uses: ./cicd-repo/actions/notify-cicd-failure
+        uses: ./cicd-repo/actions/notify/cicd-failure
         with:
           n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

@@ -1,0 +1,77 @@
+name: "Build (BFFs)"
+description: >-
+  `npm run build` of a BFF, then uploads `dist/` (`bff-assets`) and the OpenAPI spec
+  (`openapi-spec`) for the release jobs (`build` job of BFFs-cicd.yml).
+
+inputs:
+  node_version:
+    description: "Node.js version (the workflow input node_version)"
+    required: true
+  npm_scope:
+    description: "npm scope hosted on GitHub Packages (the workflow input npm_scope)"
+    required: true
+  node_auth_token:
+    description: "Token for the GitHub Packages registry (the caller passes secrets.GITHUB_TOKEN)"
+    required: true
+  openapi_spec_path:
+    description: "Path of the OpenAPI spec after `npm run build` (the workflow input openapi_spec_path)"
+    required: true
+  artifact_retention_days:
+    description: "Artifact retention, must cover the Staging/Prod approval delay (the workflow input artifact_retention_days)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Use Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node_version }}
+        cache: npm
+        registry-url: https://npm.pkg.github.com
+        scope: ${{ inputs.npm_scope }}
+
+    - shell: bash
+      run: npm ci
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+
+    - shell: bash
+      run: npm run build
+
+    # La spec est copiée sous un nom fixe pour que son emplacement dans
+    # l'artefact ne dépende pas de l'arborescence du repo.
+    - name: Vérifier et isoler la spec OpenAPI
+      shell: bash
+      env:
+        SPEC_PATH: ${{ inputs.openapi_spec_path }}
+      run: |
+        set -euo pipefail
+        if [ ! -s "$SPEC_PATH" ]; then
+          echo "::error::Spec OpenAPI introuvable ou vide : '$SPEC_PATH' (input openapi_spec_path)"
+          exit 1
+        fi
+        if ! jq empty "$SPEC_PATH"; then
+          echo "::error::'$SPEC_PATH' n'est pas un JSON valide"
+          exit 1
+        fi
+        mkdir -p "$RUNNER_TEMP/openapi"
+        cp "$SPEC_PATH" "$RUNNER_TEMP/openapi/openapi-spec.json"
+
+    - name: Upload Build
+      uses: actions/upload-artifact@v7
+      with:
+        name: bff-assets
+        path: dist/
+        if-no-files-found: error
+        retention-days: ${{ inputs.artifact_retention_days }}
+        overwrite: true
+
+    - name: Upload OpenAPI Spec
+      uses: actions/upload-artifact@v7
+      with:
+        name: openapi-spec
+        path: ${{ runner.temp }}/openapi/openapi-spec.json
+        if-no-files-found: error
+        retention-days: ${{ inputs.artifact_retention_days }}
+        overwrite: true
