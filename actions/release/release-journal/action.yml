@@ -43,9 +43,10 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # Actions that receive the release app key or its token are pinned to a commit, not a tag.
     - name: Token of the release app
       id: app_token
-      uses: actions/create-github-app-token@v3
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
       with:
         app-id: ${{ inputs.app_id }}
         private-key: ${{ inputs.app_private_key }}
@@ -56,7 +57,7 @@ runs:
     # Pushed with the app token, the journal commit would start a pipeline on main: its
     # `[skip ci]` subject prevents it.
     - name: Checkout main for the journal
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         ref: ${{ github.event.repository.default_branch }}
         path: .release-journal
