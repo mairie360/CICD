@@ -1,8 +1,8 @@
 name: "Dependencies (fronts)"
 description: >-
   Node.js setup against GitHub Packages and `npm ci` of a Next.js front (`dependencies` job of
-  frontend-cicd.yml); with `audit: 'true'`, also `npm audit --audit-level=high`
-  (`security_audit` job).
+  frontend-cicd.yml); with `audit: 'true'`, also `npm audit --omit=dev --audit-level=high`
+  (blocking) and a report-only `npm audit --audit-level=high` (`security_audit` job).
 
 inputs:
   node_version:
@@ -12,7 +12,7 @@ inputs:
     description: "Token for the GitHub Packages registry (the caller passes secrets.GITHUB_TOKEN)"
     required: true
   audit:
-    description: "'true' to run npm audit after the install (blocks on high/critical)"
+    description: "'true' to run npm audit after the install (blocks on high/critical production advisories)"
     required: false
     default: "false"
 
@@ -22,7 +22,7 @@ runs:
     # [CHANGEMENT] Utilisation native du cache npm de setup-node (sur ~/.npm)
     # plus léger et performant que la sauvegarde complète du dossier node_modules.
     - name: Setup Node.js
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version: ${{ inputs.node_version }}
         registry-url: 'https://npm.pkg.github.com'
@@ -35,7 +35,15 @@ runs:
       env:
         NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
 
-    - name: Run npm audit (Block on High/Critical)
+    # MAIR-510: only production dependencies gate the pipeline. Dev-only advisories
+    # (ESLint/tooling chains such as braces via eslint-config-next) never reach the
+    # shipped image, so they are reported below without blocking.
+    - name: Run npm audit on production dependencies (Block on High/Critical)
       if: inputs.audit == 'true'
       shell: bash
-      run: npm audit --audit-level=high
+      run: npm audit --omit=dev --audit-level=high
+
+    - name: Run npm audit on all dependencies (Report only)
+      if: inputs.audit == 'true'
+      shell: bash
+      run: npm audit --audit-level=high || echo "::warning::npm audit found high/critical advisories in dev dependencies (report only)"

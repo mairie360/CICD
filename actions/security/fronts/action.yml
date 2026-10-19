@@ -8,6 +8,12 @@ inputs:
   node_auth_token:
     description: "Token for the GitHub Packages registry (the caller passes secrets.GITHUB_TOKEN)"
     required: true
+  target_image:
+    description: >-
+      Published image to test (`<image>:dev-<sha_tag>` on main, MAIR-516); empty on pull
+      requests, where the consumer's script builds the image locally
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -17,3 +23,4 @@ runs:
       run: ./security_test.sh
       env:
         NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+        TARGET_IMAGE: ${{ inputs.target_image }}
