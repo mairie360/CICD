@@ -35,6 +35,15 @@ HISTORY_END = '<!-- release-journal-history:end -->'
 HISTORY_KEEP = 50
 MAX_COMMITS = 200
 MAX_BODY = 1500
+# Diff sent to Claude: per commit, then for the whole request (characters). Past the total, only
+# the list of changed files is sent.
+MAX_DIFF = 15000
+MAX_DIFF_TOTAL = 400000
+# Files whose diff says nothing about behaviour: lockfiles, snapshots, the journal itself.
+DIFF_EXCLUDES = (':(exclude,glob)**/*.lock', ':(exclude,glob)**/package-lock.json',
+                 ':(exclude,glob)**/*.snap', ':(exclude,glob)**/RELEASE_JOURNAL.md',
+                 ':(exclude,glob)**/*.min.js', ':(exclude,glob)**/*.svg')
+EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 MODEL = os.environ.get('RELEASE_JOURNAL_MODEL', 'claude-opus-5-5')
 
 SECTIONS = (
@@ -44,19 +53,30 @@ SECTIONS = (
 )
 
 SYSTEM_PROMPT = """Tu rédiges le journal des releases d'un dépôt de la plateforme Mairie 360 \
-(logiciel pour les mairies françaises), lu par l'équipe de développement et ses mentors.
+(logiciel pour les mairies françaises : une API Rust, un BFF Express, un front Next.js ou le \
+schéma Postgres), lu par l'équipe et ses mentors pour savoir ce que chaque environnement fait \
+de différent.
 
-Tu reçois, pour trois plages de commits, la liste des commits (Conventional Commits, souvent \
-avec une clé Jira MAIR-XXX) et la pull request de chacun (titre, description). Pour chaque plage, \
-écris en français une liste Markdown de ce qui a été ajouté ou changé :
-- regroupe sous des titres de niveau 4 (`#### Nouveautés`, `#### Corrections`, `#### Technique`) \
-et n'écris que les groupes non vides ;
-- une puce par changement, une phrase claire sur ce que ça apporte, puis la clé Jira et le lien \
-de la PR, par exemple : `- Les sessions révoquées sont refusées. (MAIR-264, [#123](url))` ;
-- fusionne les commits qui portent sur le même changement ; les mises à jour de dépendances \
-(chore(deps), Renovate) tiennent en une seule puce qui les compte ;
-- garde tels quels les identifiants, noms de paquets, routes et messages d'erreur ;
-- n'invente rien qui ne soit pas dans les commits ou les PR.
+Tu reçois les commits (Conventional Commits, souvent avec une clé Jira MAIR-XXX), la pull request \
+de chacun et son diff, puis trois plages qui listent les sha des commits qu'elles contiennent. \
+Pour chaque plage, écris en français une liste Markdown des changements FONCTIONNELS : ce que \
+le service fait de différent pour ceux qui l'utilisent (agents de mairie dans l'interface, \
+front ou BFF qui appelle l'API, données en base).
+- Déduis le comportement du diff, pas seulement du titre ou de la description de la PR : \
+nouvelle route (méthode + chemin), champ ajouté ou retiré d'une réponse, règle de validation, \
+de droits (RBAC/ACL) ou de suppression logique, écran, bouton ou message affiché, code \
+d'erreur, colonne ou contrainte en base. Quand le diff contredit la description, suis le diff.
+- Regroupe sous des titres de niveau 4, sans écrire les groupes vides : `#### Nouveautés`, \
+`#### Changements de comportement` (y compris ce qui casse un appelant), `#### Corrections` \
+(décris le comportement corrigé : avant / maintenant), `#### Technique`.
+- Une puce par changement fonctionnel, puis la clé Jira et le lien de la PR, par exemple : \
+- `GET /projects` ne renvoie plus les projets supprimés logiquement. (MAIR-264, [#123](url)) \
+Fusionne les commits qui portent sur le même changement.
+- Les changements sans effet visible (CI, tests, refactor, mises à jour de dépendances, \
+documentation) tiennent dans `#### Technique` en une ou deux puces courtes qui les comptent.
+- Garde tels quels les identifiants, routes, champs, noms de paquets et messages d'erreur.
+- N'invente rien qui ne soit pas dans les diffs, les commits ou les PR ; quand un diff est \
+tronqué ou absent, reste prudent.
 Pour une plage sans commit, renvoie une chaîne vide."""
 
 
@@ -179,6 +199,21 @@ def pr_from_subject(subject, server_url, repository):
     return {'number': number, 'title': subject, 'url': '{}/{}/pull/{}'.format(server_url, repository, number), 'body': ''}
 
 
+def diff(sha, budget):
+    """Patch of one commit against its first parent (lockfiles and snapshots left out), and
+    whether it was cut: past the per-commit or the remaining budget, the file list comes first."""
+    base = resolve(sha + '^1') or EMPTY_TREE
+    paths = ('--', '.', *DIFF_EXCLUDES)
+    if budget <= 0:
+        return git('diff', '--stat=200', base, sha, *paths), True
+    patch = git('diff', '--no-color', '-U3', base, sha, *paths)
+    limit = min(MAX_DIFF, budget)
+    if len(patch) <= limit:
+        return patch, False
+    stat = git('diff', '--stat=200', base, sha, *paths)
+    return stat + '\n\n' + patch[:limit] + '\n[... diff tronqué]', True
+
+
 def build_context(stage, sha, version, journal_text):
     state = read_state(journal_text)
     refs = compute_refs(stage, sha, version, state)
@@ -192,6 +227,13 @@ def build_context(stage, sha, version, journal_text):
         for commit in items:
             commit['pr'] = pull_request(commit['sha'], cache) or pr_from_subject(
                 commit['subject'], os.environ.get('GITHUB_SERVER_URL', 'https://github.com'), os.environ.get('GITHUB_REPOSITORY', ''))
+    # Each commit's diff once, newest first, until the budget is spent.
+    diffs, budget = {}, MAX_DIFF_TOTAL
+    for commit in ranges['since_prod'] + ranges['staging_prod'] + ranges['dev_staging']:
+        if commit['sha'] not in diffs:
+            text, truncated = diff(commit['sha'], budget)
+            diffs[commit['sha']] = {'diff': text, 'tronque': truncated}
+            budget -= len(text)
     now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
     updated = dict(state.get('updated', {}))
     updated[stage] = now
@@ -203,29 +245,37 @@ def build_context(stage, sha, version, journal_text):
         'repository': os.environ.get('GITHUB_REPOSITORY', ''),
         'server_url': os.environ.get('GITHUB_SERVER_URL', 'https://github.com'),
         'stage': stage, 'sha': resolve(sha), 'version': version, 'now': now, 'run_url': run_url,
-        'refs': refs, 'updated': updated, 'ranges': ranges,
+        'refs': refs, 'updated': updated, 'ranges': ranges, 'diffs': diffs,
         'history': read_history(journal_text),
     }
 
 
 def build_request(context):
-    payload = {}
-    for key, title in SECTIONS:
-        payload[key] = {'titre': title, 'commits': [
-            {'sujet': c['subject'], 'auteur': c['author'], 'sha': c['sha'][:7],
-             'pr': c['pr'] and {'numero': c['pr']['number'], 'titre': c['pr']['title'],
-                                'url': c['pr']['url'], 'description': c['pr']['body']}}
-            for c in context['ranges'][key]]}
-    prompt = ('Dépôt : {}. Passage en cours : {}{}. Rédige les trois sections.\n\n{}').format(
+    # Commits (with their diff) once, sections as lists of sha: the since_prod range holds the
+    # other two, sending the diffs per section would send them twice.
+    commits_by_sha = {}
+    for key, _ in SECTIONS:
+        for c in context['ranges'][key]:
+            d = context.get('diffs', {}).get(c['sha'], {})
+            commits_by_sha.setdefault(c['sha'][:7], {
+                'sujet': c['subject'], 'auteur': c['author'],
+                'pr': c['pr'] and {'numero': c['pr']['number'], 'titre': c['pr']['title'],
+                                   'url': c['pr']['url'], 'description': c['pr']['body']},
+                'diff': d.get('diff', ''), 'diff_tronque': d.get('tronque', False)})
+    sections = {key: {'titre': title, 'commits': [c['sha'][:7] for c in context['ranges'][key]]}
+                for key, title in SECTIONS}
+    prompt = ('Dépôt : {}. Passage en cours : {}{}. Rédige les trois sections.\n\n'
+              '<commits>\n{}\n</commits>\n\n<plages>\n{}\n</plages>').format(
         context['repository'], context['stage'],
         ' (version v{})'.format(context['version']) if context['version'] else '',
-        json.dumps(payload, ensure_ascii=False, indent=1))
+        json.dumps(commits_by_sha, ensure_ascii=False, indent=1),
+        json.dumps(sections, ensure_ascii=False, indent=1))
     keys = [key for key, _ in SECTIONS]
     return {
         'model': MODEL,
-        'max_tokens': 16000,
+        'max_tokens': 32000,
         'fallbacks': 'default',
-        'output_config': {'effort': 'low', 'format': {'type': 'json_schema', 'schema': {
+        'output_config': {'effort': 'medium', 'format': {'type': 'json_schema', 'schema': {
             'type': 'object', 'properties': {key: {'type': 'string'} for key in keys},
             'required': keys, 'additionalProperties': False}}},
         'system': SYSTEM_PROMPT,

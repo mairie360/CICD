@@ -95,7 +95,7 @@ runs:
           if [ -z "$ANTHROPIC_API_KEY" ]; then
             echo "::warning::release-journal: no ANTHROPIC_API_KEY, plain commit lists only."
           else
-            status=$(curl -sS -o "$work/response.json" -w '%{http_code}' --max-time 300 \
+            status=$(curl -sS -o "$work/response.json" -w '%{http_code}' --max-time 900 \
               https://api.anthropic.com/v1/messages \
               -H "Content-Type: application/json" \
               -H "x-api-key: $ANTHROPIC_API_KEY" \

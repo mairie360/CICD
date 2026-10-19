@@ -133,6 +133,29 @@ class ReleaseJournalTests(unittest.TestCase):
         schema = request['output_config']['format']['schema']
         self.assertEqual(schema['required'], ['since_prod', 'dev_staging', 'staging_prod'])
         self.assertIn('MAIR-3 Add projects', request['messages'][0]['content'])
+        self.assertIn('FONCTIONNELS', request['system'])
+
+    def test_request_carries_each_commit_diff_once_without_lockfiles(self):
+        self.repo.commit('lockfileVersion 3', path='package-lock.json')
+        run('git', 'commit', '-q', '--amend', '-m', 'chore(deps): refresh the lockfile')
+        self.repo.commit('route GET /projects/{id}/members', path='routes.rs')
+        context, _ = self.stage('dev', run('git', 'rev-parse', 'HEAD'))
+        content = journal.build_request(context)['messages'][0]['content']
+        self.assertIn('+route GET /projects/{id}/members', content)
+        self.assertNotIn('lockfileVersion', content)
+        self.assertEqual(content.count('+route GET /projects/{id}/members'), 1)
+
+    def test_diffs_past_the_budget_are_cut_to_the_file_list(self):
+        with patch.object(journal, 'MAX_DIFF', 10):
+            text, truncated = journal.diff(self.feat, 1000)
+        self.assertTrue(truncated)
+        self.assertIn('code.txt', text.splitlines()[0])
+        text, truncated = journal.diff(self.feat, 0)
+        self.assertTrue(truncated)
+        self.assertNotIn('+feat', text)
+        text, truncated = journal.diff(self.first, 1000)
+        self.assertFalse(truncated)
+        self.assertIn('+feat: MAIR-1 First feature (#1)', text)
 
 
 if __name__ == '__main__':
