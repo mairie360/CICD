@@ -98,10 +98,13 @@ actions/
   unit-tests/<stack>     tests + Codecov upload                                   apis bffs fronts back-lib bffs-lib front-lib db
   integration/<stack>    integration tests against the dev image                  apis
   integration/container-logs   "Dump container logs" step shared by every job that starts a Docker stack
+  integration/frontend-isolated-qa   target.py of frontend-isolated-qa.yml (ZAP / k6 of a front against a verified dev digest)
   security/<stack>       stack-specific security check                            apis bffs fronts (ZAP) back-lib (cargo audit/deny) front-lib (npm audit + typecheck)
-  security/semgrep, security/gitleaks   cross-stack SAST / secret scan (security_sast job of every workflow)
+  security/semgrep, security/gitleaks   cross-stack SAST / secret scan (security_sast job of every workflow but the fronts')
+  security/semgrep-pypi, security/gitleaks-binary   same scans from the hash-checked Semgrep wheel / Gitleaks release binary, no Docker Hub pull (fronts, frontend-dev-exception.yml, lint.yml)
   performance/<stack>    load / bench test                                        apis bffs fronts (k6) db (schema bench)
-  release/               docker-release, semantic-tag, publish-openapi-rust, publish-openapi-typescript, release-folder, docker-manual-build
+  release/               docker-release, semantic-tag, publish-openapi-rust, publish-openapi-typescript, release-folder, docker-manual-build,
+                         frontend-dev-exception (check_policy.py of frontend-dev-exception.yml)
   promote/               reserved for the staging -> prod gates of the next MAIR-492 tickets (README only)
   notify/cicd-failure    n8n failure notification
 ```
