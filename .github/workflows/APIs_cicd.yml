@@ -29,6 +29,12 @@ on:
       ANTHROPIC_API_KEY:
         required: false
         description: "Claude API key of the release journal (org secret); without it the journal keeps plain commit lists"
+      RELEASE_APP_ID:
+        required: false
+        description: "Release app (org secret) pushing the release journal on main"
+      RELEASE_APP_PK:
+        required: false
+        description: "Private key of the release app (org secret)"
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
@@ -161,7 +167,7 @@ jobs:
     # is released to dev right away. Staging and Prod keep their environments.
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # release journal pushed on main
+      contents: read
       packages: write
       id-token: write  # [NOUVEAU] MAIR-416: cosign keyless signature
     # [NOUVEAU] Exposed so the test jobs below run against the exact `dev-<sha_tag>`
@@ -216,6 +222,8 @@ jobs:
           stage: dev
           github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   # [CHANGEMENT] The three test jobs below no longer rebuild the API from source: they pull
   # the `dev-<sha_tag>` image published by `release-dev` (the one that gets promoted to
@@ -354,7 +362,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
-      contents: write  # release journal pushed on main
+      contents: read
       packages: write
     outputs:
       digest: ${{ steps.release.outputs.digest }}
@@ -403,6 +411,8 @@ jobs:
           stage: staging
           github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   release-prod:
     needs: release-staging
@@ -471,6 +481,8 @@ jobs:
           version: ${{ steps.set_tag.outputs.new_release_version }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   notify-cicd-failure:
     name: Notify n8n on failure

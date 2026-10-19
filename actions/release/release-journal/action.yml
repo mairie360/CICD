@@ -6,8 +6,9 @@ description: >-
   plain commit lists are kept when the API call fails. Commits the file on main.
 
 # [NOUVEAU] Called as the last step of release-dev, release-staging and release-prod (only when a
-# version was published). Needs `contents: write` (push on main, through a ruleset bypass for
-# GitHub Actions). Pull requests are read without `pull-requests: read` (public repos; callers
+# version was published). The journal is pushed on main with a token of the org's release app
+# (Acme-Global-Bot, RELEASE_APP_ID / RELEASE_APP_PK), bypass actor of the main rulesets: the
+# GitHub Actions app cannot be one (not installed on the org). Pull requests are read without `pull-requests: read` (public repos; callers
 # do not grant it, and a nested job asking for more than its caller fails at startup).
 inputs:
   stage:
@@ -18,7 +19,13 @@ inputs:
     required: false
     default: ""
   github_token:
-    description: "Token that reads the pull requests and pushes the journal on main"
+    description: "Token that reads the pull requests"
+    required: true
+  app_id:
+    description: "ID of the GitHub App that pushes the journal on main (org secret RELEASE_APP_ID)"
+    required: true
+  app_private_key:
+    description: "Private key of that GitHub App (org secret RELEASE_APP_PK)"
     required: true
   anthropic_api_key:
     description: "Claude API key (org secret ANTHROPIC_API_KEY); empty keeps the plain commit lists"
@@ -36,14 +43,25 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Token of the release app
+      id: app_token
+      uses: actions/create-github-app-token@v3
+      with:
+        app-id: ${{ inputs.app_id }}
+        private-key: ${{ inputs.app_private_key }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
+
     # The job's own checkout is the released commit; the journal goes on top of main's tip.
+    # Pushed with the app token, the journal commit would start a pipeline on main: its
+    # `[skip ci]` subject prevents it.
     - name: Checkout main for the journal
       uses: actions/checkout@v7
       with:
         ref: ${{ github.event.repository.default_branch }}
         path: .release-journal
         fetch-depth: 0
-        token: ${{ inputs.github_token }}
+        token: ${{ steps.app_token.outputs.token }}
 
     - name: Write and push the journal
       shell: bash
@@ -103,7 +121,7 @@ runs:
             break
           fi
           if [ "$attempt" = 3 ]; then
-            echo "::error::release-journal: push to $BRANCH rejected three times (ruleset bypass for GitHub Actions missing?)"
+            echo "::error::release-journal: push to $BRANCH rejected three times (release app not a bypass actor of the main rulesets?)"
             exit 1
           fi
         done
