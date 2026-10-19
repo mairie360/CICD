@@ -18,7 +18,7 @@ runs:
   using: "composite"
   steps:
     - name: Setup Node.js
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version: ${{ inputs.node_version }}
         cache: 'npm'
@@ -35,8 +35,9 @@ runs:
 
     - name: Upload Coverage to Codecov
       if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-      uses: codecov/codecov-action@v7
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
       with:
         token: ${{ inputs.codecov_token }}
         files: coverage/lcov.info
+        disable_search: true
         fail_ci_if_error: false

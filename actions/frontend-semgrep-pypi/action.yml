@@ -1,0 +1,84 @@
+name: Frontend pinned Semgrep
+description: Run the published Semgrep 1.177.0 wheel and hash-locked dependencies for frontend scans.
+inputs:
+  config:
+    description: Semgrep rulesets or config files, separated by spaces or newlines.
+    required: true
+  paths:
+    description: Scan targets, separated by spaces or newlines.
+    default: '.'
+  exclude:
+    description: Excluded patterns, separated by spaces or newlines.
+    default: cicd-repo
+  fail_on_findings:
+    description: Findings fail when true; scanner or report errors always fail.
+    default: 'true'
+  upload_sarif:
+    description: Upload the real report to existing code-scanning permissions when true.
+    default: 'false'
+  sarif_category:
+    description: Code-scanning category.
+    default: semgrep
+  artifact_name:
+    description: Real SARIF artifact name; an empty value disables artifact upload.
+    default: semgrep-sarif
+outputs:
+  findings:
+    description: Real findings count from the scanner's SARIF report.
+    value: ${{ steps.scan.outputs.findings }}
+  exit_code:
+    description: Actual Semgrep process exit code.
+    value: ${{ steps.scan.outputs.exit_code }}
+  sarif_file:
+    description: Actual report path on the runner.
+    value: ${{ steps.scan.outputs.sarif_file }}
+runs:
+  using: composite
+  steps:
+    - name: Set up the verified Python runtime
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: '3.14.8'
+        architecture: x64
+    - name: Install the hash-locked frontend scanner
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -c 'import platform, sys; assert sys.platform == "linux" and platform.machine() == "x86_64" and sys.version_info[:2] == (3, 14), "The scanner lock requires Linux x86_64 / CPython 3.14"'
+        frontend_semgrep_environment=$(mktemp -d "$RUNNER_TEMP/frontend-semgrep-venv.XXXXXX")
+        python -m venv "$frontend_semgrep_environment"
+        "$frontend_semgrep_environment/bin/python" -m pip --isolated install \
+          --require-hashes --only-binary=:all: --index-url https://pypi.org/simple \
+          -r "$GITHUB_ACTION_PATH/requirements-linux-python314.lock"
+        "$frontend_semgrep_environment/bin/python" -m pip --isolated check
+        echo "FRONTEND_SEMGREP_PYTHON=$frontend_semgrep_environment/bin/python" >> "$GITHUB_ENV"
+    - name: Run the actual frontend scan
+      id: scan
+      shell: bash
+      env:
+        SEMGREP_CONFIG: ${{ inputs.config }}
+        SEMGREP_PATHS: ${{ inputs.paths }}
+        SEMGREP_EXCLUDE: ${{ inputs.exclude }}
+        SEMGREP_SETTINGS_FILE: ${{ runner.temp }}/frontend-semgrep-settings.yml
+      run: '"$FRONTEND_SEMGREP_PYTHON" "$GITHUB_ACTION_PATH/run_scan.py" scan'
+    - name: Upload the real SARIF artifact
+      if: inputs.artifact_name != '' && steps.scan.outputs.has_sarif == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ${{ steps.scan.outputs.sarif_file }}
+        if-no-files-found: error
+        retention-days: 14
+    - name: Upload to existing code scanning
+      if: inputs.upload_sarif == 'true' && steps.scan.outputs.has_sarif == 'true'
+      uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif_file }}
+        category: ${{ inputs.sarif_category }}
+    - name: Apply the real scanner verdict
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        FINDINGS: ${{ steps.scan.outputs.findings }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+      run: '"$FRONTEND_SEMGREP_PYTHON" "$GITHUB_ACTION_PATH/run_scan.py" verdict'
