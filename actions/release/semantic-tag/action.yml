@@ -29,6 +29,31 @@ runs:
       with:
         node-version: "24"
 
+    # [NOUVEAU] release/release-journal commits RELEASE_JOURNAL.md on main after the dev and
+    # staging releases of this same commit, so main is always ahead of it here, and
+    # semantic-release publishes nothing from a branch that is behind its remote. Fast-forward
+    # over those commits when they are the only ones ahead (they change nothing but the journal):
+    # the tag then lands on the last journal commit, same code as the tested one. Any other
+    # commit ahead keeps the previous behaviour (no release from this run).
+    - name: Skip the release journal commits
+      shell: bash
+      env:
+        JOURNAL: RELEASE_JOURNAL.md
+      run: |
+        branch="${GITHUB_REF#refs/heads/}"
+        git rev-parse --verify --quiet HEAD >/dev/null || exit 0
+        git fetch --quiet origin "$branch" || exit 0
+        remote="$(git rev-parse FETCH_HEAD)"
+        if [ "$remote" = "$(git rev-parse HEAD)" ] || ! git merge-base --is-ancestor HEAD "$remote"; then
+          exit 0
+        fi
+        other_commits="$(git log --format=%s "HEAD..$remote" | grep -v '^docs(release-journal):' || true)"
+        other_files="$(git diff --name-only HEAD "$remote" | grep -vxF "$JOURNAL" || true)"
+        if [ -z "$other_commits" ] && [ -z "$other_files" ]; then
+          git merge --ff-only --quiet "$remote"
+          echo "Fast-forwarded over the release journal commits to ${remote::7}."
+        fi
+
     - name: Semantic Release
       id: semantic
       uses: cycjimmy/semantic-release-action@v6.0.0

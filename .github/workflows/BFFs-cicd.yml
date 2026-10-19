@@ -47,6 +47,15 @@ on:
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the image (accepted risks go in .trivyignore)"
     secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+        description: "Claude API key of the release journal (org secret); without it the journal keeps plain commit lists"
+      RELEASE_APP_ID:
+        required: false
+        description: "Release app (org secret) pushing the release journal on main"
+      RELEASE_APP_PK:
+        required: false
+        description: "Private key of the release app (org secret)"
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
@@ -335,6 +344,18 @@ jobs:
           dist_tag: dev
           spec_file: ./openapi-spec.json
 
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: dev
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
+
   security_tests:
     name: Dynamic Security Tests (OWASP ZAP)
     runs-on: ubuntu-latest
@@ -444,6 +465,18 @@ jobs:
           dist_tag: staging
           spec_file: ./openapi-spec.json
 
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: staging
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
+
   # ==========================================================================
   # PROD : tags <version> et latest, uniquement si semantic-release publie
   # ==========================================================================
@@ -507,6 +540,20 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ steps.set_tag.outputs.new_release_version }}
           spec_file: ./openapi-spec.json
+
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: prod
+          version: ${{ steps.set_tag.outputs.new_release_version }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   notify-cicd-failure:
     name: Notify n8n on failure
