@@ -1,5 +1,14 @@
 {
   "extends": [
     "github>mairie360/renovate-config"
+  ],
+  "packageRules": [
+    {
+      "description": "Frontend scanner wheels are hash-locked for CPython 3.14; another minor requires a reviewed lock update",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["python"],
+      "matchFileNames": ["actions/frontend-semgrep-pypi/action.yml"],
+      "allowedVersions": "/^3\\.14\\./"
+    }
   ]
 }

@@ -1,0 +1,11 @@
+# Pinned frontend Semgrep installation
+
+The frontend pipelines can fail before scanning when Docker Hub refuses or times out downloading the Semgrep image. This dedicated action runs the published Semgrep 1.177.0 wheel from PyPI. The existing Docker scanner and backend/library workflows keep their current implementation.
+
+The action provisions CPython 3.14.8 with the immutable setup-python v6 commit, creates a fresh isolated environment and installs only wheels with `--require-hashes`. The Linux x86_64 / CPython 3.14 lock contains 66 exact versions and artifact SHA-256 values from an actual public PyPI resolution. The Semgrep wheel hash is `32d92d0cd2e18a1495b32abfef926be0ed3c972d8cd169bffe6cbb8418e3bb5e`, verified against the [published release metadata](https://pypi.org/pypi/semgrep/1.177.0/json). [Semgrep documents Python package installation for CI](https://semgrep.dev/docs/semgrep-ci/sample-ci-configs).
+
+The caller's configs, targets, exclusions and findings policy retain their existing interface. The scan uses the real engine, `--error`, disabled metrics/version checking and one worker. Real SARIF is uploaded before applying the raw exit verdict. Missing, malformed, stale or inconsistent reports cannot certify a clean scan; scanner errors always fail, including when findings are configured as reporting only. No synthetic successful check is emitted.
+
+Ordinary frontend and dev-exception workflows use the same rule sets and check names. Gitleaks, npm audit, image scan/signing, environment approvals, protections and RGAA settings remain independent. The original development dependency audit failure is retained; this installation does not grant a release exception or approve an environment.
+
+Run `python3 -m unittest discover -s actions/frontend-semgrep-pypi/tests -v` for evidence/verdict guards and retain the existing frontend dev-exception tests. For a reviewed update, resolve the entire wheel dependency closure for this platform/interpreter, verify published artifact metadata and hashes, validate installation and real clean/finding SARIF outcomes, then update the exact lock. Unsupported platforms/interpreters fail rather than falling back to unpinned packages.
