@@ -31,6 +31,9 @@ on:
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the image (accepted risks go in .trivyignore)"
     secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+        description: "Claude API key of the release journal (org secret); without it the journal keeps plain commit lists"
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
@@ -201,7 +204,7 @@ jobs:
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
     # is released to dev right away. Staging and Prod keep their environments.
     permissions:
-      contents: read
+      contents: write  # release journal pushed on main
       packages: write
       id-token: write  # [NOUVEAU] MAIR-416: cosign keyless signature
     outputs:
@@ -235,6 +238,16 @@ jobs:
           build_secret_envs: |
             node_auth_token=NODE_AUTH_TOKEN
           scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
+
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: dev
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   security_tests:
     name: Dynamic Security Tests (OWASP ZAP)
@@ -345,7 +358,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
-      contents: read
+      contents: write  # release journal pushed on main
       packages: write
     outputs:
       digest: ${{ steps.release.outputs.digest }}
@@ -367,6 +380,16 @@ jobs:
           package_name: ${{ inputs.package_name }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           expected_digest: ${{ needs.release-dev.outputs.digest }}
+
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: staging
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   release-prod:
     needs: release-staging
@@ -407,6 +430,18 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release_published: ${{ steps.set_tag.outputs.new_release_published }}
           release_version: ${{ steps.set_tag.outputs.new_release_version }}
+
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: prod
+          version: ${{ steps.set_tag.outputs.new_release_version }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   notify-cicd-failure:
     name: Notify n8n on failure

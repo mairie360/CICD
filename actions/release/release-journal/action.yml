@@ -1,0 +1,120 @@
+name: "Release journal"
+description: >-
+  Rewrites the repo's RELEASE_JOURNAL.md after a release to dev, staging or prod: what main gained
+  since the last prod release, the dev -> staging and staging -> prod differences, and the history
+  of the promotions. Claude writes the summaries from the commits and their pull requests; the
+  plain commit lists are kept when the API call fails. Commits the file on main.
+
+# [NOUVEAU] Called as the last step of release-dev, release-staging and release-prod (only when a
+# version was published). Needs `contents: write` (push on main, through a ruleset bypass for
+# GitHub Actions). Pull requests are read without `pull-requests: read` (public repos; callers
+# do not grant it, and a nested job asking for more than its caller fails at startup).
+inputs:
+  stage:
+    description: "Release stage: dev | staging | prod"
+    required: true
+  version:
+    description: "Version released in prod, without the v (semantic-tag's new_release_version)"
+    required: false
+    default: ""
+  github_token:
+    description: "Token that reads the pull requests and pushes the journal on main"
+    required: true
+  anthropic_api_key:
+    description: "Claude API key (org secret ANTHROPIC_API_KEY); empty keeps the plain commit lists"
+    required: false
+    default: ""
+  model:
+    description: "Claude model writing the summaries"
+    required: false
+    default: "claude-opus-5-5"
+  journal_path:
+    description: "Path of the journal in the repo"
+    required: false
+    default: "RELEASE_JOURNAL.md"
+
+runs:
+  using: "composite"
+  steps:
+    # The job's own checkout is the released commit; the journal goes on top of main's tip.
+    - name: Checkout main for the journal
+      uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event.repository.default_branch }}
+        path: .release-journal
+        fetch-depth: 0
+        token: ${{ inputs.github_token }}
+
+    - name: Write and push the journal
+      shell: bash
+      working-directory: .release-journal
+      env:
+        STAGE: ${{ inputs.stage }}
+        VERSION: ${{ inputs.version }}
+        JOURNAL: ${{ inputs.journal_path }}
+        BRANCH: ${{ github.event.repository.default_branch }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        RELEASE_JOURNAL_MODEL: ${{ inputs.model }}
+        SCRIPT: ${{ github.action_path }}/release_journal.py
+      run: |
+        case "$STAGE" in dev|staging|prod) ;; *) echo "::error::release-journal: unknown stage '$STAGE'"; exit 1 ;; esac
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        work="$RUNNER_TEMP/release-journal"
+        mkdir -p "$work"
+        label="$STAGE ${GITHUB_SHA::7}"
+        [ -n "$VERSION" ] && label="$STAGE v${VERSION#v}"
+
+        # Two runs can push at the same time (dev of the next merge, staging of this one):
+        # start again from the new tip of main when the push is rejected.
+        for attempt in 1 2 3; do
+          git fetch --quiet --tags origin "$BRANCH"
+          git reset --quiet --hard "origin/$BRANCH"
+          python3 -I "$SCRIPT" prepare "$STAGE" "$GITHUB_SHA" "$VERSION" "$JOURNAL" "$work"
+
+          rm -f "$work/response.json"
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::release-journal: no ANTHROPIC_API_KEY, plain commit lists only."
+          else
+            status=$(curl -sS -o "$work/response.json" -w '%{http_code}' --max-time 300 \
+              https://api.anthropic.com/v1/messages \
+              -H "Content-Type: application/json" \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "anthropic-beta: server-side-fallback-2026-07-01" \
+              --data-binary "@$work/request.json") || status=000
+            if [ "$status" != "200" ]; then
+              echo "::warning::release-journal: Claude API answered $status, plain commit lists only."
+              jq -c '.error // empty' "$work/response.json" 2>/dev/null || true
+              rm -f "$work/response.json"
+            fi
+          fi
+
+          python3 -I "$SCRIPT" render "$JOURNAL" "$work" "$work/response.json"
+          git add -- "$JOURNAL"
+          if git diff --cached --quiet; then
+            echo "Journal unchanged."
+            break
+          fi
+          git commit --quiet -m "docs(release-journal): $label [skip ci]"
+          if git push --quiet origin "HEAD:$BRANCH"; then
+            echo "Journal pushed: $label"
+            break
+          fi
+          if [ "$attempt" = 3 ]; then
+            echo "::error::release-journal: push to $BRANCH rejected three times (ruleset bypass for GitHub Actions missing?)"
+            exit 1
+          fi
+        done
+
+        {
+          echo "## Release journal ($label)"
+          echo
+          cat "$JOURNAL"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Clean up
+      if: always()
+      shell: bash
+      run: rm -rf .release-journal "$RUNNER_TEMP/release-journal"

@@ -50,6 +50,9 @@ jobs:
       - name: Test isolated frontend target selection
         run: python3 -m unittest discover -s actions/integration/frontend-isolated-qa/tests -v
 
+      - name: Test the release journal
+        run: python3 -m unittest discover -s actions/release/release-journal/tests -v
+
   frontend-exception-security:
     name: frontend dev exception source scans
     runs-on: ubuntu-latest

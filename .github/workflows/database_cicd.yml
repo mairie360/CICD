@@ -25,6 +25,9 @@ on:
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the images (accepted risks go in .trivyignore)"
     secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+        description: "Claude API key of the release journal (org secret); without it the journal keeps plain commit lists"
       N8N_WEBHOOK_SECRET:
         required: true
       CODECOV_TOKEN:
@@ -112,7 +115,7 @@ jobs:
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
     # is released to dev right away. Staging and Prod keep their environments.
     permissions:
-      contents: read
+      contents: write  # release journal pushed on main
       packages: write
       id-token: write  # cosign keyless signature
     outputs:
@@ -140,6 +143,16 @@ jobs:
           extra_package_name: liquibase-migrations
           extra_dockerfile: ./liquibase/Dockerfile
           scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
+
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: dev
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # [NOUVEAU] MAIR-476: schema load test, gate between dev and staging, like the
   # `performance_tests` job of the other stacks. The repo's `./performance_test.sh`
@@ -187,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Staging
     permissions:
-      contents: read
+      contents: write  # release journal pushed on main
       packages: write
     outputs:
       digest: ${{ steps.release.outputs.digest }}
@@ -210,6 +223,16 @@ jobs:
           extra_package_name: liquibase-migrations
           expected_digest: ${{ needs.release-dev.outputs.digest }}
           expected_extra_digest: ${{ needs.release-dev.outputs.extra_digest }}
+
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: staging
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # [NOUVEAU] MAIR-491: release folder gate, between staging and the Prod approval. Computes the
   # version release-prod will tag (semantic-release dry run on this commit) and checks that the
@@ -293,6 +316,18 @@ jobs:
           expected_extra_digest: ${{ needs.release-staging.outputs.extra_digest }}
           release_published: ${{ steps.set_tag.outputs.new_release_published }}
           release_version: ${{ steps.set_tag.outputs.new_release_version }}
+
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        if: steps.set_tag.outputs.new_release_published == 'true'
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: prod
+          version: ${{ steps.set_tag.outputs.new_release_version }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   notify-cicd-failure:
     name: Notify n8n on failure
