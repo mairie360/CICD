@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -156,6 +157,16 @@ class ReleaseJournalTests(unittest.TestCase):
         text, truncated = journal.diff(self.first, 1000)
         self.assertFalse(truncated)
         self.assertIn('+feat: MAIR-1 First feature (#1)', text)
+
+
+class ActionPinTests(unittest.TestCase):
+    def test_actions_handling_the_release_app_key_are_pinned_to_a_commit(self):
+        # A moved upstream tag would run new code with the app key and the push token.
+        action = (Path(__file__).parents[1] / 'action.yml').read_text()
+        refs = re.findall(r'uses:\s*([^\s#]+)', action)
+        self.assertTrue(refs)
+        for ref in refs:
+            self.assertRegex(ref, r'^[\w.-]+/[\w.-]+@[0-9a-f]{40}$')
 
 
 if __name__ == '__main__':
