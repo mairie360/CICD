@@ -130,7 +130,9 @@ class ReleaseJournalTests(unittest.TestCase):
     def test_request_asks_for_the_three_sections_as_structured_output(self):
         context, _ = self.stage('dev', self.feat)
         request = journal.build_request(context)
-        self.assertEqual(request['model'], 'claude-opus-5-5')
+        self.assertEqual(request['model'], 'claude-haiku-5-5')
+        # Haiku 5.5 has no server-side fallback: the parameter must not be sent.
+        self.assertNotIn('fallbacks', request)
         schema = request['output_config']['format']['schema']
         self.assertEqual(schema['required'], ['since_prod', 'dev_staging', 'staging_prod'])
         self.assertIn('MAIR-3 Add projects', request['messages'][0]['content'])
