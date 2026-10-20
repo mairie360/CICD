@@ -44,7 +44,7 @@ DIFF_EXCLUDES = (':(exclude,glob)**/*.lock', ':(exclude,glob)**/package-lock.jso
                  ':(exclude,glob)**/*.snap', ':(exclude,glob)**/RELEASE_JOURNAL.md',
                  ':(exclude,glob)**/*.min.js', ':(exclude,glob)**/*.svg')
 EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
-MODEL = os.environ.get('RELEASE_JOURNAL_MODEL', 'claude-opus-5-5')
+MODEL = os.environ.get('RELEASE_JOURNAL_MODEL', 'claude-haiku-5-5')
 
 SECTIONS = (
     ('since_prod', 'Ajouté sur main depuis la dernière release prod'),
@@ -274,7 +274,6 @@ def build_request(context):
     return {
         'model': MODEL,
         'max_tokens': 32000,
-        'fallbacks': 'default',
         'output_config': {'effort': 'medium', 'format': {'type': 'json_schema', 'schema': {
             'type': 'object', 'properties': {key: {'type': 'string'} for key in keys},
             'required': keys, 'additionalProperties': False}}},

@@ -34,7 +34,7 @@ inputs:
   model:
     description: "Claude model writing the summaries"
     required: false
-    default: "claude-opus-5-5"
+    default: "claude-haiku-5-5"
   journal_path:
     description: "Path of the journal in the repo"
     required: false
@@ -101,7 +101,6 @@ runs:
               -H "Content-Type: application/json" \
               -H "x-api-key: $ANTHROPIC_API_KEY" \
               -H "anthropic-version: 2023-06-01" \
-              -H "anthropic-beta: server-side-fallback-2026-07-01" \
               --data-binary "@$work/request.json") || status=000
             if [ "$status" != "200" ]; then
               echo "::warning::release-journal: Claude API answered $status, plain commit lists only."
