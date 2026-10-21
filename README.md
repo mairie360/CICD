@@ -29,7 +29,7 @@ The steps of every job live in composite actions sorted by check type, then by s
 | `actions/lint/<stack>` | lint command | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
 | `actions/build/<stack>` | build and its artifacts | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
 | `actions/unit-tests/<stack>` | tests and the Codecov upload | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib`, `db` |
-| `actions/integration/<stack>` | integration tests against the dev image; `container-logs` is the log dump shared by every job that starts a Docker stack; `frontend-isolated-qa` holds `target.py` of `frontend-isolated-qa.yml` | `apis`, `fronts` |
+| `actions/integration/<stack>` | integration tests against the dev image (`bffs` replays the repo's newman collection, MAIR-262: junit summary in the job summary + `newman-report-<package_name>` artifact); `container-logs` is the log dump shared by every job that starts a Docker stack; `frontend-isolated-qa` holds `target.py` of `frontend-isolated-qa.yml` | `apis`, `bffs`, `fronts` |
 | `actions/security/<stack>` | stack-specific security check: OWASP ZAP (`apis`, `bffs`, `fronts`), `cargo audit` + `cargo deny` (`back-lib`), npm audit + typecheck (`front-lib`) | `apis`, `bffs`, `fronts`, `back-lib`, `front-lib` |
 | `actions/security/semgrep`, `actions/security/gitleaks` | cross-stack SAST and secret scan (pinned Docker images), `security_sast` job of every workflow but the fronts' | all but `fronts` |
 | `actions/security/semgrep-pypi`, `actions/security/gitleaks-binary` | the same scans from the hash-checked Semgrep wheel and Gitleaks release binary (no Docker Hub pull); `frontend-cicd.yml`, `frontend-dev-exception.yml` and this repo's `lint.yml` | `fronts` |
@@ -170,7 +170,7 @@ workflow per environment, each calling a reusable workflow of this repo. No imag
 | --- | --- | --- |
 | Commit | `sha` input, else main's newest commit (release journal / `[skip ci]` commits left out) | `sha` input, else main's newest commit released on staging |
 | Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists |
-| Gates | integration tests (APIs), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder (database, MAIR-491); RGPD / RGAA / E2E plug in here (MAIR-604, MAIR-317/319, MAIR-602) |
+| Gates | integration tests (APIs; BFFs since MAIR-262, newman collection), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder (database, MAIR-491); RGPD / RGAA / E2E plug in here (MAIR-604, MAIR-317/319, MAIR-602) |
 | Environment | `Staging` | `Prod` |
 | Publishes | `staging-<sha>` / `staging`, `@mairie360/<name>-openapi@0.0.0-staging.<sha>` (APIs: 7 chars, BFFs: 40) | git tag `v<version>` + GitHub release on the commit, `<version>` / `latest`, OpenAPI `<version>` |
 
@@ -229,6 +229,26 @@ jobs:
 
 BFFs also pass `openapi_spec_path` (the committed contract, same value as in `cicd.yml`). Run it
 with `gh workflow run promote-staging.yml -R mairie360/<repo> [-f sha=<sha>]`.
+
+### BFF integration gate (MAIR-262)
+
+The `integration_tests` job of `promote-staging.yml` runs for the APIs and the BFFs. A BFF repo
+provides an `integration_test.sh` of the same shape as its `security_test.sh` (builds
+`bff-<name>:local` from `development.Dockerfile` when `IMAGE_REF` is empty, needs `.npmrc` +
+`NODE_AUTH_TOKEN` for the `@mairie360/*` packages, sources `stack_secrets.sh`) driving a
+`docker-compose-integration.yml` whose `newman` service replays the repo's collection against the
+BFF with `--bail` and writes the junit report to `newman-reports/newman.xml` (relative to the
+repo root, the script creates the folder). The script's exit code is newman's. The action
+(`actions/integration/bffs`: `image_ref`, `npm_scope`, `github_token`) logs in to GHCR, writes
+the build `.npmrc`, runs the script with `IMAGE_REF=<image>:dev-<sha>`, then, whatever the
+outcome, summarizes the report in the job summary (total / passed / failed, the failed
+assertions with their request and message, or a note when the file is missing) and uploads
+`newman-reports/` as the `newman-report-<package_name>` artifact (14 days). The job has no step
+timeout (the stacks pull the database and several API images) and a 40 min job timeout.
+
+**Non-regression:** a BFF whose collection fails (an upstream contract field renamed, a status
+code changed, a route gone) fails `integration_tests`, and `promote` is not run: the commit
+stays on dev until the collection or the BFF is fixed, exactly like a ZAP or k6 failure.
 
 ### Migrating a consumer to the promotion workflows (v4.4.0, MAIR-494)
 

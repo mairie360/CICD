@@ -1,0 +1,92 @@
+name: "Integration tests (BFFs)"
+description: >-
+  Integration tests of a BFF through the consumer's `integration_test.sh` (`integration_tests` job
+  of promote-staging.yml, MAIR-262): the script starts `docker-compose-integration.yml` (the BFF
+  under test plus the upstream API images it needs) and replays the repo's newman collection,
+  whose exit code (`--bail`) is the verdict. Runs against the published `dev-<sha_tag>` image given
+  in `image_ref`. The newman junit report (`newman-reports/newman.xml`) is summarized in the job
+  summary and uploaded as an artifact, whatever the outcome. The caller keeps the container log
+  dump on failure (`integration/container-logs`); no step timeout: the BFF stacks pull several
+  images, the job timeout bounds them.
+
+inputs:
+  image_ref:
+    description: "Image under test, `<image>:dev-<sha_tag>` from the resolve outputs (exported as IMAGE_REF)"
+    required: true
+  npm_scope:
+    description: "npm scope hosted on GitHub Packages (the workflow input npm_scope)"
+    required: true
+  github_token:
+    description: "Token used to pull from GHCR and GitHub Packages (the caller passes secrets.GITHUB_TOKEN)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Log in to GHCR
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.github_token }}
+      run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    # docker-compose-integration.yml mounts ./.npmrc as a BuildKit secret so that a local build
+    # of the BFF (IMAGE_REF empty) can install the @mairie360/* packages: the file does not exist
+    # after a plain checkout (it is gitignored). The token itself only travels through
+    # NODE_AUTH_TOKEN, never inside the file.
+    - name: Generate the build .npmrc
+      shell: bash
+      env:
+        NPM_SCOPE: ${{ inputs.npm_scope }}
+      run: |
+        set -euo pipefail
+        umask 077
+        printf '%s\n' \
+          "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
+          '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+          > .npmrc
+
+    # IMAGE_REF is the exact dev-<sha_tag> tag of the promoted commit (never a mobile tag), so
+    # the stack tests the published image instead of rebuilding from development.Dockerfile.
+    - name: Run integration tests via Docker Compose
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image_ref }}
+        NODE_AUTH_TOKEN: ${{ inputs.github_token }}
+      run: bash ./integration_test.sh
+
+    - name: Remove the build .npmrc
+      if: always()
+      shell: bash
+      run: rm -f .npmrc
+
+    # The verdict is the script's exit code above; these steps only publish the report, so they
+    # run on failure too (a failed collection is exactly when the report matters) and never fail.
+    - name: Newman report summary
+      if: always()
+      shell: bash
+      env:
+        SCRIPT: ${{ github.action_path }}/newman_summary.py
+      run: python3 -I "$SCRIPT" newman-reports/newman.xml >> "$GITHUB_STEP_SUMMARY"
+
+    # Artifact named after the image base name (`ghcr.io/mairie360/bff-user:dev-abc1234` ->
+    # `newman-report-bff-user`), which is the consumer's package_name.
+    - name: Name the newman report artifact
+      if: always()
+      id: report
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image_ref }}
+      run: |
+        name="${IMAGE_REF##*/}"
+        name="${name%%@*}"
+        name="${name%%:*}"
+        echo "name=newman-report-${name:-bff}" >> "$GITHUB_OUTPUT"
+
+    - name: Upload the newman report
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.report.outputs.name }}
+        path: newman-reports/
+        if-no-files-found: ignore
+        retention-days: 14
