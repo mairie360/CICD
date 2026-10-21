@@ -206,7 +206,7 @@ class PromotionCommitsSkipCiTest(unittest.TestCase):
         step = text.split('uses: ./cicd-repo/actions/promote/create-release', 1)[1].split('- name:', 1)[0]
         self.assertIn('github_token: ${{ secrets.GITHUB_TOKEN }}', step)
         script = (ROOT / 'actions' / 'promote' / 'create-release' / 'release.sh').read_text(encoding='utf-8')
-        pushes = [line.strip() for line in script.splitlines() if 'git push' in line]
+        pushes = [line.strip() for line in script.splitlines() if 'git push' in line and not line.lstrip().startswith('#')]
         self.assertEqual(pushes, ['git push --quiet origin "refs/tags/$tag"'])
         self.assertNotIn('git commit', script)
 
