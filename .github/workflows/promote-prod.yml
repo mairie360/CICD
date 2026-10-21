@@ -254,6 +254,8 @@ jobs:
           sha: ${{ needs.resolve.outputs.sha }}
           notes_file: ${{ runner.temp }}/release-notes/release-notes.md
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
       - name: Publish OpenAPI (APIs)
         if: inputs.stack == 'apis'

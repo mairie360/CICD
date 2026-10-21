@@ -2,14 +2,16 @@ name: "Tag and release a commit"
 description: >-
   Creates the `v<version>` tag on the promoted commit and its GitHub release (MAIR-494). Idempotent:
   a rerun after a later failure keeps an existing tag on the same commit and an existing release.
-  The caller checks out the repository with the default `persist-credentials` (the tag is pushed
-  through that checkout).
+  The caller checks out the repository (the tag is pushed from that checkout).
 
-# The tag is pushed with git, as @semantic-release/git did, and the release is created on that
-# existing tag (`--verify-tag`). Letting the releases API create the tag (`--target <sha>`) is
-# refused to the run's token with `HTTP 403: Resource not accessible by integration` when the
-# commit changes `.github/workflows` (a ref on such a commit needs the `workflows` permission,
-# which GITHUB_TOKEN cannot have).
+# GitHub refuses a new ref from an app without the `workflows` permission when the commit's
+# `.github/workflows` differ from the default branch's, which is the usual case here: the promoted
+# commit is behind main, and Renovate keeps bumping the CICD pin in main's workflows. GITHUB_TOKEN
+# can never get that permission (v4.4.1: `HTTP 403` from the releases API; v4.4.2: `refusing to
+# allow a GitHub App to create or update workflow` on `git push`), so the tag is pushed with a
+# token of the release app Acme-Global-Bot restricted to `contents` + `workflows`. The tag push
+# starts the service workflows that run on every push (their `on.push` must filter `branches`).
+# The release is then created on the existing tag (`--verify-tag`) with the run's token.
 inputs:
   version:
     description: "Version to release, without the `v` (next-version's `new_release_version`)"
@@ -23,14 +25,33 @@ inputs:
   github_token:
     description: "Token of the release (pass `secrets.GITHUB_TOKEN`, `contents: write`)"
     required: true
+  app_id:
+    description: "Id of the release app (org secret `RELEASE_APP_ID`), which needs `workflows: write`"
+    required: true
+  app_private_key:
+    description: "Private key of the release app (org secret `RELEASE_APP_PK`)"
+    required: true
 
 runs:
   using: "composite"
   steps:
+    # Actions that receive the release app key or its token are pinned to a commit, not a tag.
+    - name: Token of the release app
+      id: app_token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      with:
+        app-id: ${{ inputs.app_id }}
+        private-key: ${{ inputs.app_private_key }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
+        permission-contents: write
+        permission-workflows: write
+
     - name: Create the tag and the GitHub release
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
+        PUSH_TOKEN: ${{ steps.app_token.outputs.token }}
         VERSION: ${{ inputs.version }}
         SHA: ${{ inputs.sha }}
         NOTES: ${{ inputs.notes_file }}

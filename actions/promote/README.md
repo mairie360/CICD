@@ -11,7 +11,8 @@ the other types (`actions/<type>/<stack>`).
 - `next-version/`: semantic-release dry run on a commit that may be behind main's tip (local bare
   mirror + `url.<mirror>.insteadOf`), for the version and notes promote-prod releases.
 
-- `create-release/`: tags the promoted commit `v<version>` with `git push` and creates the GitHub
-  release on that tag (`--verify-tag`). The releases API cannot create the tag with the run's
-  token when the commit changes `.github/workflows` (HTTP 403). Idempotent on a rerun. Tests:
+- `create-release/`: tags the promoted commit `v<version>` with `git push` and a token of the
+  release app (`contents` + `workflows` write: GitHub refuses the ref to any token without
+  `workflows` when the commit's workflows differ from main's), then creates the GitHub release on
+  that tag (`--verify-tag`) with the run's token. Idempotent on a rerun. Tests:
   `python3 -m unittest discover -s actions/promote/create-release/tests`.
