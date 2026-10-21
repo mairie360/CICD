@@ -1,0 +1,60 @@
+name: "End-to-end journeys (fronts)"
+description: >-
+  Playwright user journeys of a Next.js front (MAIR-602 / MAIR-603) through the consumer's
+  `e2e_test.sh` (`e2e_tests` job of promote-prod.yml): a dedicated docker compose stack
+  (`docker-compose-e2e.yml`: database, APIs, BFFs and the front image under promotion), the specs of
+  the front's `e2e/` folder, then the HTML report plus the traces and videos of the failed journeys
+  as an artifact and a job summary. A front without `e2e/` specs fails instead of passing silently.
+  The caller logs in to GHCR first and dumps the container logs on failure
+  (`integration/container-logs`).
+
+inputs:
+  node_auth_token:
+    description: "Token for the GitHub Packages registry (the caller passes secrets.GITHUB_TOKEN)"
+    required: true
+  target_image:
+    description: >-
+      Published front image under test (`<image>:staging-<sha_tag>` in the prod promotion); empty
+      lets the consumer's script build the image locally (local runs only)
+    required: false
+    default: ""
+  artifact_name:
+    description: "Name of the uploaded report artifact"
+    required: false
+    default: "e2e-report"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check the front ships end-to-end journeys
+      shell: bash
+      run: "${GITHUB_ACTION_PATH}/check_journeys.sh"
+
+    - name: Run the journeys via Docker Compose
+      shell: bash
+      run: ./e2e_test.sh
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+        TARGET_IMAGE: ${{ inputs.target_image }}
+
+    - name: Summarize the journeys
+      if: always()
+      shell: bash
+      env:
+        TARGET_IMAGE: ${{ inputs.target_image }}
+        ARTIFACT_NAME: ${{ inputs.artifact_name }}
+      run: |
+        {
+          python3 "${GITHUB_ACTION_PATH}/summarize.py" e2e-report/results.json "$TARGET_IMAGE"
+          echo
+          echo "Full HTML report, traces and videos of the failed journeys: artifact \`${ARTIFACT_NAME}\`."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload the report
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: e2e-report/
+        if-no-files-found: warn
+        retention-days: 30
