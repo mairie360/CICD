@@ -77,6 +77,16 @@ def check_ci_jobs(jobs):
     return None
 
 
+def check_run_status(run):
+    """Refusal reason while the main run of the commit can still fail, None once it is settled.
+
+    `waiting` is a v4 run held on its Staging / Prod approval: every check before it has a verdict.
+    """
+    if run.get('status') in ('completed', 'waiting'):
+        return None
+    return 'the main CI run is still {}: wait for it to finish'.format(run.get('status'))
+
+
 def latest_run(runs, branch):
     candidates = [run for run in runs if run.get('head_branch') == branch and run.get('event') == 'push']
     if not candidates:
@@ -101,6 +111,9 @@ def check_ci(repository, workflow, sha, branch, token):
     run = latest_run(runs.get('workflow_runs', []), branch)
     if run is None:
         raise Refused('no {} run on {} for {}'.format(workflow, branch, sha[:7]))
+    reason = check_run_status(run)
+    if reason:
+        raise Refused('{} ({})'.format(reason, run.get('html_url', run['id'])))
     jobs = api('/repos/{}/actions/runs/{}/jobs?per_page=100'.format(repository, run['id']), token).get('jobs', [])
     reason = check_ci_jobs(jobs)
     if reason:

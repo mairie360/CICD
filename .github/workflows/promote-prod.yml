@@ -231,8 +231,23 @@ jobs:
           name: release-notes
           path: ${{ runner.temp }}/release-notes
 
-      # Created through the API with the run's token: neither the tag nor the release starts a
-      # workflow, and no commit is pushed (same `v<version>` release @semantic-release/github made).
+      - name: Promote image(s) to Prod
+        uses: ./cicd-repo/actions/release/docker-release
+        with:
+          stage: prod
+          source_sha: ${{ needs.resolve.outputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          expected_digest: ${{ needs.resolve.outputs.digest }}
+          extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
+          expected_extra_digest: ${{ needs.resolve.outputs.extra_digest }}
+          release_published: "true"
+          release_version: ${{ needs.version.outputs.version }}
+
+      # After the retag (idempotent): if anything fails before this step, a new run computes the
+      # same version again. Created through the API with the run's token: neither the tag nor the
+      # release starts a workflow, and no commit is pushed (same `v<version>` release
+      # @semantic-release/github made).
       - name: Create the tag and the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -252,19 +267,6 @@ jobs:
           else
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "$tag" --notes-file "$NOTES"
           fi
-
-      - name: Promote image(s) to Prod
-        uses: ./cicd-repo/actions/release/docker-release
-        with:
-          stage: prod
-          source_sha: ${{ needs.resolve.outputs.sha }}
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          expected_digest: ${{ needs.resolve.outputs.digest }}
-          extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
-          expected_extra_digest: ${{ needs.resolve.outputs.extra_digest }}
-          release_published: "true"
-          release_version: ${{ needs.version.outputs.version }}
 
       - name: Publish OpenAPI (APIs)
         if: inputs.stack == 'apis'

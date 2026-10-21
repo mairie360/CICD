@@ -94,6 +94,18 @@ class CheckCiJobsTest(unittest.TestCase):
         self.assertIn('no release-dev', resolve.check_ci_jobs([job('CICD / lint', 'success')]))
 
 
+class CheckRunStatusTest(unittest.TestCase):
+    def test_a_run_still_running_is_refused(self):
+        for status in ('queued', 'in_progress', 'pending', 'requested'):
+            with self.subTest(status=status):
+                self.assertIn('still ' + status, resolve.check_run_status({'status': status}))
+
+    def test_a_finished_run_or_a_v4_run_held_on_its_approval_is_settled(self):
+        for status in ('completed', 'waiting'):
+            with self.subTest(status=status):
+                self.assertIsNone(resolve.check_run_status({'status': status}))
+
+
 class LatestRunTest(unittest.TestCase):
     def test_newest_push_run_on_the_branch(self):
         runs = [{'id': 1, 'run_number': 5, 'head_branch': 'main', 'event': 'push'},
