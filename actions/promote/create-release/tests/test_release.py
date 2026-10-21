@@ -137,6 +137,13 @@ class CreateReleaseTest(unittest.TestCase):
         self.assertIn('app_private_key: ${{ secrets.RELEASE_APP_PK }}', step)
         self.assertIsNone(re.search(r'gh release create[^\n]*--target', text))
 
+    def test_the_app_credentials_are_checked_before_the_retag(self):
+        text = WORKFLOW.read_text(encoding='utf-8')
+        self.assertRegex(text, r'RELEASE_APP_ID:\n\s+required: true')
+        self.assertRegex(text, r'RELEASE_APP_PK:\n\s+required: true')
+        check = text.index('- name: Check the release app credentials')
+        self.assertLess(check, text.index('- name: Promote image(s) to Prod'))
+
     def test_the_app_token_can_push_workflows(self):
         action = (ACTION / 'action.yml').read_text(encoding='utf-8')
         self.assertIn('permission-workflows: write', action)
