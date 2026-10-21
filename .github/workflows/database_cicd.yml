@@ -119,7 +119,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
-    # is released to dev right away. Staging and Prod keep their environments.
+    # is released to dev right away. Staging and prod are promote-staging.yml / promote-prod.yml
+    # (MAIR-494), manual runs that retag this image.
     permissions:
       contents: read
       packages: write
@@ -166,8 +167,8 @@ jobs:
   # `performance_tests` job of the other stacks. The repo's `./performance_test.sh`
   # migrates an empty database, loads a volume seed and runs pgbench scripts that replay
   # the APIs' hot queries; a script over its threshold (`bench/thresholds.conf`) fails the
-  # job and blocks `release-staging`. Dev is still released on every commit (`release-dev`
-  # does not need it). It builds from the commit's sources and never uses the dev image, so
+  # job, and promote-staging.yml refuses a commit whose main run has a failed job (MAIR-494).
+  # Dev is still released on every commit (`release-dev` does not need it). It builds from the commit's sources and never uses the dev image, so
   # it runs on PRs too, in parallel with the other jobs: a regression shows before merge.
   performance_tests:
     name: Performance Tests (schema bench)
@@ -202,145 +203,6 @@ jobs:
           path: bench/results/
           if-no-files-found: ignore
 
-  release-staging:
-    name: Release to Staging
-    needs: [release-dev, performance_tests]
-    runs-on: ubuntu-latest
-    environment: Staging
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      digest: ${{ steps.release.outputs.digest }}
-      extra_digest: ${{ steps.release.outputs.extra_digest }}
-    steps:
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: Promote Images to Staging
-        id: release
-        uses: ./cicd-repo/actions/release/docker-release
-        with:
-          stage: staging
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_package_name: liquibase-migrations
-          expected_digest: ${{ needs.release-dev.outputs.digest }}
-          expected_extra_digest: ${{ needs.release-dev.outputs.extra_digest }}
-
-      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
-      # A journal failure never fails the release.
-      - name: Release journal
-        continue-on-error: true
-        uses: ./cicd-repo/actions/release/release-journal
-        with:
-          stage: staging
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          app_id: ${{ secrets.RELEASE_APP_ID }}
-          app_private_key: ${{ secrets.RELEASE_APP_PK }}
-
-  # [NOUVEAU] MAIR-491: release folder gate, between staging and the Prod approval. Computes the
-  # version release-prod will tag (semantic-release dry run on this commit) and checks that the
-  # Liquibase release changesets match it: changesets shipped by the last tag unchanged, new ones
-  # in releases/v<next>/ closed by a tag-v<next> changeset, none when no release is cut. The
-  # report goes to the job summary; a finding skips release-prod and the fix goes through a PR
-  # (rename the folder), which the changeset identity convention of the Database repo makes safe
-  # for dev and staging.
-  release_folder:
-    name: Liquibase release folder
-    needs: release-staging
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      # semantic-release checks that it could push, even in dry-run; nothing is pushed.
-      contents: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: Compute the next version (dry run)
-        id: next
-        uses: ./cicd-repo/actions/release/semantic-tag
-        with:
-          dry_run: "true"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check the release folder
-        uses: ./cicd-repo/actions/release/release-folder
-        with:
-          last_tag: ${{ steps.next.outputs.last_release_git_tag }}
-          next_version: ${{ steps.next.outputs.new_release_published == 'true' && steps.next.outputs.new_release_version || '' }}
-
-  release-prod:
-    name: Release to Prod
-    # [CHANGEMENT] MAIR-491: also waits for the release folder gate.
-    needs: [release-staging, release_folder]
-    runs-on: ubuntu-latest
-    environment: Prod
-    permissions:
-      contents: write
-      packages: write
-    outputs:
-      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: Calculate & Create Tag
-        id: set_tag
-        uses: ./cicd-repo/actions/release/semantic-tag
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Promote Images to Prod
-        uses: ./cicd-repo/actions/release/docker-release
-        with:
-          stage: prod
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_package_name: liquibase-migrations
-          expected_digest: ${{ needs.release-staging.outputs.digest }}
-          expected_extra_digest: ${{ needs.release-staging.outputs.extra_digest }}
-          release_published: ${{ steps.set_tag.outputs.new_release_published }}
-          release_version: ${{ steps.set_tag.outputs.new_release_version }}
-
-      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
-      # A journal failure never fails the release.
-      - name: Release journal
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        continue-on-error: true
-        uses: ./cicd-repo/actions/release/release-journal
-        with:
-          stage: prod
-          version: ${{ steps.set_tag.outputs.new_release_version }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          app_id: ${{ secrets.RELEASE_APP_ID }}
-          app_private_key: ${{ secrets.RELEASE_APP_PK }}
-
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
@@ -349,9 +211,6 @@ jobs:
       - security_sast
       - release-dev
       - performance_tests
-      - release-staging
-      - release_folder
-      - release-prod
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools

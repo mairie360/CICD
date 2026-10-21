@@ -35,7 +35,7 @@ The steps of every job live in composite actions sorted by check type, then by s
 | `actions/security/semgrep-pypi`, `actions/security/gitleaks-binary` | the same scans from the hash-checked Semgrep wheel and Gitleaks release binary (no Docker Hub pull); `frontend-cicd.yml`, `frontend-dev-exception.yml` and this repo's `lint.yml` | `fronts` |
 | `actions/performance/<stack>` | k6 load test (`apis`, `bffs`, `fronts`), schema bench (`db`) | `apis`, `bffs`, `fronts`, `db` |
 | `actions/release/` | `docker-release`, `semantic-tag`, `publish-openapi-rust`, `publish-openapi-typescript`, `release-folder` (database), `docker-manual-build`, `frontend-dev-exception` (`check_policy.py` of `frontend-dev-exception.yml`) | — |
-| `actions/promote/` | reserved for the staging → prod gates of the next tickets of epic MAIR-492 | — |
+| `actions/promote/` | `resolve` (commit promoted and its checks), `next-version` (semantic-release dry run on a commit behind main's tip), used by `promote-staging.yml` / `promote-prod.yml` (MAIR-494) | — |
 | `actions/notify/cicd-failure` | n8n notification of a failed run | all |
 
 A job therefore reads as: checkout, checkout of this repo into `cicd-repo/`, then
@@ -116,8 +116,11 @@ through the same action:
 | Stage | What happens | Tags written |
 | --- | --- | --- |
 | `dev` | single build with an SBOM and a `mode=max` provenance attestation, push as `dev-<sha>` only, Trivy scan of that digest, cosign keyless signature, then the mobile tag | `dev-<sha>`, `dev` |
-| `staging` | resolves the digest of `dev-<sha>` (the commit of this run, never the mobile `dev`), checks it equals the digest `release-dev` built, verifies the cosign signature, re-tags that digest | `staging-<sha>`, `staging` |
-| `prod` | same from `staging-<sha>`, only when semantic-release published a version | `<version>`, `latest` |
+| `staging` | resolves the digest of `dev-<sha>` (the promoted commit, `source_sha`, never the mobile `dev`), checks it equals the digest `resolve` read, verifies the cosign signature, re-tags that digest | `staging-<sha>`, `staging` |
+| `prod` | same from `staging-<sha>`, only when a version is released | `<version>`, `latest` |
+
+`dev` runs in the main pipeline of the four stack workflows; `staging` and `prod` run in
+`promote-staging.yml` / `promote-prod.yml` (see the next section).
 
 Re-tagging uses `docker buildx imagetools create`, which copies the manifest index server side: the
 digest, and so the signature, SBOM and provenance attached to it, are the same in every
@@ -154,6 +157,89 @@ cosign verify ghcr.io/mairie360/<package>:<tag> \
   `staging-latest`.
 - **APIs, fronts, database:** Semgrep and Trivy now block; set `semgrep_fail_on_findings: false` /
   `image_scan_fail_on_findings: false`, or add a `.trivyignore`, while the findings are fixed.
+
+## Promotion to staging and prod (`promote-staging.yml`, `promote-prod.yml`, MAIR-494)
+
+A push to `main` only runs the checks and `release-dev`: every commit of `main` reaches dev, and
+nothing waits on an approval any more. Staging and prod are manual runs of each service repo, one
+workflow per environment, each calling a reusable workflow of this repo. No image is rebuilt: the
+`dev-<sha>` digest the main pipeline built and signed is tagged `staging-<sha>`, then
+`<version>` / `latest`.
+
+| | `promote-staging.yml` | `promote-prod.yml` |
+| --- | --- | --- |
+| Commit | `sha` input, else main's newest commit (release journal / `[skip ci]` commits left out) | `sha` input, else main's newest commit released on staging |
+| Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists |
+| Gates | integration tests (APIs), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder (database, MAIR-491); RGPD / RGAA / E2E plug in here (MAIR-604, MAIR-317/319, MAIR-602) |
+| Environment | `Staging` | `Prod` |
+| Publishes | `staging-<sha>` / `staging`, `@mairie360/<name>-openapi@0.0.0-staging.<sha>` (APIs: 7 chars, BFFs: 40) | git tag `v<version>` + GitHub release on the commit, `<version>` / `latest`, OpenAPI `<version>` |
+
+Prod computes the version with a semantic-release dry run on the promoted commit, which is usually
+behind main's tip (Renovate keeps merging): `actions/promote/next-version` pushes the commit as
+`main` to a local bare mirror and points the repository URL at it (`url.<mirror>.insteadOf`), so
+semantic-release reads the tags and checks the branch there, and the release notes keep the real
+repository links. The tag and the release are then created through the API on that commit. A run
+with nothing to release (only `chore` / `ci` / `docs` commits since the last tag) stops after
+`version`, with a notice.
+
+Both runs take a lock per repo and target (`concurrency: promote-<repo>-<target>`, in the caller),
+and only run on `main`. The commits a promotion creates (the release journal) carry `[skip ci]`;
+the tag and the release, created with the run's `GITHUB_TOKEN`, start no workflow
+(`actions/promote/resolve/tests` checks both).
+
+Caller (`.github/workflows/promote-staging.yml`; `promote-prod.yml` is the same with `prod`,
+`contents: write` and without `ci_workflow` / `npm_scope`):
+
+```yaml
+name: Promote to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit of main to promote (empty: main's newest commit)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-${{ github.repository }}-staging
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+    uses: mairie360/CICD/.github/workflows/promote-staging.yml@v4.4.0
+    with:
+      stack: apis            # apis | bffs | fronts | database
+      package_name: core-api
+      cicd_version: v4.4.0
+      sha: ${{ inputs.sha }}
+    secrets:
+      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+      RELEASE_APP_PK: ${{ secrets.RELEASE_APP_PK }}
+```
+
+BFFs also pass `openapi_spec_path` (the committed contract, same value as in `cicd.yml`). Run it
+with `gh workflow run promote-staging.yml -R mairie360/<repo> [-f sha=<sha>]`.
+
+### Migrating a consumer to the promotion workflows (v4.4.0, MAIR-494)
+
+- `cicd.yml`: bump the `uses:` ref and `cicd_version` to v4.4.0 or later. The main run now ends after
+  `release-dev`; its `Staging` / `Prod` jobs are gone, and so are the BFF workflow outputs
+  `release_published` / `release_version`.
+- Add `promote-staging.yml` and `promote-prod.yml` as above, pinned to the same ref as `cicd.yml`,
+  and add them to the Renovate custom manager of the repo, so one Renovate PR bumps the three files.
+- Commits released by the v4 pipeline promote as is: `resolve` only needs their `dev-<sha>` (and a
+  green `release-dev`; the `cancelled` Staging / Prod jobs of the old runs do not count as failures)
+  or their `staging-<sha>`.
 
 ## OpenAPI coverage gate (ZAP + k6)
 

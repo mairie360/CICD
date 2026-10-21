@@ -18,6 +18,10 @@ inputs:
     description: "Version released in prod, without the v (semantic-tag's new_release_version)"
     required: false
     default: ""
+  sha:
+    description: "Released commit; empty uses the run's own commit (promote-staging / promote-prod pass the promoted one)"
+    required: false
+    default: ""
   github_token:
     description: "Token that reads the pull requests"
     required: true
@@ -70,6 +74,7 @@ runs:
       env:
         STAGE: ${{ inputs.stage }}
         VERSION: ${{ inputs.version }}
+        RELEASED_SHA: ${{ inputs.sha }}
         JOURNAL: ${{ inputs.journal_path }}
         BRANCH: ${{ github.event.repository.default_branch }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
@@ -82,7 +87,8 @@ runs:
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         work="$RUNNER_TEMP/release-journal"
         mkdir -p "$work"
-        label="$STAGE ${GITHUB_SHA::7}"
+        sha="${RELEASED_SHA:-$GITHUB_SHA}"
+        label="$STAGE ${sha::7}"
         [ -n "$VERSION" ] && label="$STAGE v${VERSION#v}"
 
         # Two runs can push at the same time (dev of the next merge, staging of this one):
@@ -90,7 +96,7 @@ runs:
         for attempt in 1 2 3; do
           git fetch --quiet --tags origin "$BRANCH"
           git reset --quiet --hard "origin/$BRANCH"
-          python3 -I "$SCRIPT" prepare "$STAGE" "$GITHUB_SHA" "$VERSION" "$JOURNAL" "$work"
+          python3 -I "$SCRIPT" prepare "$STAGE" "$sha" "$VERSION" "$JOURNAL" "$work"
 
           rm -f "$work/response.json"
           if [ -z "$ANTHROPIC_API_KEY" ]; then

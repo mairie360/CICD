@@ -53,6 +53,9 @@ jobs:
       - name: Test the release journal
         run: python3 -m unittest discover -s actions/release/release-journal/tests -v
 
+      - name: Test the promotion commit resolution
+        run: python3 -m unittest discover -s actions/promote/resolve/tests -v
+
   frontend-exception-security:
     name: frontend dev exception source scans
     runs-on: ubuntu-latest
