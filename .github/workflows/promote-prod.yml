@@ -41,10 +41,11 @@ on:
     secrets:
       ANTHROPIC_API_KEY:
         required: false
+      # The release app pushes the prod tag (actions/promote/create-release).
       RELEASE_APP_ID:
-        required: false
+        required: true
       RELEASE_APP_PK:
-        required: false
+        required: true
       N8N_WEBHOOK_SECRET:
         required: true
     outputs:
@@ -231,6 +232,17 @@ jobs:
           name: release-notes
           path: ${{ runner.temp }}/release-notes
 
+      # Before the retag: without the release app, the images would reach prod with no tag.
+      - name: Check the release app credentials
+        env:
+          APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          APP_PK: ${{ secrets.RELEASE_APP_PK }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_PK" ]; then
+            echo "::error::RELEASE_APP_ID / RELEASE_APP_PK are empty: the prod tag cannot be pushed"
+            exit 1
+          fi
+
       - name: Promote image(s) to Prod
         uses: ./cicd-repo/actions/release/docker-release
         with:
@@ -254,6 +266,8 @@ jobs:
           sha: ${{ needs.resolve.outputs.sha }}
           notes_file: ${{ runner.temp }}/release-notes/release-notes.md
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
       - name: Publish OpenAPI (APIs)
         if: inputs.stack == 'apis'
