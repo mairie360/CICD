@@ -59,6 +59,9 @@ jobs:
       - name: Test the next-version mirror
         run: python3 -m unittest discover -s actions/promote/next-version/tests -v
 
+      - name: Test the tag and release creation
+        run: python3 -m unittest discover -s actions/promote/create-release/tests -v
+
   frontend-exception-security:
     name: frontend dev exception source scans
     runs-on: ubuntu-latest

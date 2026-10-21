@@ -1,0 +1,37 @@
+name: "Tag and release a commit"
+description: >-
+  Creates the `v<version>` tag on the promoted commit and its GitHub release (MAIR-494). Idempotent:
+  a rerun after a later failure keeps an existing tag on the same commit and an existing release.
+  The caller checks out the repository with the default `persist-credentials` (the tag is pushed
+  through that checkout).
+
+# The tag is pushed with git, as @semantic-release/git did, and the release is created on that
+# existing tag (`--verify-tag`). Letting the releases API create the tag (`--target <sha>`) is
+# refused to the run's token with `HTTP 403: Resource not accessible by integration` when the
+# commit changes `.github/workflows` (a ref on such a commit needs the `workflows` permission,
+# which GITHUB_TOKEN cannot have).
+inputs:
+  version:
+    description: "Version to release, without the `v` (next-version's `new_release_version`)"
+    required: true
+  sha:
+    description: "Full sha of the promoted commit"
+    required: true
+  notes_file:
+    description: "Release notes (Markdown file)"
+    required: true
+  github_token:
+    description: "Token of the release (pass `secrets.GITHUB_TOKEN`, `contents: write`)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create the tag and the GitHub release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        VERSION: ${{ inputs.version }}
+        SHA: ${{ inputs.sha }}
+        NOTES: ${{ inputs.notes_file }}
+      run: bash "$GITHUB_ACTION_PATH/release.sh"
