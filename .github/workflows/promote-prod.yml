@@ -245,28 +245,15 @@ jobs:
           release_version: ${{ needs.version.outputs.version }}
 
       # After the retag (idempotent): if anything fails before this step, a new run computes the
-      # same version again. Created through the API with the run's token: neither the tag nor the
-      # release starts a workflow, and no commit is pushed (same `v<version>` release
-      # @semantic-release/github made).
+      # same version again. Neither the tag nor the release starts a workflow, and no commit is
+      # pushed (same `v<version>` release @semantic-release/github made).
       - name: Create the tag and the GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.version.outputs.version }}
-          SHA: ${{ needs.resolve.outputs.sha }}
-          NOTES: ${{ runner.temp }}/release-notes/release-notes.md
-        run: |
-          set -euo pipefail
-          tag="v$VERSION"
-          if existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" -q .object.sha 2>/dev/null); then
-            # A rerun after a failure further down: the tag must already point to this commit.
-            target=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$existing" -q .object.sha 2>/dev/null || echo "$existing")
-            if [ "$target" != "$SHA" ]; then
-              echo "::error::$tag already exists on ${target::7}, not on ${SHA::7}"; exit 1
-            fi
-            echo "$tag already on ${SHA::7}"
-          else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "$tag" --notes-file "$NOTES"
-          fi
+        uses: ./cicd-repo/actions/promote/create-release
+        with:
+          version: ${{ needs.version.outputs.version }}
+          sha: ${{ needs.resolve.outputs.sha }}
+          notes_file: ${{ runner.temp }}/release-notes/release-notes.md
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish OpenAPI (APIs)
         if: inputs.stack == 'apis'
