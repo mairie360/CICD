@@ -208,14 +208,14 @@ jobs:
     needs: [build, test]
     runs-on: ubuntu-latest
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
-    # is released to dev right away. Staging and Prod keep their environments.
+    # is released to dev right away. Staging and prod are promote-staging.yml / promote-prod.yml
+    # (MAIR-494), manual runs that retag this image.
     permissions:
       contents: read
       packages: write
       id-token: write  # [NOUVEAU] MAIR-416: cosign keyless signature
     outputs:
       digest: ${{ steps.release.outputs.digest }}
-      # [NOUVEAU] MAIR-516: the isolated QA jobs test this exact published image on `main`.
       image: ${{ steps.release.outputs.primary_image }}
       sha_tag: ${{ steps.release.outputs.sha_tag }}
     steps:
@@ -263,29 +263,17 @@ jobs:
     # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
     # runner for GitHub's 6 h default and starved the whole org's queue.
     timeout-minutes: 25
-    # [CHANGEMENT] MAIR-516: also runs on pull requests to `main`, where `release-dev` is skipped
-    # and the front's stack builds the image locally (as before). On `main` it tests the image
-    # `release-dev` just published and signed, through `TARGET_IMAGE` (the fronts' scripts skip
-    # their local build when it is set), instead of rebuilding a different one here.
-    needs: [build, test, release-dev]
-    if: >-
-      always()
-      && needs.build.result == 'success'
-      && needs.test.result == 'success'
-      && (needs.release-dev.result == 'success' || needs.release-dev.result == 'skipped')
-      && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main'))
+    # [CHANGEMENT] MAIR-494: pull requests to `main` only, where the front's stack builds the
+    # image locally. The published `dev-<sha>` image is tested by promote-staging.yml (staging
+    # gate), no longer on `main` after release-dev.
+    needs: [build, test]
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
     permissions:
       contents: read
       packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Log in to GHCR
-        if: needs.release-dev.result == 'success'
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
@@ -302,7 +290,6 @@ jobs:
         uses: ./cicd-repo/actions/security/fronts
         with:
           node_auth_token: ${{ secrets.GITHUB_TOKEN }}
-          target_image: ${{ needs.release-dev.result == 'success' && format('{0}:dev-{1}', needs.release-dev.outputs.image, needs.release-dev.outputs.sha_tag) || '' }}
 
       # [NOUVEAU] MAIR-468: dumps the containers left behind when the step timeout kills the stack.
       - name: Dump container logs
@@ -315,29 +302,17 @@ jobs:
     # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
     # runner for GitHub's 6 h default and starved the whole org's queue.
     timeout-minutes: 25
-    # [CHANGEMENT] MAIR-516: also runs on pull requests to `main`, where `release-dev` is skipped
-    # and the front's stack builds the image locally (as before). On `main` it tests the image
-    # `release-dev` just published and signed, through `TARGET_IMAGE` (the fronts' scripts skip
-    # their local build when it is set), instead of rebuilding a different one here.
-    needs: [build, test, release-dev]
-    if: >-
-      always()
-      && needs.build.result == 'success'
-      && needs.test.result == 'success'
-      && (needs.release-dev.result == 'success' || needs.release-dev.result == 'skipped')
-      && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main'))
+    # [CHANGEMENT] MAIR-494: pull requests to `main` only, where the front's stack builds the
+    # image locally. The published `dev-<sha>` image is tested by promote-staging.yml (staging
+    # gate), no longer on `main` after release-dev.
+    needs: [build, test]
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
     permissions:
       contents: read
       packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Log in to GHCR
-        if: needs.release-dev.result == 'success'
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
@@ -354,106 +329,11 @@ jobs:
         uses: ./cicd-repo/actions/performance/fronts
         with:
           node_auth_token: ${{ secrets.GITHUB_TOKEN }}
-          target_image: ${{ needs.release-dev.result == 'success' && format('{0}:dev-{1}', needs.release-dev.outputs.image, needs.release-dev.outputs.sha_tag) || '' }}
 
       # [NOUVEAU] MAIR-468: dumps the containers left behind when the step timeout kills the stack.
       - name: Dump container logs
         if: failure()
         uses: ./cicd-repo/actions/integration/container-logs
-
-  release-staging:
-    needs: [release-dev, security_tests, performance_tests]
-    runs-on: ubuntu-latest
-    environment: Staging
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      digest: ${{ steps.release.outputs.digest }}
-    steps:
-      - name: Checkout CICD Tools
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      # [CHANGEMENT] MAIR-416: promotes the digest of `dev-<sha>` (the tested image, checked
-      # against release-dev's digest and signature), never the mobile `dev` tag.
-      - name: Promote Image to Staging
-        id: release
-        uses: ./cicd-repo/actions/release/docker-release
-        with:
-          stage: staging
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          expected_digest: ${{ needs.release-dev.outputs.digest }}
-
-      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
-      # A journal failure never fails the release.
-      - name: Release journal
-        continue-on-error: true
-        uses: ./cicd-repo/actions/release/release-journal
-        with:
-          stage: staging
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          app_id: ${{ secrets.RELEASE_APP_ID }}
-          app_private_key: ${{ secrets.RELEASE_APP_PK }}
-
-  release-prod:
-    needs: release-staging
-    runs-on: ubuntu-latest
-    environment: Prod
-    permissions:
-      contents: write
-      packages: write
-    outputs:
-      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-
-      # [CHANGEMENT] Récupération du dépôt centralisé des outils CI/CD
-      # pour pouvoir utiliser l'action composite 'semantic-tag'.
-      - name: Checkout CICD Tools
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      # [CHANGEMENT] Correction du chemin d'appel vers le dépôt centralisé 'cicd-repo'.
-      - name: Calculate & Create Tag
-        id: set_tag
-        uses: ./cicd-repo/actions/release/semantic-tag
-
-      # [CHANGEMENT] MAIR-416: promotes the digest of `staging-<sha>` (checked against
-      # release-staging's digest and signature) to <version> / latest.
-      - name: Promote Image to Prod
-        uses: ./cicd-repo/actions/release/docker-release
-        with:
-          stage: prod
-          expected_digest: ${{ needs.release-staging.outputs.digest }}
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          release_published: ${{ steps.set_tag.outputs.new_release_published }}
-          release_version: ${{ steps.set_tag.outputs.new_release_version }}
-
-      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
-      # A journal failure never fails the release.
-      - name: Release journal
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        continue-on-error: true
-        uses: ./cicd-repo/actions/release/release-journal
-        with:
-          stage: prod
-          version: ${{ steps.set_tag.outputs.new_release_version }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          app_id: ${{ secrets.RELEASE_APP_ID }}
-          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   notify-cicd-failure:
     name: Notify n8n on failure
@@ -468,8 +348,6 @@ jobs:
       - release-dev
       - security_tests
       - performance_tests
-      - release-staging
-      - release-prod
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
