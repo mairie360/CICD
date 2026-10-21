@@ -56,6 +56,9 @@ jobs:
       - name: Test the promotion commit resolution
         run: python3 -m unittest discover -s actions/promote/resolve/tests -v
 
+      - name: Test the next-version mirror
+        run: python3 -m unittest discover -s actions/promote/next-version/tests -v
+
   frontend-exception-security:
     name: frontend dev exception source scans
     runs-on: ubuntu-latest
