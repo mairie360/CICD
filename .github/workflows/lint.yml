@@ -62,6 +62,9 @@ jobs:
       - name: Test the tag and release creation
         run: python3 -m unittest discover -s actions/promote/create-release/tests -v
 
+      - name: Test the fronts' end-to-end gate (MAIR-602)
+        run: python3 -m unittest discover -s actions/e2e/fronts/tests -v
+
   frontend-exception-security:
     name: frontend dev exception source scans
     runs-on: ubuntu-latest

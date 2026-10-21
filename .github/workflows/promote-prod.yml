@@ -10,8 +10,11 @@ name: Promote to Prod
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package, release journal
 #
-# The prod gates of epic MAIR-492 (RGPD MAIR-604, RGAA MAIR-317/319, E2E MAIR-602) plug in as jobs
-# between `version` and `promote`, like `release_folder`.
+#   e2e_tests     fronts only: Playwright user journeys of the front's `e2e/` on the stack of its
+#                 `docker-compose-e2e.yml`, with the `staging-<sha>` image under promotion (MAIR-602)
+#
+# The other prod gates of epic MAIR-492 (RGPD MAIR-604, RGAA MAIR-317/319) plug in as jobs between
+# `version` and `promote`, like `release_folder` and `e2e_tests`.
 
 on:
   workflow_call:
@@ -74,6 +77,7 @@ jobs:
       actions: read
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      image: ${{ steps.resolve.outputs.image }}
       sha_tag: ${{ steps.resolve.outputs.sha_tag }}
       digest: ${{ steps.resolve.outputs.digest }}
       extra_digest: ${{ steps.resolve.outputs.extra_digest }}
@@ -198,15 +202,56 @@ jobs:
           last_tag: ${{ needs.version.outputs.last_tag }}
           next_version: ${{ needs.version.outputs.published == 'true' && needs.version.outputs.version || '' }}
 
+  e2e_tests:
+    name: End-to-end journeys (Playwright)
+    if: inputs.stack == 'fronts'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      # The image is the one resolve checked on staging: the journeys run on what prod will get.
+      - name: Run the end-to-end journeys via Docker Compose
+        timeout-minutes: 25
+        uses: ./cicd-repo/actions/e2e/fronts
+        with:
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          target_image: ${{ needs.resolve.outputs.image }}:staging-${{ needs.resolve.outputs.sha_tag }}
+
+      - name: Dump container logs
+        if: failure()
+        uses: ./cicd-repo/actions/integration/container-logs
+
   promote:
     name: Release Prod
-    needs: [resolve, version, release_folder]
+    needs: [resolve, version, release_folder, e2e_tests]
     if: >-
       always()
       && needs.resolve.result == 'success'
       && needs.version.result == 'success'
       && needs.version.outputs.published == 'true'
       && (needs.release_folder.result == 'success' || needs.release_folder.result == 'skipped')
+      && (needs.e2e_tests.result == 'success' || needs.e2e_tests.result == 'skipped')
     runs-on: ubuntu-latest
     environment: Prod
     timeout-minutes: 30
@@ -301,7 +346,7 @@ jobs:
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
-    needs: [resolve, version, release_folder, promote]
+    needs: [resolve, version, release_folder, e2e_tests, promote]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
