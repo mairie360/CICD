@@ -199,12 +199,16 @@ class PromotionCommitsSkipCiTest(unittest.TestCase):
         self.assertEqual(len(commits), 1)
         self.assertIn('[skip ci]', commits[0])
 
-    def test_the_prod_tag_is_created_through_the_api(self):
-        # A tag or release created with the run's GITHUB_TOKEN starts no workflow.
+    def test_the_prod_tag_is_pushed_with_the_runs_token(self):
+        # A tag or release created with the run's GITHUB_TOKEN starts no workflow, and the
+        # create-release action pushes the tag only, never a commit.
         text = (ROOT / '.github' / 'workflows' / 'promote-prod.yml').read_text(encoding='utf-8')
-        self.assertIn('gh release create', text)
-        self.assertIn('GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}', text)
-
+        step = text.split('uses: ./cicd-repo/actions/promote/create-release', 1)[1].split('- name:', 1)[0]
+        self.assertIn('github_token: ${{ secrets.GITHUB_TOKEN }}', step)
+        script = (ROOT / 'actions' / 'promote' / 'create-release' / 'release.sh').read_text(encoding='utf-8')
+        pushes = [line.strip() for line in script.splitlines() if 'git push' in line]
+        self.assertEqual(pushes, ['git push --quiet origin "refs/tags/$tag"'])
+        self.assertNotIn('git commit', script)
 
 if __name__ == '__main__':
     unittest.main()
