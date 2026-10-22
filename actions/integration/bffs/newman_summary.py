@@ -85,6 +85,11 @@ def render(path=DEFAULT_REPORT):
             f"No report at `{path}`: newman wrote nothing, the stack probably never started "
             "(see the \"Run integration tests\" step and the container logs).\n"
         )
+    except OSError as error:
+        return (
+            "## Integration tests (newman)\n\n"
+            f"The report `{path}` could not be read ({error.strerror or error}).\n"
+        )
     except ET.ParseError as error:
         return (
             "## Integration tests (newman)\n\n"

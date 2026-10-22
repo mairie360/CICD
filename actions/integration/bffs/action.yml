@@ -82,8 +82,10 @@ runs:
         name="${name%%:*}"
         echo "name=newman-report-${name:-bff}" >> "$GITHUB_OUTPUT"
 
+    # Never fails the gate: an upload error must not turn a green collection red.
     - name: Upload the newman report
       if: always()
+      continue-on-error: true
       uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.report.outputs.name }}

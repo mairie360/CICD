@@ -90,6 +90,15 @@ class NewmanSummaryTests(unittest.TestCase):
             self.assertEqual(newman_summary.main(['newman_summary.py', str(missing)]), 0)
         self.assertEqual(out.getvalue(), summary)
 
+    def test_notes_an_unreadable_report_instead_of_failing(self):
+        # A directory where the file should be: reading it raises an OSError (IsADirectoryError).
+        unreadable = self.dir / 'newman-reports' / 'newman.xml'
+        unreadable.mkdir(parents=True)
+        summary = newman_summary.render(unreadable)
+        self.assertIn('could not be read', summary)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(newman_summary.main(['newman_summary.py', str(unreadable)]), 0)
+
     def test_notes_a_report_that_is_not_xml(self):
         summary = newman_summary.render(self.write('not xml at all'))
         self.assertIn('not a valid junit file', summary)
