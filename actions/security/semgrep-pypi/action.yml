@@ -71,7 +71,7 @@ runs:
         retention-days: 14
     - name: Upload to existing code scanning
       if: inputs.upload_sarif == 'true' && steps.scan.outputs.has_sarif == 'true'
-      uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+      uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif_file }}
         category: ${{ inputs.sarif_category }}
