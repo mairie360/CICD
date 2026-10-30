@@ -16,3 +16,6 @@ the other types (`actions/<type>/<stack>`).
   `workflows` when the commit's workflows differ from main's), then creates the GitHub release on
   that tag (`--verify-tag`) with the run's token. Idempotent on a rerun. Tests:
   `python3 -m unittest discover -s actions/promote/create-release/tests`.
+- `gdpr-inventory/` (MAIR-285, database): migrates an empty database with the staging images of
+  the promoted commit and checks every column against the repo's `gdpr/inventory.yaml`
+  (`tests/gdpr/check.mjs`); job `gdpr_inventory` of promote-prod. Tests: `cd tests/gdpr && npm test`.

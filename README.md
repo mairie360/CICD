@@ -170,7 +170,7 @@ workflow per environment, each calling a reusable workflow of this repo. No imag
 | --- | --- | --- |
 | Commit | `sha` input, else main's newest commit (release journal / `[skip ci]` commits left out) | `sha` input, else main's newest commit released on staging |
 | Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists |
-| Gates | integration tests (APIs; BFFs since MAIR-262, newman collection), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder (database, MAIR-491); RGPD / RGAA / E2E plug in here (MAIR-604, MAIR-317/319, MAIR-602) |
+| Gates | integration tests (APIs; BFFs since MAIR-262, newman collection), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder and GDPR inventory (database, MAIR-491, MAIR-285); RGPD / RGAA / E2E plug in here (MAIR-604, MAIR-317/319, MAIR-602) |
 | Environment | `Staging` | `Prod` |
 | Publishes | `staging-<sha>` / `staging`, `@mairie360/<name>-openapi@0.0.0-staging.<sha>` (APIs: 7 chars, BFFs: 40) | git tag `v<version>` + GitHub release on the commit, `<version>` / `latest`, OpenAPI `<version>` |
 
@@ -249,6 +249,34 @@ timeout (the stacks pull the database and several API images) and a 40 min job t
 **Non-regression:** a BFF whose collection fails (an upstream contract field renamed, a status
 code changed, a route gone) fails `integration_tests`, and `promote` is not run: the commit
 stays on dev until the collection or the BFF is fixed, exactly like a ZAP or k6 failure.
+
+### GDPR inventory gate (`actions/promote/gdpr-inventory`, MAIR-285)
+
+`promote-prod.yml` runs a `gdpr_inventory` job for the database (`stack: database`), between
+`version` and `promote`. It migrates an empty database with the staging images of the promoted commit and compares the columns with
+the repo's `gdpr/inventory.yaml`, which classifies every column of the `public` tables (personal
+or not, category, fate on erasure, visibility, audit log exclusion). A column missing from the
+inventory, an entry naming a column that no longer exists, or a column referencing `users` not
+classified as an `identifier` stops the prod release.
+
+The job summary, shown before the Prod approval, holds:
+
+- the gaps, if any;
+- the inventory changes since the last release tag: **review them before approving Prod**;
+- for each unclassified column, a classification proposed by Claude (`gdpr_ai_model`, default
+  `claude-sonnet-5-5`, only with the `ANTHROPIC_API_KEY` secret), as YAML to review and paste into
+  the inventory in a PR. The proposals never decide the gate.
+
+The Database repo's `promote-prod.yml` already passes `ANTHROPIC_API_KEY` (optional: AI proposals);
+`ANTHROPIC_WORKSPACE_ID` is only needed for a key that is not scoped to a workspace.
+
+Run the check by hand on a migrated database:
+
+```bash
+cd tests/gdpr && npm ci
+psql -At -q -d core -f schema.sql > /tmp/schema.json
+node check.mjs ../../../Database/gdpr/inventory.yaml /tmp/schema.json /tmp/gdpr-report
+```
 
 ### Migrating a consumer to the promotion workflows (v4.4.0, MAIR-494)
 

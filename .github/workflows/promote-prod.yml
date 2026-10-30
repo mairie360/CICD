@@ -7,6 +7,7 @@ name: Promote to Prod
 #   resolve       the commit (input, else main's newest one on staging) must have `staging-<sha>`
 #   version       semantic-release dry run on that commit (it can be behind main's tip)
 #   release_folder  database only: the Liquibase release folder matches that version (MAIR-491)
+#   gdpr_inventory  database only: every column of the staging schema is in gdpr/inventory.yaml (MAIR-285)
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package, release journal
 #
@@ -38,8 +39,16 @@ on:
         type: string
         default: "openapi-spec.json"
         description: "Committed OpenAPI contract of a BFF (same as the main pipeline's input)"
+      gdpr_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model that proposes a classification for the columns missing from the GDPR inventory (MAIR-285, database); only used when ANTHROPIC_API_KEY is set"
     secrets:
       ANTHROPIC_API_KEY:
+        required: false
+      # [NOUVEAU] MAIR-285: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
         required: false
       # The release app pushes the prod tag (actions/promote/create-release).
       RELEASE_APP_ID:
@@ -198,15 +207,57 @@ jobs:
           last_tag: ${{ needs.version.outputs.last_tag }}
           next_version: ${{ needs.version.outputs.published == 'true' && needs.version.outputs.version || '' }}
 
+  # [NOUVEAU] MAIR-285 (epic MAIR-284), database only: migrates an empty database with the images
+  # of the promoted commit (staging digests) and checks that `gdpr/inventory.yaml` classifies every
+  # column. It runs before `promote` waits for the Prod approval, so the approver reads the job
+  # summary first: the gaps, the inventory changes since the last tag and Claude's proposals for
+  # the unclassified columns (never part of the verdict). A gap skips the prod release.
+  gdpr_inventory:
+    name: GDPR inventory
+    if: inputs.stack == 'database'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0  # the previous release tag, for the diff of the inventory
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Check the GDPR inventory
+        uses: ./cicd-repo/actions/promote/gdpr-inventory
+        with:
+          sha: ${{ needs.resolve.outputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          digest: ${{ needs.resolve.outputs.digest }}
+          migrations_digest: ${{ needs.resolve.outputs.extra_digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          ai_model: ${{ inputs.gdpr_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+
   promote:
     name: Release Prod
-    needs: [resolve, version, release_folder]
+    # [CHANGEMENT] MAIR-285: also waits for the GDPR inventory gate.
+    needs: [resolve, version, release_folder, gdpr_inventory]
     if: >-
       always()
       && needs.resolve.result == 'success'
       && needs.version.result == 'success'
       && needs.version.outputs.published == 'true'
       && (needs.release_folder.result == 'success' || needs.release_folder.result == 'skipped')
+      && (needs.gdpr_inventory.result == 'success' || needs.gdpr_inventory.result == 'skipped')
     runs-on: ubuntu-latest
     environment: Prod
     timeout-minutes: 30
@@ -301,7 +352,7 @@ jobs:
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
-    needs: [resolve, version, release_folder, promote]
+    needs: [resolve, version, release_folder, gdpr_inventory, promote]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
