@@ -8,6 +8,7 @@ name: Promote to Prod
 #   version       semantic-release dry run on that commit (it can be behind main's tip)
 #   release_folder  database only: the Liquibase release folder matches that version (MAIR-491)
 #   gdpr_inventory  database only: every column of the staging schema is in gdpr/inventory.yaml (MAIR-285)
+#   gdpr_marker   APIs and BFFs: no value of a marker user reaches the logs of the staging image (MAIR-290)
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package, release journal
 #
@@ -39,6 +40,11 @@ on:
         type: string
         default: "openapi-spec.json"
         description: "Committed OpenAPI contract of a BFF (same as the main pipeline's input)"
+      npm_scope:
+        required: false
+        type: string
+        default: "@mairie360"
+        description: "BFFs: npm scope of the .npmrc a GDPR marker stack building an image mounts (MAIR-290)"
       gdpr_ai_model:
         required: false
         type: string
@@ -84,6 +90,7 @@ jobs:
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       sha_tag: ${{ steps.resolve.outputs.sha_tag }}
+      image: ${{ steps.resolve.outputs.image }}
       digest: ${{ steps.resolve.outputs.digest }}
       extra_digest: ${{ steps.resolve.outputs.extra_digest }}
     steps:
@@ -247,10 +254,45 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
 
+  # [NOUVEAU] MAIR-290 (epic MAIR-284), APIs and BFFs: personal data in logs test. The repo's marker
+  # stack (at the promoted commit) runs the staging image by digest and a runner that plays the
+  # journey of gdpr-marker.yaml with a marker user; the logs of every container are then searched
+  # for its values. The summary is read before the Prod approval; a leak skips the prod release.
+  # Skipped with a warning while the repo has no gdpr-marker.yaml.
+  gdpr_marker:
+    name: GDPR log marker
+    if: inputs.stack == 'apis' || inputs.stack == 'bffs'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.stack == 'bffs' && 60 || 25 }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run the GDPR log marker test
+        uses: ./cicd-repo/actions/promote/gdpr-marker
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          npm_scope: ${{ inputs.stack == 'bffs' && inputs.npm_scope || '' }}
+          node_auth_token: ${{ inputs.stack == 'bffs' && secrets.GITHUB_TOKEN || '' }}
+
   promote:
     name: Release Prod
-    # [CHANGEMENT] MAIR-285: also waits for the GDPR inventory gate.
-    needs: [resolve, version, release_folder, gdpr_inventory]
+    # [CHANGEMENT] MAIR-285 / MAIR-290: also waits for the GDPR inventory and log marker gates.
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker]
     if: >-
       always()
       && needs.resolve.result == 'success'
@@ -258,6 +300,7 @@ jobs:
       && needs.version.outputs.published == 'true'
       && (needs.release_folder.result == 'success' || needs.release_folder.result == 'skipped')
       && (needs.gdpr_inventory.result == 'success' || needs.gdpr_inventory.result == 'skipped')
+      && (needs.gdpr_marker.result == 'success' || needs.gdpr_marker.result == 'skipped')
     runs-on: ubuntu-latest
     environment: Prod
     timeout-minutes: 30
@@ -352,7 +395,7 @@ jobs:
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
-    needs: [resolve, version, release_folder, gdpr_inventory, promote]
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, promote]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools

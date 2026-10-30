@@ -10,7 +10,8 @@ Centralized CI/CD for the **mairie360** GitHub org (project "Mairie360"). It con
 - **Composite actions** in `actions/<type>/<stack>/action.yml` (MAIR-493, see "Composite actions" below), invoked by those reusable workflows.
 - **Shared test files** in `tests/` (`zap/zap_hooks.py`, `k6/coverage.js`): the OpenAPI coverage
   gate mounted by the consumers' ZAP / k6 compose stacks (see "OpenAPI coverage gate" below),
-  and `gdpr/`, the GDPR inventory gate of the database (see "GDPR inventory gate" below).
+  and `gdpr/`, the GDPR checks: the inventory gate of the database and the log marker test of
+  the APIs and BFFs (see "GDPR inventory gate" and "GDPR log marker" below).
 - This repo's own release pipeline (`.github/workflows/cicd.yml` + `.releaserc.json`), plus Renovate automation.
 
 Apart from `tests/gdpr` (`npm ci && npm test` there, also the `gdpr` job of `lint.yml`), there is nothing to build, run, or unit-test locally. Changes are validated by the downstream repos that call these workflows. `.github/workflows/lint.yml` runs [`actionlint`](https://github.com/rhysd/actionlint) on every PR and, as a reusable workflow, as the `lint` job that `cicd.yml`'s `release` depends on (SC2086/SC2016/SC2129 shellcheck findings are ignored until the existing ones are cleaned up) and checks that each `actions/**/action.yml` has a `runs:` block; run the same locally with `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12`. The two files under `tests/` can be exercised by hand: `python3` with a fake `zap` object for the hook, `docker run grafana/k6` for the module.
@@ -105,6 +106,24 @@ the exit code. Placement: the `gdpr_inventory` job of `promote-prod.yml` (databa
 last tag) before approving; a PR that adds a column is not blocked, the next prod release is. `inventory.test.mjs` mocks the
 client; no test calls the real API.
 
+## GDPR log marker (`tests/gdpr/marker/`, MAIR-290, epic MAIR-284)
+
+Each API / BFF declares its journey in `gdpr-marker.yaml` and provides
+`docker-compose-gdpr-marker.yml` + `gdpr_marker_test.sh` (templates in `README.md`); this repo
+only holds the engine. `marker.mjs` (`generateMarker`: unique values that pass the usual
+validations; `needles`: raw, URL-encoded, JSON-escaped, base64 at the three alignments, national
+phone number, sensitive captures), `journey.mjs` (`loadJourney`: format check with readable
+errors, unknown placeholders included; `play`: steps in order, stops at the first unexpected
+status, captures from `body.` / `header.` / `cookie.`), `run.mjs` (runner, inside the stack
+through `run.sh`, like `tests/a11y`: copies `/engine` out of the read-only mount before `npm ci`;
+writes `marker.json`, never prints a value), `scan.mjs` (no dependency, runs on a plain
+`node:24` image after `docker compose logs --no-color > containers.log`: attributes each line to
+its service, skips the `gdpr-marker` runner and the `ignore`d services, masks the values in the
+excerpts; exit 0 / 1 leak or journey failed / 2 missing input). Placement: `gdpr_marker` job of
+`promote-prod.yml` (APIs and BFFs), between `version` and `promote`, on `<image>@<staging digest>`
+of the promoted commit, before the Prod approval. `marker.test.mjs` includes an end-to-end run against a local
+HTTP server (clean and leaky).
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, the library actions (`actions/*/bffs-lib`, `actions/*/front-lib`, used by `bffs-lib-cicd.yml` / `front-libs-cicd.yml`) and the release actions that run Node (`semantic-tag`, `publish-openapi-*`) pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
@@ -129,7 +148,7 @@ actions/
   release/               docker-release, semantic-tag, publish-openapi-rust, publish-openapi-typescript, release-folder, release-journal, docker-manual-build,
                          frontend-dev-exception (check_policy.py of frontend-dev-exception.yml)
   promote/               resolve (commit + checks), next-version (dry run on a commit behind main), create-release; the prod gates of MAIR-492 go here:
-                         gdpr-inventory (MAIR-285, database)
+                         gdpr-inventory (MAIR-285, database), gdpr-marker (MAIR-290, APIs / BFFs)
   notify/cicd-failure    n8n failure notification
 ```
 
@@ -149,6 +168,7 @@ Release, shared and notify actions:
 - **`release/release-journal`** — last step of `release-dev` of the four stack workflows and of the `promote` job of promote-staging / promote-prod (which pass the promoted commit as `sha`), `continue-on-error: true` so it never fails a release. Checks out main's tip into `.release-journal/`, then `release_journal.py prepare` reads the state kept in the journal (HTML comment `release-journal-state`: dev / staging commits, prod tag), moves the pointer of the stage forward only (an older run finishing late never moves it back), lists the first-parent commits of main since the last `v*` tag, dev → staging and staging → prod (journal commits left out) with their PR (GitHub API, else the squash `(#n)`), and writes the Messages API request, which also carries each commit's diff once (lockfiles, snapshots, `.svg` / `.min.js` and the journal left out; 15 000 characters per commit, 400 000 per request, then the file list only) so Claude describes the functional changes (routes, fields, rules, screens, errors, columns) rather than paraphrasing the PRs; `curl` calls Claude (`claude-haiku-5-5`, effort `medium`, JSON-schema output, no `fallbacks`: Haiku 5.5 has no server-side fallback) with the org secret `ANTHROPIC_API_KEY` (optional workflow secret); `render` writes `RELEASE_JOURNAL.md` in French (state table, three sections, last 50 promotions), with plain commit lists when the key is missing or the answer is unusable. Commits `docs(release-journal): <stage> <sha|vX> [skip ci]` straight on main with a token of the org's release app Acme-Global-Bot (`actions/create-github-app-token`, org secrets `RELEASE_APP_ID` / `RELEASE_APP_PK`, optional workflow secrets), which must be a bypass actor (integration `2844369`) of the repo's main rulesets: the GitHub Actions app cannot be one (422, not installed on the org), and the `[skip ci]` subject keeps the app's push from starting a pipeline, retrying from the new tip when the push is rejected. Because those commits land after the dev / staging release of a commit, `release/semantic-tag` fast-forwards over them (only when every commit ahead is a journal commit touching only the journal) before semantic-release, which otherwise publishes nothing from a branch behind its remote. Tests: `python3 -m unittest discover -s actions/release/release-journal/tests` (in `lint.yml`).
 - **`security/gitleaks`** (MAIR-416) — secret scan with a Gitleaks image pinned by version + digest (not `gitleaks-action`, which needs a paid org license), run as the checkout's uid. Scans only the commits of the run (`pull_request.base.sha..sha`, `event.before..sha`, else the last commit), so the caller checks out with `fetch-depth: 0`; `.gitleaksignore` for rotated secrets. Called after Semgrep in the `security_sast` job of every workflow.
 - **`promote/gdpr-inventory`** (MAIR-285) — GDPR inventory gate of the database, called by the `gdpr_inventory` job of `promote-prod.yml` (`stack: database`) with the staging digests `resolve` read: runs the database image, applies the migrations image (same invocation as Deploiment's migration job), dumps the columns (`tests/gdpr/schema.sql`), then `tests/gdpr/check.mjs` against the repo's `gdpr/inventory.yaml` and the inventory of the last tag before the promoted commit (`sha` input, `git describe --tags "<sha>^"`, so the caller checks out with `fetch-depth: 0`). Job summary + `gdpr-inventory` artifact. Skipped with a warning when the repo has no inventory.
+- **`promote/gdpr-marker`** (MAIR-290) — personal data in logs test of an API or a BFF, called by the `gdpr_marker` job of `promote-prod.yml` (`stack: apis | bffs`) with `<image>@<staging digest>` of the promoted commit: runs the repo's `gdpr_marker_test.sh` (checked out at that commit), whose `docker-compose-gdpr-marker.yml` starts the service and the `gdpr-marker` runner (`tests/gdpr/marker`), then searches the logs of every container for the marker's values. Job summary + `gdpr-marker` artifact (values masked). Skipped with a warning without `gdpr-marker.yaml`. BFFs get the `npm_scope` / token `.npmrc` like the ZAP job.
 - **`notify/cicd-failure`** — posts the failure to the n8n webhook. Context values and the secret go through `env:` and the JSON is built with `jq -n --arg` (MAIR-416: a forged branch name used to be able to inject shell code); keep it that way.
 - **`security/semgrep`** (MAIR-230) — SAST with a Semgrep image pinned by **version + digest** (input `image`; the org's "major tag" pinning rule does not apply here, bump tag and digest together). Inputs: `config` (space/newline-separated rulesets, one `--config` each), `paths`, `exclude` (defaults to `cicd-repo`, which every workflow checks out inside the workspace), `fail_on_findings` (default `'true'`), `upload_sarif` (default `'false'`, needs `security-events: write`), `sarif_category`, `artifact_name` (`semgrep-sarif`). The scan step never fails by itself: it records the exit code, the SARIF is uploaded (artifact, optionally code scanning), then a last step applies the verdict (exit 1 → findings, fail or warn; any other non-zero → Semgrep error, always fails). Outputs `findings`, `exit_code`, `sarif_file`. Called by the `security_sast` job of **every** stack workflow through the `semgrep_config` / `semgrep_fail_on_findings` workflow inputs (per-stack defaults and the rollout are in `README.md`). Code-scanning upload stays off in the workflows: consumer callers declare top-level `permissions:` without `security-events`, and a nested job cannot request more than its caller grants (startup failure).
 - **`release/publish-openapi-rust`** — `cargo open_api > openapi.json` → `npx -y orval` → publishes `@<org>/<package_name>-openapi` to `npm.pkg.github.com`.

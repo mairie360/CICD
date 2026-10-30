@@ -1,0 +1,109 @@
+name: "GDPR log marker"
+description: >
+  Personal data in logs test (MAIR-290, epic MAIR-284) of an API or a BFF. Runs the repo's
+  `gdpr_marker_test.sh`: its `docker-compose-gdpr-marker.yml` starts the service under test
+  (`IMAGE_REF`) and a `gdpr-marker` runner (tests/gdpr/marker/run.sh) that plays the journey of
+  `gdpr-marker.yaml` with a marker user; the script saves the logs of every container, then
+  tests/gdpr/marker/scan.mjs searches them for the marker's values. Job summary + `gdpr-marker`
+  artifact (values masked). Skipped with a warning while the repo has no `gdpr-marker.yaml`.
+  The caller checks out the repo and `mairie360/CICD` into `cicd-repo/` first.
+
+inputs:
+  image_ref:
+    description: "Image of the service under test (the one promoted to staging, by digest)"
+    required: true
+  github_token:
+    description: "Token that can pull the stack's images from GHCR"
+    required: true
+  npm_scope:
+    description: "BFFs: npm scope written into the .npmrc that a stack building an image mounts as a BuildKit secret"
+    required: false
+    default: ""
+  node_auth_token:
+    description: "BFFs: GitHub Packages token for that .npmrc"
+    required: false
+    default: ""
+  timeout_minutes:
+    description: "Bound of the script (composite steps take no timeout-minutes)"
+    required: false
+    default: "15"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check the marker test files
+      id: present
+      shell: bash
+      run: |
+        if [ ! -f gdpr-marker.yaml ]; then
+          echo "::warning::No gdpr-marker.yaml in this repo, GDPR log marker test skipped."
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        for f in gdpr_marker_test.sh docker-compose-gdpr-marker.yml; do
+          if [ ! -f "$f" ]; then
+            echo "::error file=gdpr-marker.yaml::gdpr-marker.yaml is declared but $f is missing (see the CICD README, GDPR log marker)."
+            exit 1
+          fi
+        done
+        echo "present=true" >> "$GITHUB_OUTPUT"
+
+    - name: Log in to GHCR
+      if: steps.present.outputs.present == 'true'
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.github_token }}
+      run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    # Same .npmrc as the ZAP job of BFFs-cicd.yml: a stack that builds an image (bff-user) mounts it
+    # as a BuildKit secret. Only the placeholder is written, the token stays in the environment.
+    - name: Write the build .npmrc
+      if: steps.present.outputs.present == 'true' && inputs.npm_scope != ''
+      shell: bash
+      env:
+        NPM_SCOPE: ${{ inputs.npm_scope }}
+      run: |
+        set -euo pipefail
+        umask 077
+        printf '%s\n' \
+          "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
+          '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+          > .npmrc
+
+    - name: Run the marker test
+      if: steps.present.outputs.present == 'true'
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image_ref }}
+        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+      run: |
+        # The runner writes gdpr-report/ as the job's user, not root.
+        export GDPR_UID="$(id -u)" GDPR_GID="$(id -g)"
+        timeout "$((TIMEOUT_MINUTES * 60))" ./gdpr_marker_test.sh
+
+    - name: Job summary
+      if: always() && steps.present.outputs.present == 'true'
+      shell: bash
+      run: |
+        if [ -f gdpr-report/summary.md ]; then
+          cat gdpr-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "No gdpr-report/summary.md: the stack or the runner failed before the scan (see the step log)." >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    # Never containers.log nor marker.json: the raw logs and the values stay on the runner.
+    - name: Upload the marker report
+      if: always() && steps.present.outputs.present == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: gdpr-marker
+        path: |
+          gdpr-report/summary.md
+          gdpr-report/report.json
+        if-no-files-found: ignore
+
+    - name: Remove the build .npmrc
+      if: always() && inputs.npm_scope != ''
+      shell: bash
+      run: rm -f .npmrc
