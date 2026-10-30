@@ -1,0 +1,96 @@
+name: "Next version of a commit"
+description: >-
+  semantic-release dry run on a given commit of main, which may be behind main's tip (MAIR-494):
+  computes the version promote-prod tags on that commit and its release notes, without tagging.
+  The caller checks out the repo with `fetch-depth: 0` (tags included).
+
+# semantic-release only releases the tip of its branch, and refuses a local branch behind its
+# remote. The commit is pushed as `main` to a local bare mirror (with every tag), and git sends the
+# repository URL to that mirror (`url.<mirror>.insteadOf`): semantic-release reads the tags and
+# checks the branch against the mirror, while the release notes and @semantic-release/github still
+# see the real repository. semantic-release takes the URL of the checkout's `origin`
+# (`https://github.com/<owner>/<repo>`, no `.git`: the action's `repository_url` input reaches it as
+# `{ r: … }`, which its API ignores), so both URL forms are redirected. Nothing is pushed to GitHub; promote-prod creates the tag and the GitHub
+# release itself on the commit.
+inputs:
+  sha:
+    description: "Full sha of the commit (resolve's `sha` output)"
+    required: true
+  github_token:
+    description: "Token of @semantic-release/github's verifyConditions (pass `secrets.GITHUB_TOKEN`)"
+    required: true
+
+outputs:
+  new_release_published:
+    description: "'true' when the commits since the last tag call for a release"
+    value: ${{ steps.semantic.outputs.new_release_published }}
+  new_release_version:
+    description: "Version to release (e.g. 1.2.0)"
+    value: ${{ steps.semantic.outputs.new_release_version }}
+  new_release_notes:
+    description: "Release notes of that version"
+    value: ${{ steps.semantic.outputs.new_release_notes }}
+  last_release_git_tag:
+    description: "Tag of the previous release (e.g. v1.1.0), empty without one"
+    value: ${{ steps.semantic.outputs.last_release_git_tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+
+    - name: Mirror the commit as main
+      id: mirror
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        BRANCH: ${{ github.event.repository.default_branch }}
+        SERVER_URL: ${{ github.server_url }}
+      run: |
+        set -euo pipefail
+        mirror="$RUNNER_TEMP/release-mirror.git"
+        url="$SERVER_URL/$GITHUB_REPOSITORY"
+        rm -rf "$mirror"
+        git init --quiet --bare "$mirror"
+        git -C "$mirror" symbolic-ref HEAD "refs/heads/$BRANCH"
+        git push --quiet "$mirror" "$SHA:refs/heads/$BRANCH" 'refs/tags/*:refs/tags/*'
+        git checkout --quiet -B "$BRANCH" "$SHA"
+        # The longest matching key wins: `<url>.git` is rewritten by the first one, `<url>` by the second.
+        git config --local --add "url.file://$mirror.insteadOf" "$url.git"
+        git config --local --add "url.file://$mirror.insteadOf" "$url"
+        test "$(git ls-remote --heads "$(git remote get-url origin)" "$BRANCH" | cut -f1)" = "$(git rev-parse HEAD)" \
+          || { echo "::error::next-version: origin does not resolve to the mirror"; exit 1; }
+
+    - name: Semantic Release (dry run)
+      id: semantic
+      uses: cycjimmy/semantic-release-action@v6.0.0
+      with:
+        dry_run: "true"
+        extra_plugins: |
+          semantic-release-cargo
+          conventional-changelog-conventionalcommits@7.0.2
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+
+    # A dry run that could not read the mirror reports "nothing to release" (MAIR-494: every prod
+    # promotion of v4.4.0 skipped its release that way). A tagged history always has a last tag.
+    - name: Check the dry run saw the tags
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        LAST_TAG: ${{ steps.semantic.outputs.last_release_git_tag }}
+      run: |
+        if [ -z "$LAST_TAG" ] && [ -n "$(git tag --list 'v*' --merged "$SHA")" ]; then
+          echo "::error::next-version: semantic-release saw no previous release of a tagged commit (did it read the mirror?)"
+          exit 1
+        fi
+
+    - name: Drop the mirror
+      if: always()
+      shell: bash
+      run: |
+        git config --local --remove-section "url.file://$RUNNER_TEMP/release-mirror.git" 2>/dev/null || true
+        rm -rf "$RUNNER_TEMP/release-mirror.git"

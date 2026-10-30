@@ -1,0 +1,46 @@
+name: "Liquibase release folder"
+description: >-
+  Checks that the Liquibase release changesets of a Database repo match the git tag about to be
+  cut (MAIR-491): shipped changesets unchanged, new ones in releases/v<next>/ closed by a
+  tag-v<next> changeset, none without a release. Writes the report to the job summary.
+
+inputs:
+  last_tag:
+    description: "Tag of the last release (semantic-tag's last_release_git_tag)"
+    required: true
+  next_version:
+    description: "Version about to be released, without the v (empty when none)"
+    required: false
+    default: ""
+  liquibase_dir:
+    description: "Directory holding changelog.xml"
+    required: false
+    default: "liquibase"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check the release changesets
+      shell: bash
+      env:
+        LAST_TAG: ${{ inputs.last_tag }}
+        NEXT_VERSION: ${{ inputs.next_version }}
+        LIQUIBASE_DIR: ${{ inputs.liquibase_dir }}
+        CHECKER: ${{ github.action_path }}/check_release_folder.py
+      run: |
+        if [ -z "$LAST_TAG" ]; then
+          echo "No previous release: nothing to compare." | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        # semantic-release cuts nothing from a commit the branch has moved past: neither does
+        # release-prod, so the verdict is the same, but say why.
+        remote_head="$(git ls-remote origin "$GITHUB_REF" 2>/dev/null | cut -f1 || true)"
+        if [ -z "$NEXT_VERSION" ] && [ -n "$remote_head" ] && [ "$remote_head" != "$GITHUB_SHA" ]; then
+          echo "> $GITHUB_REF has moved past this commit: semantic-release cuts no release from it, the newest run will." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        set +e
+        python3 -I "$CHECKER" "$GITHUB_WORKSPACE" "$LAST_TAG" "$NEXT_VERSION" > "$RUNNER_TEMP/release-folder.md"
+        status=$?
+        set -e
+        cat "$RUNNER_TEMP/release-folder.md" | tee -a "$GITHUB_STEP_SUMMARY"
+        exit "$status"
