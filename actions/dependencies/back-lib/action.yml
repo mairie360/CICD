@@ -1,0 +1,21 @@
+name: "Dependencies (back-lib)"
+description: >-
+  Rust toolchain, `cargo fetch` and a release `cargo check` that pre-compiles the dependencies of
+  the Rust library (`dependencies` job of back-lib-cicd.yml).
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Download Dependencies
+      shell: bash
+      run: cargo fetch
+
+    - name: Pre-compile dependencies
+      shell: bash
+      run: cargo check --release

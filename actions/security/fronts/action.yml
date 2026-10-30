@@ -1,0 +1,26 @@
+name: "Dynamic security tests (fronts)"
+description: >-
+  OWASP ZAP scan of a Next.js front through the consumer's `security_test.sh` (`security_tests` job
+  of frontend-cicd.yml). The caller keeps the 15 min step timeout on the step that uses this action
+  and dumps the container logs on failure (`integration/container-logs`).
+
+inputs:
+  node_auth_token:
+    description: "Token for the GitHub Packages registry (the caller passes secrets.GITHUB_TOKEN)"
+    required: true
+  target_image:
+    description: >-
+      Published image to test (`<image>:dev-<sha_tag>` on main, MAIR-516); empty on pull
+      requests, where the consumer's script builds the image locally
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run ZAP Security Scan via Docker Compose
+      shell: bash
+      run: ./security_test.sh
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+        TARGET_IMAGE: ${{ inputs.target_image }}
