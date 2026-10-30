@@ -1,0 +1,412 @@
+name: Promote to Prod
+
+# MAIR-494: the prod promotion is a manual run of each service repo (its
+# `.github/workflows/promote-prod.yml`, `workflow_dispatch` on main). No rebuild: the digest of
+# `staging-<sha>` gets the semver tag and `latest`.
+#
+#   resolve       the commit (input, else main's newest one on staging) must have `staging-<sha>`
+#   version       semantic-release dry run on that commit (it can be behind main's tip)
+#   release_folder  database only: the Liquibase release folder matches that version (MAIR-491)
+#   gdpr_inventory  database only: every column of the staging schema is in gdpr/inventory.yaml (MAIR-285)
+#   gdpr_marker   APIs and BFFs: no value of a marker user reaches the logs of the staging image (MAIR-290)
+#   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
+#                 OpenAPI semver package, release journal
+#
+# The prod gates of epic MAIR-492 (RGPD MAIR-604, RGAA MAIR-317/319, E2E MAIR-602) plug in as jobs
+# between `version` and `promote`, like `release_folder`.
+
+on:
+  workflow_call:
+    inputs:
+      stack:
+        required: true
+        type: string
+        description: "Stack of the repo: apis | bffs | fronts | database"
+      package_name:
+        required: true
+        type: string
+        description: "Image base name (same as the main pipeline)"
+      cicd_version:
+        required: true
+        type: string
+        description: "Ref of mairie360/CICD the actions are checked out at (same as the `uses:` ref)"
+      sha:
+        required: false
+        type: string
+        default: ""
+        description: "Commit of main to promote; empty promotes main's newest commit released on staging"
+      openapi_spec_path:
+        required: false
+        type: string
+        default: "openapi-spec.json"
+        description: "Committed OpenAPI contract of a BFF (same as the main pipeline's input)"
+      npm_scope:
+        required: false
+        type: string
+        default: "@mairie360"
+        description: "BFFs: npm scope of the .npmrc a GDPR marker stack building an image mounts (MAIR-290)"
+      gdpr_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model that proposes a classification for the columns missing from the GDPR inventory (MAIR-285, database); only used when ANTHROPIC_API_KEY is set"
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      # [NOUVEAU] MAIR-285: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
+      # The release app pushes the prod tag (actions/promote/create-release).
+      RELEASE_APP_ID:
+        required: true
+      RELEASE_APP_PK:
+        required: true
+      N8N_WEBHOOK_SECRET:
+        required: true
+    outputs:
+      sha:
+        description: "Promoted commit"
+        value: ${{ jobs.resolve.outputs.sha }}
+      release_published:
+        description: "'true' when a version was released"
+        value: ${{ jobs.version.outputs.published }}
+      release_version:
+        description: "Version released (e.g. 1.2.0)"
+        value: ${{ jobs.version.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve the commit
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+      actions: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      sha_tag: ${{ steps.resolve.outputs.sha_tag }}
+      image: ${{ steps.resolve.outputs.image }}
+      digest: ${{ steps.resolve.outputs.digest }}
+      extra_digest: ${{ steps.resolve.outputs.extra_digest }}
+    steps:
+      - name: Check the stack
+        env:
+          STACK: ${{ inputs.stack }}
+        run: |
+          case "$STACK" in apis|bffs|fronts|database) ;; *) echo "::error::unknown stack '$STACK' (apis | bffs | fronts | database)"; exit 1 ;; esac
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      - name: Resolve and check the commit
+        id: resolve
+        uses: ./cicd-repo/actions/promote/resolve
+        with:
+          target: prod
+          sha: ${{ inputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  version:
+    name: Next version
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # semantic-release checks that it could push, even in dry-run; nothing is pushed to GitHub.
+      contents: write
+    outputs:
+      published: ${{ steps.next.outputs.new_release_published == 'true' && 'true' || 'false' }}
+      version: ${{ steps.next.outputs.new_release_version }}
+      last_tag: ${{ steps.next.outputs.last_release_git_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      - name: Compute the version of the commit
+        id: next
+        uses: ./cicd-repo/actions/promote/next-version
+        with:
+          sha: ${{ needs.resolve.outputs.sha }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Keep the release notes
+        if: steps.next.outputs.new_release_published == 'true'
+        env:
+          NOTES: ${{ steps.next.outputs.new_release_notes }}
+        run: printf '%s\n' "$NOTES" > "$RUNNER_TEMP/release-notes.md"
+
+      - name: Upload the release notes
+        if: steps.next.outputs.new_release_published == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes.md
+          retention-days: 7
+
+      - name: Summary
+        env:
+          PUBLISHED: ${{ steps.next.outputs.new_release_published }}
+          VERSION: ${{ steps.next.outputs.new_release_version }}
+          LAST_TAG: ${{ steps.next.outputs.last_release_git_tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          if [ "$PUBLISHED" = "true" ]; then
+            echo "Releasing \`v$VERSION\` on \`$SHA\` (previous: \`${LAST_TAG:-none}\`)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice title=promote-prod::no feat / fix / perf commit since ${LAST_TAG:-the start}: nothing to release, prod keeps its version"
+            echo "Nothing to release since \`${LAST_TAG:-none}\`: only commits that do not trigger a release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Database only (MAIR-491): the Liquibase release changesets match the version cut here.
+  release_folder:
+    name: Liquibase release folder
+    if: inputs.stack == 'database'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      - name: Check the release folder
+        uses: ./cicd-repo/actions/release/release-folder
+        with:
+          last_tag: ${{ needs.version.outputs.last_tag }}
+          next_version: ${{ needs.version.outputs.published == 'true' && needs.version.outputs.version || '' }}
+
+  # [NOUVEAU] MAIR-285 (epic MAIR-284), database only: migrates an empty database with the images
+  # of the promoted commit (staging digests) and checks that `gdpr/inventory.yaml` classifies every
+  # column. It runs before `promote` waits for the Prod approval, so the approver reads the job
+  # summary first: the gaps, the inventory changes since the last tag and Claude's proposals for
+  # the unclassified columns (never part of the verdict). A gap skips the prod release.
+  gdpr_inventory:
+    name: GDPR inventory
+    if: inputs.stack == 'database'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0  # the previous release tag, for the diff of the inventory
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Check the GDPR inventory
+        uses: ./cicd-repo/actions/promote/gdpr-inventory
+        with:
+          sha: ${{ needs.resolve.outputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          digest: ${{ needs.resolve.outputs.digest }}
+          migrations_digest: ${{ needs.resolve.outputs.extra_digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          ai_model: ${{ inputs.gdpr_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+
+  # [NOUVEAU] MAIR-290 (epic MAIR-284), APIs and BFFs: personal data in logs test. The repo's marker
+  # stack (at the promoted commit) runs the staging image by digest and a runner that plays the
+  # journey of gdpr-marker.yaml with a marker user; the logs of every container are then searched
+  # for its values. The summary is read before the Prod approval; a leak skips the prod release.
+  # Skipped with a warning while the repo has no gdpr-marker.yaml.
+  gdpr_marker:
+    name: GDPR log marker
+    if: inputs.stack == 'apis' || inputs.stack == 'bffs'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.stack == 'bffs' && 60 || 25 }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run the GDPR log marker test
+        uses: ./cicd-repo/actions/promote/gdpr-marker
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          npm_scope: ${{ inputs.stack == 'bffs' && inputs.npm_scope || '' }}
+          node_auth_token: ${{ inputs.stack == 'bffs' && secrets.GITHUB_TOKEN || '' }}
+
+  promote:
+    name: Release Prod
+    # [CHANGEMENT] MAIR-285 / MAIR-290: also waits for the GDPR inventory and log marker gates.
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker]
+    if: >-
+      always()
+      && needs.resolve.result == 'success'
+      && needs.version.result == 'success'
+      && needs.version.outputs.published == 'true'
+      && (needs.release_folder.result == 'success' || needs.release_folder.result == 'skipped')
+      && (needs.gdpr_inventory.result == 'success' || needs.gdpr_inventory.result == 'skipped')
+      && (needs.gdpr_marker.result == 'success' || needs.gdpr_marker.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: Prod
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Download the release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes
+
+      # Before the retag: without the release app, the images would reach prod with no tag.
+      - name: Check the release app credentials
+        env:
+          APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          APP_PK: ${{ secrets.RELEASE_APP_PK }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_PK" ]; then
+            echo "::error::RELEASE_APP_ID / RELEASE_APP_PK are empty: the prod tag cannot be pushed"
+            exit 1
+          fi
+
+      - name: Promote image(s) to Prod
+        uses: ./cicd-repo/actions/release/docker-release
+        with:
+          stage: prod
+          source_sha: ${{ needs.resolve.outputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          expected_digest: ${{ needs.resolve.outputs.digest }}
+          extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
+          expected_extra_digest: ${{ needs.resolve.outputs.extra_digest }}
+          release_published: "true"
+          release_version: ${{ needs.version.outputs.version }}
+
+      # After the retag (idempotent): if anything fails before this step, a new run computes the
+      # same version again. Neither the tag nor the release starts a workflow, and no commit is
+      # pushed (same `v<version>` release @semantic-release/github made).
+      - name: Create the tag and the GitHub release
+        uses: ./cicd-repo/actions/promote/create-release
+        with:
+          version: ${{ needs.version.outputs.version }}
+          sha: ${{ needs.resolve.outputs.sha }}
+          notes_file: ${{ runner.temp }}/release-notes/release-notes.md
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
+
+      - name: Publish OpenAPI (APIs)
+        if: inputs.stack == 'apis'
+        uses: ./cicd-repo/actions/release/publish-openapi-rust
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ needs.version.outputs.version }}
+
+      - name: Publish OpenAPI (BFFs)
+        if: inputs.stack == 'bffs'
+        uses: ./cicd-repo/actions/release/publish-openapi-typescript
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ needs.version.outputs.version }}
+          spec_file: ${{ inputs.openapi_spec_path }}
+
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: prod
+          sha: ${{ needs.resolve.outputs.sha }}
+          version: ${{ needs.version.outputs.version }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, promote]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      - name: Notify n8n
+        uses: ./cicd-repo/actions/notify/cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

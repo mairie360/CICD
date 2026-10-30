@@ -1,7 +1,7 @@
 # CICD
 
 Centralized CI/CD of the Mairie360 org: reusable GitHub workflows (`.github/workflows/*_cicd.yml`),
-the composite actions they call (`actions/`), and the test files shared by every service (`tests/`).
+the composite actions they call (`actions/<type>/<stack>`), and the test files shared by every service (`tests/`).
 
 Each application repo calls one reusable workflow and pins a release of this repo with
 `cicd_version`:
@@ -19,10 +19,36 @@ jobs:
 The jobs that need something from this repo check it out at that same `cicd_version` into
 `cicd-repo/` at the root of the consumer checkout.
 
-## Semgrep SAST (`actions/semgrep`)
+## Composite actions (`actions/`, MAIR-493)
+
+The steps of every job live in composite actions sorted by check type, then by stack:
+
+| Folder | Content | Stacks |
+| --- | --- | --- |
+| `actions/dependencies/<stack>` | toolchain setup, install, dependency audit where the stack runs one (`audit: 'true'` for the BFF / front `security_audit` jobs) | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
+| `actions/lint/<stack>` | lint command | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
+| `actions/build/<stack>` | build and its artifacts | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
+| `actions/unit-tests/<stack>` | tests and the Codecov upload | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib`, `db` |
+| `actions/integration/<stack>` | integration tests against the dev image (`bffs` replays the repo's newman collection, MAIR-262: junit summary in the job summary + `newman-report-<package_name>` artifact); `container-logs` is the log dump shared by every job that starts a Docker stack; `frontend-isolated-qa` holds `target.py` of `frontend-isolated-qa.yml` | `apis`, `bffs`, `fronts` |
+| `actions/security/<stack>` | stack-specific security check: OWASP ZAP (`apis`, `bffs`, `fronts`), `cargo audit` + `cargo deny` (`back-lib`), npm audit + typecheck (`front-lib`) | `apis`, `bffs`, `fronts`, `back-lib`, `front-lib` |
+| `actions/security/semgrep`, `actions/security/gitleaks` | cross-stack SAST and secret scan (pinned Docker images), `security_sast` job of every workflow but the fronts' | all but `fronts` |
+| `actions/security/semgrep-pypi`, `actions/security/gitleaks-binary` | the same scans from the hash-checked Semgrep wheel and Gitleaks release binary (no Docker Hub pull); `frontend-cicd.yml`, `frontend-dev-exception.yml` and this repo's `lint.yml` | `fronts` |
+| `actions/performance/<stack>` | k6 load test (`apis`, `bffs`, `fronts`), schema bench (`db`) | `apis`, `bffs`, `fronts`, `db` |
+| `actions/release/` | `docker-release`, `semantic-tag`, `publish-openapi-rust`, `publish-openapi-typescript`, `release-folder` (database), `docker-manual-build`, `frontend-dev-exception` (`check_policy.py` of `frontend-dev-exception.yml`) | — |
+| `actions/promote/` | `resolve` (commit promoted and its checks), `next-version` (semantic-release dry run on a commit behind main's tip), used by `promote-staging.yml` / `promote-prod.yml` (MAIR-494) | — |
+| `actions/notify/cicd-failure` | n8n notification of a failed run | all |
+
+A job therefore reads as: checkout, checkout of this repo into `cicd-repo/`, then
+`uses: ./cicd-repo/actions/<type>/<stack>`. Secrets are passed to the actions as inputs, and the
+step timeouts stay on the workflow steps (a composite step cannot take `timeout-minutes`). The
+jobs that did not use this repo before MAIR-493 only check out `actions/`
+(`sparse-checkout: actions`), so that the consumer's tools (`eslint .`, jest, cargo, Docker build
+contexts) never see this repo's files.
+
+## Semgrep SAST (`actions/security/semgrep`)
 
 Every stack workflow has a `security_sast` job ("Code Security Audit (Semgrep, Gitleaks)") that calls the
-`semgrep` composite action. The action runs a pinned image
+`security/semgrep` composite action. The action runs a pinned image
 (`semgrep/semgrep:<version>@sha256:<digest>`, input `image`), writes a SARIF report and uploads
 it as the `semgrep-sarif` workflow artifact. Its verdict comes from the Semgrep exit code: findings
 fail the job when `fail_on_findings` is `true`, and only raise a warning annotation when it is
@@ -69,11 +95,11 @@ Every consumer `cicd.yml` sets a top-level `permissions:` block without it, so a
 make those callers fail at startup. To enable it, grant `security-events: write` in the consumer
 callers first, then turn the upload on in the workflows.
 
-**Bumping Semgrep.** Update the `image` default in `actions/semgrep/action.yml`, and update the
+**Bumping Semgrep.** Update the `image` default in `actions/security/semgrep/action.yml`, and update the
 version tag and the digest together. The digest is the one of the multi-arch tag
 (`docker buildx imagetools inspect semgrep/semgrep:<version>`).
 
-## Gitleaks (`actions/gitleaks`)
+## Gitleaks (`actions/security/gitleaks`)
 
 The `security_sast` job of every workflow also runs Gitleaks (pinned
 `zricethezav/gitleaks:<version>@sha256:<digest>` image, not the `gitleaks-action`, which needs a
@@ -82,7 +108,7 @@ request, `before..after` of a push, the last commit for a new branch. A secret a
 history therefore does not fail every later build: rotate it first, then add its fingerprint to a
 `.gitleaksignore` at the root of the repo. The job checks the repo out with `fetch-depth: 0`.
 
-## Image release (`actions/docker-release`, MAIR-416)
+## Image release (`actions/release/docker-release`, MAIR-416)
 
 `APIs_cicd.yml`, `BFFs-cicd.yml`, `frontend-cicd.yml` and `database_cicd.yml` release their images
 through the same action:
@@ -90,8 +116,11 @@ through the same action:
 | Stage | What happens | Tags written |
 | --- | --- | --- |
 | `dev` | single build with an SBOM and a `mode=max` provenance attestation, push as `dev-<sha>` only, Trivy scan of that digest, cosign keyless signature, then the mobile tag | `dev-<sha>`, `dev` |
-| `staging` | resolves the digest of `dev-<sha>` (the commit of this run, never the mobile `dev`), checks it equals the digest `release-dev` built, verifies the cosign signature, re-tags that digest | `staging-<sha>`, `staging` |
-| `prod` | same from `staging-<sha>`, only when semantic-release published a version | `<version>`, `latest` |
+| `staging` | resolves the digest of `dev-<sha>` (the promoted commit, `source_sha`, never the mobile `dev`), checks it equals the digest `resolve` read, verifies the cosign signature, re-tags that digest | `staging-<sha>`, `staging` |
+| `prod` | same from `staging-<sha>`, only when a version is released | `<version>`, `latest` |
+
+`dev` runs in the main pipeline of the four stack workflows; `staging` and `prod` run in
+`promote-staging.yml` / `promote-prod.yml` (see the next section).
 
 Re-tagging uses `docker buildx imagetools create`, which copies the manifest index server side: the
 digest, and so the signature, SBOM and provenance attached to it, are the same in every
@@ -129,10 +158,102 @@ cosign verify ghcr.io/mairie360/<package>:<tag> \
 - **APIs, fronts, database:** Semgrep and Trivy now block; set `semgrep_fail_on_findings: false` /
   `image_scan_fail_on_findings: false`, or add a `.trivyignore`, while the findings are fixed.
 
-## GDPR inventory gate (`actions/gdpr-inventory`, MAIR-285)
+## Promotion to staging and prod (`promote-staging.yml`, `promote-prod.yml`, MAIR-494)
 
-`database_cicd.yml` runs a `gdpr_inventory` job after `release-staging`; `release-prod` needs it.
-It migrates an empty database with the images promoted to staging and compares the columns with
+A push to `main` only runs the checks and `release-dev`: every commit of `main` reaches dev, and
+nothing waits on an approval any more. Staging and prod are manual runs of each service repo, one
+workflow per environment, each calling a reusable workflow of this repo. No image is rebuilt: the
+`dev-<sha>` digest the main pipeline built and signed is tagged `staging-<sha>`, then
+`<version>` / `latest`.
+
+| | `promote-staging.yml` | `promote-prod.yml` |
+| --- | --- | --- |
+| Commit | `sha` input, else main's newest commit (release journal / `[skip ci]` commits left out) | `sha` input, else main's newest commit released on staging |
+| Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists |
+| Gates | integration tests (APIs; BFFs since MAIR-262, newman collection), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder and GDPR inventory (database, MAIR-491, MAIR-285); RGPD / RGAA / E2E plug in here (MAIR-604, MAIR-317/319, MAIR-602) |
+| Environment | `Staging` | `Prod` |
+| Publishes | `staging-<sha>` / `staging`, `@mairie360/<name>-openapi@0.0.0-staging.<sha>` (APIs: 7 chars, BFFs: 40) | git tag `v<version>` + GitHub release on the commit, `<version>` / `latest`, OpenAPI `<version>` |
+
+Prod computes the version with a semantic-release dry run on the promoted commit, which is usually
+behind main's tip (Renovate keeps merging): `actions/promote/next-version` pushes the commit as
+`main` to a local bare mirror and points the repository URL at it (`url.<mirror>.insteadOf`), so
+semantic-release reads the tags and checks the branch there, and the release notes keep the real
+repository links. The tag and the release are then created through the API on that commit. A run
+with nothing to release (only `chore` / `ci` / `docs` commits since the last tag) stops after
+`version`, with a notice.
+
+Both runs take a lock per repo and target (`concurrency: promote-<repo>-<target>`, in the caller),
+and only run on `main`. The commits a promotion creates (the release journal) carry `[skip ci]`;
+the tag and the release, created with the run's `GITHUB_TOKEN`, start no workflow
+(`actions/promote/resolve/tests` checks both).
+
+Caller (`.github/workflows/promote-staging.yml`; `promote-prod.yml` is the same with `prod`,
+`contents: write` and without `ci_workflow` / `npm_scope`):
+
+```yaml
+name: Promote to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit of main to promote (empty: main's newest commit)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-${{ github.repository }}-staging
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+    uses: mairie360/CICD/.github/workflows/promote-staging.yml@v4.4.0
+    with:
+      stack: apis            # apis | bffs | fronts | database
+      package_name: core-api
+      cicd_version: v4.4.0
+      sha: ${{ inputs.sha }}
+    secrets:
+      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+      RELEASE_APP_PK: ${{ secrets.RELEASE_APP_PK }}
+```
+
+BFFs also pass `openapi_spec_path` (the committed contract, same value as in `cicd.yml`). Run it
+with `gh workflow run promote-staging.yml -R mairie360/<repo> [-f sha=<sha>]`.
+
+### BFF integration gate (MAIR-262)
+
+The `integration_tests` job of `promote-staging.yml` runs for the APIs and the BFFs. A BFF repo
+provides an `integration_test.sh` of the same shape as its `security_test.sh` (builds
+`bff-<name>:local` from `development.Dockerfile` when `IMAGE_REF` is empty, needs `.npmrc` +
+`NODE_AUTH_TOKEN` for the `@mairie360/*` packages, sources `stack_secrets.sh`) driving a
+`docker-compose-integration.yml` whose `newman` service replays the repo's collection against the
+BFF with `--bail` and writes the junit report to `newman-reports/newman.xml` (relative to the
+repo root, the script creates the folder). The script's exit code is newman's. The action
+(`actions/integration/bffs`: `image_ref`, `npm_scope`, `github_token`) logs in to GHCR, writes
+the build `.npmrc`, runs the script with `IMAGE_REF=<image>:dev-<sha>`, then, whatever the
+outcome, summarizes the report in the job summary (total / passed / failed, the failed
+assertions with their request and message, or a note when the file is missing) and uploads
+`newman-reports/` as the `newman-report-<package_name>` artifact (14 days). The job has no step
+timeout (the stacks pull the database and several API images) and a 40 min job timeout.
+
+**Non-regression:** a BFF whose collection fails (an upstream contract field renamed, a status
+code changed, a route gone) fails `integration_tests`, and `promote` is not run: the commit
+stays on dev until the collection or the BFF is fixed, exactly like a ZAP or k6 failure.
+
+### GDPR inventory gate (`actions/promote/gdpr-inventory`, MAIR-285)
+
+`promote-prod.yml` runs a `gdpr_inventory` job for the database (`stack: database`), between
+`version` and `promote`. It migrates an empty database with the staging images of the promoted commit and compares the columns with
 the repo's `gdpr/inventory.yaml`, which classifies every column of the `public` tables (personal
 or not, category, fate on erasure, visibility, audit log exclusion). A column missing from the
 inventory, an entry naming a column that no longer exists, or a column referencing `users` not
@@ -146,14 +267,8 @@ The job summary, shown before the Prod approval, holds:
   `claude-sonnet-5-5`, only with the `ANTHROPIC_API_KEY` secret), as YAML to review and paste into
   the inventory in a PR. The proposals never decide the gate.
 
-To wire it, the Database repo passes the secrets to the workflow:
-
-```yaml
-    secrets:
-      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}  # optional: AI proposals
-```
+The Database repo's `promote-prod.yml` already passes `ANTHROPIC_API_KEY` (optional: AI proposals);
+`ANTHROPIC_WORKSPACE_ID` is only needed for a key that is not scoped to a workspace.
 
 Run the check by hand on a migrated database:
 
@@ -163,11 +278,11 @@ psql -At -q -d core -f schema.sql > /tmp/schema.json
 node check.mjs ../../../Database/gdpr/inventory.yaml /tmp/schema.json /tmp/gdpr-report
 ```
 
-## GDPR log marker (`actions/gdpr-marker`, MAIR-290)
+### GDPR log marker (`actions/promote/gdpr-marker`, MAIR-290)
 
-`APIs_cicd.yml` and `BFFs-cicd.yml` run a `gdpr_marker` job after `release-staging`, on the image
-promoted to staging (by digest); `release-prod` needs it, so its summary is read before the Prod
-approval. A runner creates a **marker user** with unique values (e-mail, first and last name,
+`promote-prod.yml` runs a `gdpr_marker` job for the APIs and the BFFs, between `version` and
+`promote`, on the staging image of the promoted commit (by digest), so its summary is read before
+the Prod approval. A runner creates a **marker user** with unique values (e-mail, first and last name,
 phone, password), plays the journey the repo declares, deliberate errors included, and the logs of
 **every container** of the stack are then searched for those values: raw, URL-encoded,
 JSON-escaped, in base64, the phone also as the national number the database stores, plus the
@@ -179,7 +294,7 @@ marker fields the journey never sends (so not tested) and the services left out 
 reason. The `gdpr-marker` artifact holds the same report; the raw logs never leave the runner.
 The job is skipped with a warning while the repo has no `gdpr-marker.yaml`.
 
-### Wiring an API or a BFF
+#### Wiring an API or a BFF
 
 Three files at the root of the repo.
 
@@ -285,6 +400,17 @@ exit $EXIT_CODE
 Add `/gdpr-report/` to `.gitignore` (and `gdpr-report`, `gdpr-marker.yaml`,
 `gdpr_marker_test.sh` to `.dockerignore`). BFFs: the job writes the same build `.npmrc` as the ZAP
 job, for stacks that build an image.
+
+### Migrating a consumer to the promotion workflows (v4.4.0, MAIR-494)
+
+- `cicd.yml`: bump the `uses:` ref and `cicd_version` to v4.4.0 or later. The main run now ends after
+  `release-dev`; its `Staging` / `Prod` jobs are gone, and so are the BFF workflow outputs
+  `release_published` / `release_version`.
+- Add `promote-staging.yml` and `promote-prod.yml` as above, pinned to the same ref as `cicd.yml`,
+  and add them to the Renovate custom manager of the repo, so one Renovate PR bumps the three files.
+- Commits released by the v4 pipeline promote as is: `resolve` only needs their `dev-<sha>` (and a
+  green `release-dev`; the `cancelled` Staging / Prod jobs of the old runs do not count as failures)
+  or their `staging-<sha>`.
 
 ## OpenAPI coverage gate (ZAP + k6)
 

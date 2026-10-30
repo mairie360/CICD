@@ -1,0 +1,71 @@
+name: "Resolve the promoted commit"
+description: >-
+  Picks the commit a promote-staging / promote-prod run promotes (the `sha` input, else the newest
+  eligible commit of main) and refuses it unless it is already on the previous environment:
+  `dev-<sha>` released by a green main CI run for staging, `staging-<sha>` for prod (MAIR-494).
+  The caller checks out the repo with `fetch-depth: 0` first.
+
+inputs:
+  target:
+    description: "Environment promoted to: staging | prod"
+    required: true
+  sha:
+    description: "Commit of main to promote (7 to 40 hex chars); empty picks the newest eligible one"
+    required: false
+    default: ""
+  package_name:
+    description: "Base name of the primary image"
+    required: true
+  extra_package_name:
+    description: "Base name of a second image promoted with it (database `liquibase-migrations`)"
+    required: false
+    default: ""
+  ci_workflow:
+    description: "File name of the repo's main pipeline, whose run on the commit must be green (staging)"
+    required: false
+    default: "cicd.yml"
+  github_token:
+    description: "Token reading GHCR and the Actions runs (pass `secrets.GITHUB_TOKEN`)"
+    required: true
+
+outputs:
+  sha:
+    description: "Full sha of the promoted commit"
+    value: ${{ steps.resolve.outputs.sha }}
+  sha_tag:
+    description: "Short sha used in the `dev-` / `staging-` tags"
+    value: ${{ steps.resolve.outputs.sha_tag }}
+  image:
+    description: "Primary image, without tag"
+    value: ${{ steps.resolve.outputs.image }}
+  digest:
+    description: "Digest of the primary image on the previous environment"
+    value: ${{ steps.resolve.outputs.digest }}
+  extra_digest:
+    description: "Digest of the secondary image on the previous environment ('' without one)"
+    value: ${{ steps.resolve.outputs.extra_digest }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Log in to GHCR
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.github_token }}
+      run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    - name: Resolve and check the commit
+      id: resolve
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        SHA_INPUT: ${{ inputs.sha }}
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        EXTRA_PACKAGE_NAME: ${{ inputs.extra_package_name }}
+        CI_WORKFLOW: ${{ inputs.ci_workflow }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        BRANCH: ${{ github.event.repository.default_branch }}
+        SCRIPT: ${{ github.action_path }}/resolve.py
+      run: |
+        git fetch --quiet origin "$BRANCH"
+        python3 -I "$SCRIPT"

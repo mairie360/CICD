@@ -1,0 +1,40 @@
+name: "Unit tests (back-lib)"
+description: >-
+  Tests and coverage of the Rust library in one `cargo llvm-cov` pass, then the Codecov upload on
+  main and on PRs to main (`unit_test` job of back-lib-cicd.yml).
+
+inputs:
+  codecov_token:
+    description: "Codecov upload token (the caller passes secrets.CODECOV_TOKEN)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
+
+    # [CHANGEMENT] MAIR-467: the tests run once. `cargo llvm-cov` runs them and writes
+    # `codecov.json` in the same pass (it used to be `cargo test --release`, then a second
+    # instrumented run on main / PRs to main). Same as `cargo cov` in APIs_cicd.yml.
+    - name: Run Rust Tests & Generate Coverage
+      shell: bash
+      run: cargo llvm-cov --workspace --codecov --output-path codecov.json
+
+    - name: Envoyer à Codecov
+      if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+      uses: codecov/codecov-action@v7
+      with:
+        token: ${{ inputs.codecov_token }}
+        files: codecov.json
+        # [CHANGEMENT] MAIR-467: a Codecov outage (expired certificate on 2026-10-05) must not
+        # block the release; coverage is only reported here, never enforced.
+        fail_ci_if_error: false
