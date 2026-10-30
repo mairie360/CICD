@@ -120,11 +120,14 @@ runs:
           previous_args=("$RUNNER_TEMP/previous-inventory.yaml" "$previous_ref")
         fi
 
-        (cd cicd-repo/tests/gdpr && npm ci --no-audit --no-fund --silent)
+        (cd cicd-repo/tests/gdpr && npm ci --no-audit --no-fund --silent) || exit 1
+        # `shell: bash` runs with -e: without `set +e` a gap (exit 1) would stop the step before the
+        # summary reaches the job summary the approver reads.
+        set +e
         GDPR_SCHEMA_LABEL="${PACKAGE_NAME}@${DIGEST:0:19}" \
           node cicd-repo/tests/gdpr/check.mjs "$INVENTORY" "$RUNNER_TEMP/schema.json" "$report" "${previous_args[@]}" > /dev/null
         code=$?
-        cat "$report/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        if [ -f "$report/summary.md" ]; then cat "$report/summary.md" >> "$GITHUB_STEP_SUMMARY"; fi
         if [ "$code" -ne 0 ]; then
           echo "::error::The GDPR inventory does not match the schema (see the job summary and the gdpr-inventory artifact)."
         fi

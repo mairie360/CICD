@@ -1,5 +1,5 @@
-// GDPR inventory gate (MAIR-285), run by the `gdpr_inventory` job of database_cicd.yml after
-// release-staging, so that the Prod approver reads its summary before approving.
+// GDPR inventory gate (MAIR-285), run by the `gdpr_inventory` job of promote-prod.yml (database),
+// before the Prod approval, so that the approver reads its summary first.
 //
 // Usage: node check.mjs <inventory.yaml> <schema.json> <report dir> [<previous inventory.yaml> <previous ref>]
 //
@@ -67,17 +67,23 @@ export async function main(argv, env = process.env, makeClient = (options) => ne
   }
   mkdirSync(reportDir, { recursive: true });
   const inventoryText = readFileSync(inventoryFile, "utf8");
-  const { errors, entries } = parseInventory(inventoryText);
-  if (errors.length > 0) {
-    const text = `## GDPR inventory\n\n**❌ ${code(inventoryFile)} is invalid:**\n\n${errors.map((e) => `- ${e}`).join("\n")}\n`;
+  // Invalid input: exit 2, with a summary saying why (the job summary is what the approver reads).
+  const invalid = (file, reasons) => {
+    const text = `## GDPR inventory\n\n**❌ ${code(file)} is invalid:**\n\n${reasons.map((e) => `- ${e}`).join("\n")}\n`;
     writeFileSync(join(reportDir, "summary.md"), text);
     console.error(text);
     return 2;
+  };
+  const { errors, entries } = parseInventory(inventoryText);
+  if (errors.length > 0) return invalid(inventoryFile, errors);
+  let schema;
+  try {
+    schema = JSON.parse(readFileSync(schemaFile, "utf8"));
+  } catch (caught) {
+    return invalid(schemaFile, [`not a JSON column dump (${caught.message})`]);
   }
-  const schema = JSON.parse(readFileSync(schemaFile, "utf8"));
   if (!Array.isArray(schema) || schema.length === 0) {
-    console.error(`${schemaFile} holds no column: the schema was not migrated?`);
-    return 2;
+    return invalid(schemaFile, ["it holds no column: the schema was not migrated?"]);
   }
   const gaps = compare(entries, schema);
 
@@ -99,12 +105,18 @@ export async function main(argv, env = process.env, makeClient = (options) => ne
     } else {
       const workspace = (env.ANTHROPIC_WORKSPACE_ID ?? "").trim();
       const client = makeClient(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {});
-      const result = await propose(gaps.missing, { client, model: settings.model, inventoryText });
-      ai.error = result.error;
-      ai.usage = result.usage;
-      if (result.proposals.length > 0) {
-        ai.yaml = proposalsYaml(result.proposals, settings.model);
-        writeFileSync(join(reportDir, "proposals.yaml"), ai.yaml);
+      // The proposals only fill the report: any failure (not only an API error, e.g. an answer
+      // the SDK cannot parse) leaves them out, never the gap report.
+      try {
+        const result = await propose(gaps.missing, { client, model: settings.model, inventoryText });
+        ai.error = result.error;
+        ai.usage = result.usage;
+        if (result.proposals.length > 0) {
+          ai.yaml = proposalsYaml(result.proposals, settings.model);
+          writeFileSync(join(reportDir, "proposals.yaml"), ai.yaml);
+        }
+      } catch (caught) {
+        ai.error = `unexpected error: ${caught?.message ?? caught}`.slice(0, 300);
       }
     }
   }
