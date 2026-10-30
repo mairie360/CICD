@@ -1,0 +1,19 @@
+# GDPR checklist of the pull requests (MAIR-295): the "Personal data" section of the description
+# (organization PR template, mairie360/.github) must be answered, and a "Yes" must go with the
+# personal data inventory (Devops/Database gdpr/inventory.yaml). Runs on `edited` too, so that
+# ticking the answer re-runs it. Mark the "GDPR checklist" check required in the branch protection.
+name: GDPR PR checklist
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  gdpr:
+    uses: mairie360/CICD/.github/workflows/gdpr-pr-cicd.yml@v4.12.0
+    with:
+      cicd_version: v4.12.0
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
