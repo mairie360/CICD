@@ -158,3 +158,26 @@ test("check.mjs blocks on a gap, reports the changes and the AI proposals", asyn
   const invalid = write("invalid.yaml", INVENTORY.replace("category: contact", "category: phone"));
   assert.equal(await main([invalid, complete, report], {}), 2);
 });
+
+test("check.mjs reports an invalid schema dump as invalid input, with a summary (exit 2)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-"));
+  writeFileSync(join(dir, "inventory.yaml"), INVENTORY);
+  const report = join(dir, "report");
+  for (const content of ["", "not json", "[]"]) {
+    writeFileSync(join(dir, "schema.json"), content);
+    assert.equal(await main([join(dir, "inventory.yaml"), join(dir, "schema.json"), report], {}), 2);
+    assert.match(readFileSync(join(report, "summary.md"), "utf8"), /❌ `.*schema\.json` is invalid/);
+  }
+});
+
+test("check.mjs keeps the gap report when the AI call throws something else than an API error", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-"));
+  writeFileSync(join(dir, "inventory.yaml"), INVENTORY);
+  writeFileSync(join(dir, "schema.json"), JSON.stringify([...SCHEMA, col("users", "phone")]));
+  const report = join(dir, "report");
+  const client = { beta: { messages: { parse: async () => { throw new SyntaxError("Unexpected end of JSON input"); } } } };
+  assert.equal(await main([join(dir, "inventory.yaml"), join(dir, "schema.json"), report], { ANTHROPIC_API_KEY: "test" }, () => client), 1);
+  const text = readFileSync(join(report, "summary.md"), "utf8");
+  assert.match(text, /- `users.phone` \(integer\)/);
+  assert.match(text, /No proposal: unexpected error: Unexpected end of JSON input/);
+});
