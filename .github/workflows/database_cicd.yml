@@ -12,7 +12,7 @@ on:
       semgrep_config:
         required: false
         type: string
-        default: "p/secrets p/dockerfile p/github-actions"
+        default: "p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr"
         description: "Semgrep rulesets (space-separated) run by the SAST job"
       semgrep_fail_on_findings:
         required: false

@@ -1,0 +1,22 @@
+# GDPR Semgrep rules of the mairie360 CI (MAIR-291, epic MAIR-284). Run by the `security_sast` job
+# of every stack workflow (`semgrep_config` default: cicd-repo/tests/semgrep/gdpr), tested by
+# `semgrep --test` (the file of the same name next to it, lint.yml).
+#
+# Rule of the epic: a log describes an error by its type and context, never by the value it
+# received. The GDPR log marker test (tests/gdpr/marker) proves it at run time; these rules catch
+# the obvious cases at review time. A finding that is a false positive gets a `nosemgrep: <rule id>`
+# comment with the reason.
+rules:
+  - id: gdpr-rust-log-personal-value
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      This log line prints a personal or secret value (e-mail, password, token, request body).
+      Log the type of the error and an id instead (MAIR-290); see the GDPR log marker test.
+    metadata:
+      category: security
+      references: ["https://mairie-360.atlassian.net/browse/MAIR-291"]
+    # A logging macro whose arguments (up to the end of the statement) name such a value: an inline
+    # capture ("{email}"), an argument (`, user.email()`), or a tracing field (`email = %x`, `?token`).
+    pattern-regex: >-
+      (?:tracing::|log::)?\b(?:error|warn|info|debug|trace|println|eprintln|print|eprint)!\s*\([^;]{0,400}?(?:\{\s*(?:[a-z_]*_)?(?:email|password|token|body)\s*(?::[^}]*)?\}|,\s*&?(?:[A-Za-z_][\w]*\.)*(?:[a-z_]*_)?(?:email|password|token|body)(?:\(\))?\s*[,)]|\b(?:email|password|token|body)\s*=\s*[%?]|[%?]\s*(?:[A-Za-z_][\w]*\.)*(?:[a-z_]*_)?(?:email|password|token|body)\b)

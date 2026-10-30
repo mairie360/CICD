@@ -124,6 +124,24 @@ excerpts; exit 0 / 1 leak or journey failed / 2 missing input). Placement: `gdpr
 of the promoted commit, before the Prod approval. `marker.test.mjs` includes an end-to-end run against a local
 HTTP server (clean and leaky).
 
+## GDPR contract and Semgrep rules (`tests/gdpr/contract/`, `tests/semgrep/gdpr/`, MAIR-291)
+
+`contract/contract.mjs` walks every response schema of an OpenAPI document (`$ref` with cycle
+guard, `allOf`/`oneOf`/`anyOf`, `items`, `additionalProperties`) and fails on a field carrying a
+`credentials` column of the inventory (same name, or mapped under `fields` in the consumer's
+`gdpr-contract.yaml`), unless `allow` lists it with a reason; `contract/ai.mjs` asks Claude a column
+for the unmapped names, cached by fingerprint (`GDPR_AI_CACHE`, `actions/cache` in the action),
+never deciding; `contract/check.mjs` is the CLI (exit 0 / 1 violation / 2 invalid input). The
+inventory comes from mairie360/Database (`gdpr_inventory_ref`). The action is
+`actions/security/gdpr-contract` (a check of every event, like Semgrep; the promotion gates of
+MAIR-285 / MAIR-290 are under `actions/promote/`), the `gdpr_contract` job of `APIs_cicd.yml` (on
+`cargo open_api`) and `BFFs-cicd.yml` (on the `openapi-spec` artifact) runs on every event;
+`release-dev` does not need it, but a failure blocks promote-staging (main run not green). The per-operation personal
+columns of `report.json` are the input of the access matrix (MAIR-288, not decided yet). The
+Semgrep rules (`tests/semgrep/gdpr/<rule>.yml` + annotated `<rule>.<ext>`, `semgrep --test` in
+`lint.yml`) are in every workflow's default `semgrep_config`. Gitleaks already runs everywhere
+(MAIR-416); the subcontractor-domain rule waits for the decision file of MAIR-294.
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, the library actions (`actions/*/bffs-lib`, `actions/*/front-lib`, used by `bffs-lib-cicd.yml` / `front-libs-cicd.yml`) and the release actions that run Node (`semantic-tag`, `publish-openapi-*`) pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
@@ -142,6 +160,7 @@ actions/
   integration/container-logs   "Dump container logs" step shared by every job that starts a Docker stack
   integration/frontend-isolated-qa   target.py of frontend-isolated-qa.yml (ZAP / k6 of a front against a verified dev digest)
   security/<stack>       stack-specific security check                            apis bffs fronts (ZAP) back-lib (cargo audit/deny) front-lib (npm audit + typecheck)
+  security/gdpr-contract   GDPR check of the OpenAPI contract (MAIR-291, APIs / BFFs, every event)
   security/semgrep, security/gitleaks   cross-stack SAST / secret scan (security_sast job of every workflow but the fronts')
   security/semgrep-pypi, security/gitleaks-binary   same scans from the hash-checked Semgrep wheel / Gitleaks release binary, no Docker Hub pull (fronts, frontend-dev-exception.yml, lint.yml)
   performance/<stack>    load / bench test                                        apis bffs fronts (k6) db (schema bench)
