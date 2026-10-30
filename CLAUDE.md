@@ -152,6 +152,22 @@ the PR when the repo holds it, `inventory_path`; else a non-placeholder `Invento
 `gdpr-pr-cicd.yml`, called by a per-repo `gdpr-pr.yml` on `pull_request` with the `edited` type (the
 stack workflows do not get `edited` events).
 
+## GDPR simulation (`tests/gdpr/simulation/`, MAIR-497)
+
+`guard.mjs` (refuses without `GDPR_SIMULATION=test-stack` or with a target outside the stack
+network), `personas.mjs` (marker values per persona), `simulate.mjs` (journey per persona + `erase`
+steps, writes `personas.json`), `db.mjs` / `sql.mjs` (erasure, retention and content queries from
+the inventory and `schema.sql`), `templates.mjs` (log templates and fingerprints), `ai.mjs` (Haiku 5.5
+by default, `effort: low` except for Haiku 4.5, cache by `model:fingerprint`), `accepted.mjs`
+(`gdpr-accepted-risks.yaml`), `analyze.mjs` (the gate: deterministic leak or unaccepted `high`
+blocks; erasure / retention are expected failures until MAIR-289, `GDPR_SIMULATION_ERASURE=enforce`).
+Action `actions/promote/gdpr-simulation`, job `gdpr_simulation` of `promote-prod.yml` (APIs / BFFs),
+between `version` and `promote`, on the staging digest of the promoted commit; skipped without
+`gdpr-simulation.yaml`.
+`traces.mjs` (MAIR-501): spans of the collector's `file` export (`traces.jsonl`) and the usage
+ledger (`usage.json`) are searched like the logs; identifying span attributes and ledger keys
+block; span templates join the AI review. Both files are optional (listed as not checked).
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, the library actions (`actions/*/bffs-lib`, `actions/*/front-lib`, used by `bffs-lib-cicd.yml` / `front-libs-cicd.yml`) and the release actions that run Node (`semantic-tag`, `publish-openapi-*`) pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
@@ -178,7 +194,8 @@ actions/
   release/               docker-release, semantic-tag, publish-openapi-rust, publish-openapi-typescript, release-folder, release-journal, docker-manual-build,
                          frontend-dev-exception (check_policy.py of frontend-dev-exception.yml)
   promote/               resolve (commit + checks), next-version (dry run on a commit behind main), create-release; the prod gates of MAIR-492 go here:
-                         gdpr-inventory (MAIR-285, database), gdpr-marker (MAIR-290, APIs / BFFs)
+                         gdpr-inventory (MAIR-285, database), gdpr-marker (MAIR-290, APIs / BFFs),
+                         gdpr-simulation (MAIR-497, APIs / BFFs)
   notify/cicd-failure    n8n failure notification
 ```
 

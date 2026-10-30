@@ -19,3 +19,7 @@ the other types (`actions/<type>/<stack>`).
 - `gdpr-inventory/` (MAIR-285, database): migrates an empty database with the staging images of
   the promoted commit and checks every column against the repo's `gdpr/inventory.yaml`
   (`tests/gdpr/check.mjs`); job `gdpr_inventory` of promote-prod. Tests: `cd tests/gdpr && npm test`.
+- `gdpr-marker/` (MAIR-290, APIs / BFFs): plays the repo's `gdpr-marker.yaml` journey on the staging
+  image and searches every container's logs for the marker user's values; job `gdpr_marker`.
+- `gdpr-simulation/` (MAIR-497, APIs / BFFs): GDPR usage simulation on the staging image, then
+  deterministic checks and an AI review (`tests/gdpr/simulation`); job `gdpr_simulation`.
