@@ -1,0 +1,18 @@
+name: "Performance tests (db)"
+description: >-
+  Schema bench of the Database repo through its `./performance_test.sh`, skipped with a warning
+  when the script is missing (`performance_tests` job of database_cicd.yml). The caller keeps the
+  20 min step timeout on the step that uses this action and uploads `bench/results/` in a step of
+  its own (`if: always()`), outside that timeout.
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run schema bench
+      shell: bash
+      run: |
+        if [ ! -x ./performance_test.sh ]; then
+          echo "::warning::No executable ./performance_test.sh in this repo, schema bench skipped."
+          exit 0
+        fi
+        ./performance_test.sh

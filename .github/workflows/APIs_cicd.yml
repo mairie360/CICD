@@ -37,15 +37,22 @@ on:
         default: "main"
         description: "Ref of mairie360/Database whose gdpr/inventory.yaml the GDPR contract check reads (MAIR-291)"
     secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+        description: "Claude API key of the release journal and of the GDPR contract proposals (org secret); without it the journal keeps plain commit lists and the contract check runs without AI proposals"
+      # [NOUVEAU] MAIR-291: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
+      RELEASE_APP_ID:
+        required: false
+        description: "Release app (org secret) pushing the release journal on main"
+      RELEASE_APP_PK:
+        required: false
+        description: "Private key of the release app (org secret)"
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
         required: true
-      # [NOUVEAU] MAIR-291: optional; without it the GDPR contract check runs without AI proposals.
-      ANTHROPIC_API_KEY:
-        required: false
-      ANTHROPIC_WORKSPACE_ID:
-        required: false
 
 jobs:
   dependencies:
@@ -55,19 +62,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Download Dependencies
-        run: cargo fetch
-
-      - name: Security Audit (cargo-audit)
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+      - name: Download Dependencies & Security Audit (cargo-audit)
+        uses: ./cicd-repo/actions/dependencies/apis
 
   lint:
     name: Check lint
@@ -77,17 +83,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          components: rustfmt, clippy
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      # [CHANGEMENT] Utilisation de la commande cargo standard au lieu de l'action-rs/cargo
       - name: Run lint check
-        run: cargo clippy -- -D warnings
+        uses: ./cicd-repo/actions/lint/apis
 
   # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
   security_sast:
@@ -109,14 +116,14 @@ jobs:
           path: cicd-repo
 
       - name: Run Semgrep Security Scan
-        uses: ./cicd-repo/actions/semgrep
+        uses: ./cicd-repo/actions/security/semgrep
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
 
       # [NOUVEAU] MAIR-416: secret scan of the new commits.
       - name: Run Gitleaks Secret Scan
-        uses: ./cicd-repo/actions/gitleaks
+        uses: ./cicd-repo/actions/security/gitleaks
 
   build:
     name: Build Project & Spec
@@ -126,23 +133,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Build Project
-        run: cargo build --release
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: api-assets
-          path: |
-            target/release/
-            openapi-spec.json
-          retention-days: 1 # [CHANGEMENT] Limitation de la rétention pour économiser l'espace
+        uses: ./cicd-repo/actions/build/apis
 
   unit_test:
     name: Unit tests
@@ -155,36 +157,20 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
         with:
-          components: llvm-tools-preview
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      # [CHANGEMENT] Installation via taiki-e/install-action (plus rapide que `cargo install`),
-      # aligné sur back-lib-cicd.yml.
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      # [CHANGEMENT] Passe par l'alias cargo `cov` défini par le repo consommateur
-      # (aligné sur la convention `cargo lint_check`). L'alias doit exécuter les tests,
-      # appliquer le seuil de couverture et produire `codecov.json` pour l'upload ci-dessous.
       - name: Run Rust Tests & Check Coverage
-        run: cargo cov
-
-      # [NOUVEAU] Upload de la couverture vers Codecov (copié de back-lib-cicd.yml),
-      # uniquement sur main ou sur une PR ciblant main.
-      - name: Envoyer à Codecov
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-        uses: codecov/codecov-action@v7
+        uses: ./cicd-repo/actions/unit-tests/apis
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: codecov.json
-          # [CHANGEMENT] MAIR-467: Codecov only reports coverage, so an outage on its side (expired
-          # certificate on 2026-10-05) must not fail the job and block the release.
-          fail_ci_if_error: false
+          codecov_token: ${{ secrets.CODECOV_TOKEN }}
 
   release-dev:
     if: github.ref == 'refs/heads/main'
@@ -192,7 +178,8 @@ jobs:
     # or ce job consomme l'artefact `api-assets`.
     needs: [unit_test, build]
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
-    # is released to dev right away. Staging and Prod keep their environments.
+    # is released to dev right away. Staging and prod are promote-staging.yml / promote-prod.yml
+    # (MAIR-494), manual runs that retag this image.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -226,7 +213,7 @@ jobs:
       # signature, then the `dev` tag: all in the shared `docker-release` action (MAIR-416).
       - name: Build & Push image (Dev)
         id: release
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         with:
           stage: dev
           package_name: ${{ inputs.package_name }}
@@ -234,242 +221,28 @@ jobs:
           scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
       - name: Publish OpenAPI
-        uses: ./cicd-repo/actions/publish-openapi-rust
+        uses: ./cicd-repo/actions/release/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-dev-${{ steps.release.outputs.sha_tag }}
           dist_tag: dev
 
-  # [CHANGEMENT] The three test jobs below no longer rebuild the API from source: they pull
-  # the `dev-<sha_tag>` image published by `release-dev` (the one that gets promoted to
-  # staging and prod) and hand it to the compose stacks through `IMAGE_REF`. The consumer's
-  # `*_test.sh` scripts only build a local image when `IMAGE_REF` is empty (local usage).
-  integration_tests:
-    if: github.ref == 'refs/heads/main'
-    name: Integration tests
-    runs-on: ubuntu-latest
-    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
-    # runner for GitHub's 6 h default and starved the whole org's queue.
-    timeout-minutes: 25
-    needs: release-dev
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      # [CHANGEMENT] Integration tests are owned by the consumer repo: `integration_test.sh`
-      # (same shape as `security_test.sh`) starts `docker-compose-integration.yml`, waits for
-      # the test-runner service and returns its exit code. No external service is involved.
-      - name: Run integration tests via Docker Compose
-        timeout-minutes: 15
-        env:
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
-        run: ./integration_test.sh
-
-      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
-      # leaving a `*-ready` service polling forever), the step timeout kills the script before
-      # its `docker compose down`, so the containers are still there: print their state and
-      # logs to see why the service under test did not start.
-      - name: Dump container logs
-        if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
-
-  integration_and_security:
-    if: github.ref == 'refs/heads/main'
-    name: Dynamic Security Tests (OWASP ZAP)
-    needs: release-dev
-    runs-on: ubuntu-latest
-    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
-    # runner for GitHub's 6 h default and starved the whole org's queue.
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      # [NOUVEAU] MAIR-194: exposes the shared OpenAPI coverage gate
-      # (`cicd-repo/tests/zap/zap_hooks.py`) to the consumer's compose stack, which
-      # mounts it into the ZAP container and passes it with `--hook`.
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
         with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: Run ZAP Security Scan via Docker Compose
-        timeout-minutes: 15
-        env:
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
-        run: |
-          # Starts the security stack; the job fails when ZAP reports a vulnerability
-          # or when an operation of openapi.json was not reached (coverage gate).
-          ./security_test.sh
-
-      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
-      # leaving a `*-ready` service polling forever), the step timeout kills the script before
-      # its `docker compose down`, so the containers are still there: print their state and
-      # logs to see why the service under test did not start.
-      - name: Dump container logs
-        if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
-
-  performance_isolated:
-    if: github.ref == 'refs/heads/main'
-    name: Isolated Performance Test
-    runs-on: ubuntu-latest
-    # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
-    # runner for GitHub's 6 h default and starved the whole org's queue.
-    timeout-minutes: 25
-    needs: release-dev
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      # [NOUVEAU] MAIR-194: exposes the shared OpenAPI coverage gate
-      # (`cicd-repo/tests/k6/coverage.js`) to the consumer's compose stack, which mounts
-      # it into the k6 container next to `openapi.json` and imports it from `load-test.js`.
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      # [CHANGEMENT] `TARGET_IMAGE` (recomputed locally, never read by any compose file) is
-      # replaced by `IMAGE_REF`, taken from the `release-dev` outputs like the other test jobs.
-      - name: Run Performance Tests via Docker Compose
-        timeout-minutes: 15
-        env:
-          IMAGE_REF: ${{ needs.release-dev.outputs.image }}:dev-${{ needs.release-dev.outputs.sha_tag }}
-        run: |
-          # `--exit-code-from k6-perf-test` fails the job when k6 exceeds its thresholds,
-          # including the `operations_uncovered` one of the coverage gate.
-          ./performance_test.sh
-
-      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
-      # leaving a `*-ready` service polling forever), the step timeout kills the script before
-      # its `docker compose down`, so the containers are still there: print their state and
-      # logs to see why the service under test did not start.
-      - name: Dump container logs
-        if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
-
-  release-staging:
-    needs: [release-dev, integration_and_security, integration_tests, performance_isolated]
-    runs-on: ubuntu-latest
-    environment: Staging
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      digest: ${{ steps.release.outputs.digest }}
-    steps:
-      - name: Download Spec
-        uses: actions/download-artifact@v8
-        with:
-          name: api-assets
-          path: .
-
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      # [CHANGEMENT] MAIR-416: promotes the digest of `dev-<sha>` (the tested image, checked
-      # against release-dev's digest and signature), never the mobile `dev` tag.
-      - name: Promote image to Staging
-        id: release
-        uses: ./cicd-repo/actions/docker-release
-        with:
-          stage: staging
-          package_name: ${{ inputs.package_name }}
+          stage: dev
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          expected_digest: ${{ needs.release-dev.outputs.digest }}
-
-      - name: Publish OpenAPI
-        uses: ./cicd-repo/actions/publish-openapi-rust
-        with:
-          package_name: ${{ inputs.package_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          version: 0.0.0-staging.${{ steps.release.outputs.sha_tag }}
-          dist_tag: staging
-
-  # [NOUVEAU] MAIR-290: personal data in logs test, between staging and the Prod approval (like the
-  # GDPR inventory of database_cicd.yml): the repo's marker stack runs the image promoted to
-  # staging (by digest) and a runner that plays the journey of gdpr-marker.yaml with a marker user;
-  # the logs of every container are then searched for its values. The summary is read before the
-  # Prod approval; a leak skips `release-prod`. Skipped with a warning without gdpr-marker.yaml.
-  gdpr_marker:
-    name: GDPR log marker (staging image)
-    needs: [release-dev, release-staging]
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: Run the GDPR log marker test
-        uses: ./cicd-repo/actions/gdpr-marker
-        with:
-          image_ref: ${{ needs.release-dev.outputs.image }}@${{ needs.release-staging.outputs.digest }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   # [NOUVEAU] MAIR-291: the responses of the OpenAPI contract carry no credentials column of the
-  # GDPR inventory (tests/gdpr/contract). Runs on every event; release-prod needs it.
+  # GDPR inventory (actions/security/gdpr-contract). A check job of every event: `release-dev` does
+  # not need it, but promote-staging refuses a commit whose main run has a failed job (MAIR-494).
   gdpr_contract:
     name: GDPR contract (OpenAPI)
     needs: lint
@@ -499,70 +272,13 @@ jobs:
         run: cargo open_api > "$RUNNER_TEMP/openapi.json"
 
       - name: Check the contract
-        uses: ./cicd-repo/actions/gdpr/contract
+        uses: ./cicd-repo/actions/security/gdpr-contract
         with:
           spec_file: ${{ runner.temp }}/openapi.json
           inventory_ref: ${{ inputs.gdpr_inventory_ref }}
           ai_model: ${{ inputs.gdpr_ai_model }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
-
-  release-prod:
-    # [CHANGEMENT] MAIR-290 / MAIR-291: also waits for the GDPR log marker test and contract check.
-    needs: [release-staging, gdpr_marker, gdpr_contract]
-    runs-on: ubuntu-latest
-    environment: Prod
-    permissions:
-      contents: write
-      packages: write
-    outputs:
-      TAG: ${{ steps.set_tag.outputs.new_release_version }}
-      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Download Spec
-        uses: actions/download-artifact@v8
-        with:
-          name: api-assets
-          path: .
-
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: Calculate & Create Tag
-        id: set_tag
-        uses: ./cicd-repo/actions/semantic-tag
-
-      # [CHANGEMENT] MAIR-416: promotes the digest of `staging-<sha>` (checked against
-      # release-staging's digest and signature) to <version> / latest, only when
-      # semantic-release published a new version (`release_published`).
-      - name: Promote image to Prod
-        uses: ./cicd-repo/actions/docker-release
-        with:
-          stage: prod
-          expected_digest: ${{ needs.release-staging.outputs.digest }}
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          release_published: ${{ steps.set_tag.outputs.new_release_published }}
-          release_version: ${{ steps.set_tag.outputs.new_release_version }}
-
-      # [CHANGEMENT] Ajout du garde-fou : ne publie l'OpenAPI que si une version a été créée
-      # (auparavant exécuté avec une version vide quand aucun release n'était publié).
-      - name: Publish OpenAPI
-        if: steps.set_tag.outputs.new_release_published == 'true'
-        uses: ./cicd-repo/actions/publish-openapi-rust
-        with:
-          package_name: ${{ inputs.package_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          version: ${{ steps.set_tag.outputs.new_release_version }}
 
   notify-cicd-failure:
     name: Notify n8n on failure
@@ -574,12 +290,7 @@ jobs:
       - build
       - unit_test
       - release-dev
-      - integration_tests
-      - integration_and_security
-      - performance_isolated
-      - release-staging
-      - gdpr_marker
-      - release-prod
+      - gdpr_contract
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
@@ -590,6 +301,6 @@ jobs:
           path: cicd-repo
 
       - name: Notify n8n
-        uses: ./cicd-repo/actions/notify-cicd-failure
+        uses: ./cicd-repo/actions/notify/cicd-failure
         with:
           n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

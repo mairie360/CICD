@@ -1,0 +1,24 @@
+name: "Dynamic security tests (APIs)"
+description: >-
+  OWASP ZAP scan of a Rust API through the consumer's `security_test.sh`, with the OpenAPI coverage
+  gate (`tests/zap/zap_hooks.py`) (`integration_and_security` job of APIs_cicd.yml). Runs against
+  the published `dev-<sha_tag>` image given in `image_ref`. The caller logs in to GHCR first, keeps
+  the 15 min step timeout on the step that uses this action and dumps the container logs on failure
+  (`integration/container-logs`).
+
+inputs:
+  image_ref:
+    description: "Image under test, `<image>:dev-<sha_tag>` from the release-dev outputs (exported as IMAGE_REF)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run ZAP Security Scan via Docker Compose
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image_ref }}
+      run: |
+        # Starts the security stack; the job fails when ZAP reports a vulnerability
+        # or when an operation of openapi.json was not reached (coverage gate).
+        ./security_test.sh

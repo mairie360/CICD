@@ -1,0 +1,18 @@
+name: "Lint (APIs)"
+description: "Clippy with warnings denied on a Rust API (`lint` job of APIs_cicd.yml)."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    # [CHANGEMENT] Utilisation de la commande cargo standard au lieu de l'action-rs/cargo
+    - name: Run lint check
+      shell: bash
+      run: cargo clippy -- -D warnings

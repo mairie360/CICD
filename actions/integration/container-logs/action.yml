@@ -1,0 +1,21 @@
+name: "Dump container logs"
+description: >-
+  Prints the state and the last 200 log lines of every container of the runner. Shared by the jobs
+  that start a Docker stack (integration, ZAP, k6, database tests), called with `if: failure()`
+  right after the step that runs the stack.
+
+runs:
+  using: "composite"
+  steps:
+    # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
+    # leaving a `*-ready` service polling forever), the step timeout kills the script before
+    # its `docker compose down`, so the containers are still there: print their state and
+    # logs to see why the service under test did not start.
+    - name: Dump container logs
+      shell: bash
+      run: |
+        for c in $(docker ps -aq); do
+          echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
+          docker logs --tail 200 "$c" 2>&1 || true
+          echo "::endgroup::"
+        done
