@@ -1,6 +1,7 @@
 -- Columns of the migrated schema, as the JSON check.mjs reads (MAIR-285): every column of every
 -- table of `public`, partitions excluded (they share their parent's columns), with the table its
--- foreign key references, if any.
+-- foreign key references, if any (`users` first when the column has several foreign keys, so that
+-- the identifier rule of compare() always sees it).
 SELECT coalesce(json_agg(row_to_json(t) ORDER BY t.table_name, t.position), '[]')
 FROM (
     SELECT c.relname AS table_name,
@@ -12,7 +13,7 @@ FROM (
            (SELECT f.confrelid::regclass::text
               FROM pg_constraint f
              WHERE f.conrelid = c.oid AND f.contype = 'f' AND a.attnum = ANY (f.conkey)
-             ORDER BY f.conname
+             ORDER BY f.confrelid::regclass::text = 'users' DESC, f.conname
              LIMIT 1) AS refers_to
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace

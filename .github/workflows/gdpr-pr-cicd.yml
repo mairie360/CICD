@@ -53,7 +53,7 @@ jobs:
           path: cicd-repo
 
       - name: Check the GDPR checklist
-        uses: ./cicd-repo/actions/gdpr/pr-checklist
+        uses: ./cicd-repo/actions/security/gdpr-pr-checklist
         with:
           pr_body: ${{ github.event.pull_request.body }}
           base_sha: ${{ github.event.pull_request.base.sha }}
