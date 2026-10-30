@@ -142,6 +142,16 @@ Semgrep rules (`tests/semgrep/gdpr/<rule>.yml` + annotated `<rule>.<ext>`, `semg
 `lint.yml`) are in every workflow's default `semgrep_config`. Gitleaks already runs everywhere
 (MAIR-416); the subcontractor-domain rule waits for the decision file of MAIR-294.
 
+## GDPR PR checklist (`tests/gdpr/pr/`, `gdpr-pr-cicd.yml`, MAIR-295)
+
+`pr/checklist.mjs` reads the "Personal data" section of the PR description (template of
+mairie360/.github): exactly one of `- [x] No` / `- [x] Yes`, and for "Yes" the inventory (changed in
+the PR when the repo holds it, `inventory_path`; else a non-placeholder `Inventory:` line).
+`pr/ai.mjs` asks Claude about the diff (cached by model + diff + answer), warning only.
+`pr/check.mjs` is the CLI (exit 0 / 1 / 2). Action `actions/security/gdpr-pr-checklist`, reusable workflow
+`gdpr-pr-cicd.yml`, called by a per-repo `gdpr-pr.yml` on `pull_request` with the `edited` type (the
+stack workflows do not get `edited` events).
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, the library actions (`actions/*/bffs-lib`, `actions/*/front-lib`, used by `bffs-lib-cicd.yml` / `front-libs-cicd.yml`) and the release actions that run Node (`semantic-tag`, `publish-openapi-*`) pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
@@ -161,6 +171,7 @@ actions/
   integration/frontend-isolated-qa   target.py of frontend-isolated-qa.yml (ZAP / k6 of a front against a verified dev digest)
   security/<stack>       stack-specific security check                            apis bffs fronts (ZAP) back-lib (cargo audit/deny) front-lib (npm audit + typecheck)
   security/gdpr-contract   GDPR check of the OpenAPI contract (MAIR-291, APIs / BFFs, every event)
+  security/gdpr-pr-checklist   GDPR question of the PR description (MAIR-295, gdpr-pr-cicd.yml)
   security/semgrep, security/gitleaks   cross-stack SAST / secret scan (security_sast job of every workflow but the fronts')
   security/semgrep-pypi, security/gitleaks-binary   same scans from the hash-checked Semgrep wheel / Gitleaks release binary, no Docker Hub pull (fronts, frontend-dev-exception.yml, lint.yml)
   performance/<stack>    load / bench test                                        apis bffs fronts (k6) db (schema bench)
