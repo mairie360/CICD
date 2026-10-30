@@ -31,10 +31,26 @@ on:
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the image (accepted risks go in .trivyignore)"
     secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+        description: "Claude API key of the release journal (org secret); without it the journal keeps plain commit lists"
+      RELEASE_APP_ID:
+        required: false
+        description: "Release app (org secret) pushing the release journal on main"
+      RELEASE_APP_PK:
+        required: false
+        description: "Private key of the release app (org secret)"
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
         required: true
+
+# MAIR-436: jobs without their own `permissions` (lint, npm audit, build, tests, failure
+# notification) get a read-only token instead of inheriting the caller job's write scopes,
+# which only the release jobs below need and request explicitly.
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   dependencies:
@@ -45,67 +61,72 @@ jobs:
       packages: read
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # [CHANGEMENT] Utilisation native du cache npm de setup-node (sur ~/.npm)
-      # plus léger et performant que la sauvegarde complète du dossier node_modules.
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: ${{ inputs.node_version }}
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@mairie360'
-          cache: 'npm'
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Install Dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./cicd-repo/actions/dependencies/fronts
+        with:
+          node_version: ${{ inputs.node_version }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
 
   lint:
     name: Lint Code
     runs-on: ubuntu-latest
     needs: dependencies
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: ${{ inputs.node_version }}
-          cache: 'npm'
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Install Dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - run: npm run lint
+      - name: Lint Code
+        uses: ./cicd-repo/actions/lint/fronts
+        with:
+          node_version: ${{ inputs.node_version }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
 
   security_audit:
     name: Security Audit (npm audit)
     runs-on: ubuntu-latest
     needs: dependencies
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: ${{ inputs.node_version }}
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@mairie360'
-          cache: 'npm'
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Install Dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run npm audit (Block on High/Critical production advisories)
+        uses: ./cicd-repo/actions/dependencies/fronts
+        with:
+          node_version: ${{ inputs.node_version }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          audit: 'true'
 
-      - name: Run npm audit (Block on High/Critical)
-        run: npm audit --audit-level=high
-
-  # [NOUVEAU] MAIR-230: Semgrep SAST through the shared `semgrep` composite action (pinned image).
+  # MAIR-230: frontend SAST through the verified Semgrep wheel and hash-locked dependencies.
   security_sast:
     name: Code Security Audit (Semgrep, Gitleaks)
     runs-on: ubuntu-latest
@@ -113,46 +134,49 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0  # Gitleaks scans the commits of the push / PR
 
       - name: Checkout CICD repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
       - name: Run Semgrep Security Scan
-        uses: ./cicd-repo/actions/semgrep
+        uses: ./cicd-repo/actions/security/semgrep-pypi
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
 
       # [NOUVEAU] MAIR-416: secret scan of the new commits.
       - name: Run Gitleaks Secret Scan
-        uses: ./cicd-repo/actions/gitleaks
+        uses: ./cicd-repo/actions/security/gitleaks-binary
 
   build:
     name: Build Check (Next.js)
     runs-on: ubuntu-latest
     needs: [lint, security_audit, security_sast]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: ${{ inputs.node_version }}
-          cache: 'npm'
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Install Dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - run: npm run build
+      - name: Build Check (Next.js)
+        uses: ./cicd-repo/actions/build/fronts
+        with:
+          node_version: ${{ inputs.node_version }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
 
   test:
     name: Unit Tests
@@ -160,47 +184,45 @@ jobs:
     # [CHANGEMENT] Runs in parallel with `build` (tests do not use its output).
     needs: lint
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: ${{ inputs.node_version }}
-          cache: 'npm'
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Install Dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # [CHANGEMENT] MAIR-416: no more `--if-present`, a front without a test script fails CI.
-      - run: npm test
-
-      - name: Upload Coverage to Codecov
-        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-        uses: codecov/codecov-action@v7
+      - name: Unit Tests
+        uses: ./cicd-repo/actions/unit-tests/fronts
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/lcov.info
-          fail_ci_if_error: false
+          node_version: ${{ inputs.node_version }}
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          codecov_token: ${{ secrets.CODECOV_TOKEN }}
 
   release-dev:
     if: github.ref == 'refs/heads/main'
     needs: [build, test]
     runs-on: ubuntu-latest
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
-    # is released to dev right away. Staging and Prod keep their environments.
+    # is released to dev right away. Staging and prod are promote-staging.yml / promote-prod.yml
+    # (MAIR-494), manual runs that retag this image.
     permissions:
       contents: read
       packages: write
       id-token: write  # [NOUVEAU] MAIR-416: cosign keyless signature
     outputs:
       digest: ${{ steps.release.outputs.digest }}
+      image: ${{ steps.release.outputs.primary_image }}
+      sha_tag: ${{ steps.release.outputs.sha_tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -212,7 +234,7 @@ jobs:
       # Single build, SBOM/provenance, Trivy scan and cosign signature in `docker-release`.
       - name: Build & Push Image (Dev)
         id: release
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -223,35 +245,56 @@ jobs:
             node_auth_token=NODE_AUTH_TOKEN
           scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: dev
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
+
   security_tests:
     name: Dynamic Security Tests (OWASP ZAP)
     runs-on: ubuntu-latest
     # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
     # runner for GitHub's 6 h default and starved the whole org's queue.
     timeout-minutes: 25
-    needs: release-dev
+    # [CHANGEMENT] MAIR-494: pull requests to `main` only, where the front's stack builds the
+    # image locally. The published `dev-<sha>` image is tested by promote-staging.yml (staging
+    # gate), no longer on `main` after release-dev.
+    needs: [build, test]
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Run ZAP Security Scan via Docker Compose
         timeout-minutes: 15
-        run: ./security_test.sh
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./cicd-repo/actions/security/fronts
+        with:
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
 
-      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
-      # leaving a `*-ready` service polling forever), the step timeout kills the script before
-      # its `docker compose down`, so the containers are still there: print their state and
-      # logs to see why the service under test did not start.
+      # [NOUVEAU] MAIR-468: dumps the containers left behind when the step timeout kills the stack.
       - name: Dump container logs
         if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
+        uses: ./cicd-repo/actions/integration/container-logs
 
   performance_tests:
     name: Isolated Performance Tests (k6)
@@ -259,97 +302,38 @@ jobs:
     # [CHANGEMENT] MAIR-468: bounded like the BFF test jobs; without it a hung stack held a
     # runner for GitHub's 6 h default and starved the whole org's queue.
     timeout-minutes: 25
-    needs: release-dev
+    # [CHANGEMENT] MAIR-494: pull requests to `main` only, where the front's stack builds the
+    # image locally. The published `dev-<sha>` image is tested by promote-staging.yml (staging
+    # gate), no longer on `main` after release-dev.
+    needs: [build, test]
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
 
       - name: Run Performance Tests via Docker Compose
         timeout-minutes: 15
-        run: ./performance_test.sh
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./cicd-repo/actions/performance/fronts
+        with:
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
 
-      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
-      # leaving a `*-ready` service polling forever), the step timeout kills the script before
-      # its `docker compose down`, so the containers are still there: print their state and
-      # logs to see why the service under test did not start.
+      # [NOUVEAU] MAIR-468: dumps the containers left behind when the step timeout kills the stack.
       - name: Dump container logs
         if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
-
-  release-staging:
-    needs: [release-dev, security_tests, performance_tests]
-    runs-on: ubuntu-latest
-    environment: Staging
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      digest: ${{ steps.release.outputs.digest }}
-    steps:
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      # [CHANGEMENT] MAIR-416: promotes the digest of `dev-<sha>` (the tested image, checked
-      # against release-dev's digest and signature), never the mobile `dev` tag.
-      - name: Promote Image to Staging
-        id: release
-        uses: ./cicd-repo/actions/docker-release
-        with:
-          stage: staging
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          expected_digest: ${{ needs.release-dev.outputs.digest }}
-
-  release-prod:
-    needs: release-staging
-    runs-on: ubuntu-latest
-    environment: Prod
-    permissions:
-      contents: write
-      packages: write
-    outputs:
-      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      # [CHANGEMENT] Récupération du dépôt centralisé des outils CI/CD
-      # pour pouvoir utiliser l'action composite 'semantic-tag'.
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      # [CHANGEMENT] Correction du chemin d'appel vers le dépôt centralisé 'cicd-repo'.
-      - name: Calculate & Create Tag
-        id: set_tag
-        uses: ./cicd-repo/actions/semantic-tag
-
-      # [CHANGEMENT] MAIR-416: promotes the digest of `staging-<sha>` (checked against
-      # release-staging's digest and signature) to <version> / latest.
-      - name: Promote Image to Prod
-        uses: ./cicd-repo/actions/docker-release
-        with:
-          stage: prod
-          expected_digest: ${{ needs.release-staging.outputs.digest }}
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          release_published: ${{ steps.set_tag.outputs.new_release_published }}
-          release_version: ${{ steps.set_tag.outputs.new_release_version }}
+        uses: ./cicd-repo/actions/integration/container-logs
 
   notify-cicd-failure:
     name: Notify n8n on failure
@@ -364,18 +348,16 @@ jobs:
       - release-dev
       - security_tests
       - performance_tests
-      - release-staging
-      - release-prod
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
       - name: Notify n8n
-        uses: ./cicd-repo/actions/notify-cicd-failure
+        uses: ./cicd-repo/actions/notify/cicd-failure
         with:
           n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

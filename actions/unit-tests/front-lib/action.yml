@@ -1,0 +1,33 @@
+name: "Unit tests (front-lib)"
+description: >-
+  `npm test` of the React component library, then the Codecov upload on main and on PRs to main
+  (`test` job of front-libs-cicd.yml).
+
+inputs:
+  codecov_token:
+    description: "Codecov upload token (the caller passes secrets.CODECOV_TOKEN)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+
+    - shell: bash
+      run: npm ci
+
+    - shell: bash
+      run: npm test
+
+    - name: Upload Coverage to Codecov
+      if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+      uses: codecov/codecov-action@v7
+      with:
+        token: ${{ inputs.codecov_token }}
+        files: coverage/lcov.info
+        # [CHANGEMENT] MAIR-467: Codecov only reports coverage, so an outage on its side (expired
+        # certificate on 2026-10-05) must not fail the job and block the release.
+        fail_ci_if_error: false

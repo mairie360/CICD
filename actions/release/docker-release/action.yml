@@ -117,6 +117,13 @@ inputs:
     description: "Length of the short SHA used in the `dev-` / `staging-` tags (same for every stage)"
     required: false
     default: "7"
+  source_sha:
+    description: >
+      Commit whose image is promoted (staging / prod). Empty uses the run's own commit
+      (GITHUB_SHA), as in the main pipeline; promote-staging / promote-prod pass the commit they
+      promote, which is usually behind the tip of main they run on (MAIR-494).
+    required: false
+    default: ""
 
 outputs:
   sha_tag:
@@ -142,6 +149,7 @@ runs:
       env:
         STAGE: ${{ inputs.stage }}
         LEN: ${{ inputs.sha_length }}
+        SOURCE_SHA: ${{ inputs.source_sha }}
         PACKAGE_NAME: ${{ inputs.package_name }}
         EXTRA_PACKAGE_NAME: ${{ inputs.extra_package_name }}
       run: |
@@ -150,9 +158,17 @@ runs:
           dev|staging|prod) ;;
           *) echo "::error::docker-release: unknown stage '$STAGE' (dev | staging | prod)"; exit 1 ;;
         esac
+        if [ -n "$SOURCE_SHA" ] && [ "$STAGE" = "dev" ]; then
+          echo "::error::docker-release: source_sha is for promotions only, dev builds the run's own commit"; exit 1
+        fi
+        if [ -n "$SOURCE_SHA" ] && [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::docker-release: source_sha must be a full commit sha (got '$SOURCE_SHA')"; exit 1
+        fi
+        SHA="${SOURCE_SHA:-$GITHUB_SHA}"
         REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
         {
-          echo "sha_tag=${GITHUB_SHA:0:$LEN}"
+          echo "sha=$SHA"
+          echo "sha_tag=${SHA:0:$LEN}"
           echo "primary_image=$REPO/$PACKAGE_NAME"
           if [ -n "$EXTRA_PACKAGE_NAME" ]; then echo "extra_image=$REPO/$EXTRA_PACKAGE_NAME"; fi
         } >> "$GITHUB_OUTPUT"
@@ -319,6 +335,7 @@ runs:
       shell: bash
       env:
         IDENTITY: ${{ inputs.signer_identity_regexp }}
+        SIGNED_SHA: ${{ steps.meta.outputs.sha }}
         PRIMARY_REF: ${{ steps.meta.outputs.primary_image }}@${{ steps.digest.outputs.digest }}
         EXTRA_REF: ${{ steps.meta.outputs.extra_image }}@${{ steps.digest.outputs.extra_digest }}
         HAS_EXTRA: ${{ inputs.extra_package_name != '' }}
@@ -328,7 +345,7 @@ runs:
           cosign verify "$1" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity-regexp "$IDENTITY" \
-            --certificate-github-workflow-sha "$GITHUB_SHA" \
+            --certificate-github-workflow-sha "$SIGNED_SHA" \
             > /dev/null
           echo "Signature OK: $1"
         }
