@@ -168,6 +168,14 @@ between `version` and `promote`, on the staging digest of the promoted commit; s
 ledger (`usage.json`) are searched like the logs; identifying span attributes and ledger keys
 block; span templates join the AI review. Both files are optional (listed as not checked).
 
+## GDPR in the browser (`tests/gdpr/privacy/`, MAIR-292)
+
+Standalone module, no import from `tests/a11y` (the RGPD and RGAA stacks stay separate): `watchPrivacy`
+(on a context, before the page), `finishPrivacy` (cookies, legal links, console, storage),
+`evaluatePrivacy`, `summarizePrivacy`, `recordPage`. Unit tests in `npm test`; the end-to-end test
+needs a browser (`GDPR_E2E=1` in the pinned Playwright image `privacy/runner-image`, `gdpr` job of
+`lint.yml`). Wiring it into the RGAA engine is a follow-up once both stacks are merged.
+
 ## Node version drift
 
 No shared Node input. `cicd.yml`, the library actions (`actions/*/bffs-lib`, `actions/*/front-lib`, used by `bffs-lib-cicd.yml` / `front-libs-cicd.yml`) and the release actions that run Node (`semantic-tag`, `publish-openapi-*`) pin `24`; `BFFs-cicd.yml` and `frontend-cicd.yml` now default to `24` too. When adding a workflow, prefer `24` unless the stack needs otherwise.
