@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { sessionCookie, signJwt } from "./session.mjs";
 
-// Static token of the fronts' ZAP stacks (sub=2, role=user, exp=2100, JWT_SECRET=b"secret").
-const ZAP_TOKEN =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwicm9sZSI6InVzZXIiLCJleHAiOjQxMDI0NDQ4MDB9.qjXr3pV4v8hvkbv_ufmNqaPqhDTbOGfTUeEXxa1z70U";
+// Static token of the fronts' ZAP stacks (sub=2, role=user, exp=2100, JWT_SECRET=b"secret"): a test
+// value, not a secret, hence the Gitleaks allow comment.
+const ZAP_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwicm9sZSI6InVzZXIiLCJleHAiOjQxMDI0NDQ4MDB9.qjXr3pV4v8hvkbv_ufmNqaPqhDTbOGfTUeEXxa1z70U"; // gitleaks:allow
 
 test("signs the same token as the ZAP stacks", () => {
   assert.equal(signJwt({ sub: "2", role: "user", exp: 4102444800 }, 'b"secret"'), ZAP_TOKEN);

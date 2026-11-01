@@ -12,7 +12,7 @@ on:
       semgrep_config:
         required: false
         type: string
-        default: "p/secrets p/dockerfile p/github-actions"
+        default: "p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr"
         description: "Semgrep rulesets (space-separated) run by the SAST job"
       semgrep_fail_on_findings:
         required: false
@@ -25,6 +25,15 @@ on:
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the images (accepted risks go in .trivyignore)"
     secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+        description: "Claude API key of the release journal (org secret); without it the journal keeps plain commit lists"
+      RELEASE_APP_ID:
+        required: false
+        description: "Release app (org secret) pushing the release journal on main"
+      RELEASE_APP_PK:
+        required: false
+        description: "Private key of the release app (org secret)"
       N8N_WEBHOOK_SECRET:
         required: true
       CODECOV_TOKEN:
@@ -41,23 +50,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
       - name: Run tests
         timeout-minutes: 15
-        run: ./test.sh
+        uses: ./cicd-repo/actions/unit-tests/db
 
-      # [NOUVEAU] MAIR-468: when the stack hangs (e.g. an API that never answers on `/health`,
-      # leaving a `*-ready` service polling forever), the step timeout kills the script before
-      # its `docker compose down`, so the containers are still there: print their state and
-      # logs to see why the service under test did not start.
+      # [NOUVEAU] MAIR-468: dumps the containers left behind when the step timeout kills the stack.
       - name: Dump container logs
         if: failure()
-        run: |
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect --format '{{.Name}} ({{.State.Status}}, exit {{.State.ExitCode}})' "$c")"
-            docker logs --tail 200 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
+        uses: ./cicd-repo/actions/integration/container-logs
 
+      # Outside the action so that the 15 min timeout above only covers `./test.sh`, as before.
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
@@ -87,14 +99,14 @@ jobs:
           path: cicd-repo
 
       - name: Run Semgrep Security Scan
-        uses: ./cicd-repo/actions/semgrep
+        uses: ./cicd-repo/actions/security/semgrep
         with:
           config: ${{ inputs.semgrep_config }}
           fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
 
       # [NOUVEAU] MAIR-416: secret scan of the new commits.
       - name: Run Gitleaks Secret Scan
-        uses: ./cicd-repo/actions/gitleaks
+        uses: ./cicd-repo/actions/security/gitleaks
 
   # [CHANGEMENT] MAIR-416: the three release jobs go through the shared `docker-release` action
   # like the other stacks (the `database` image plus `liquibase-migrations` as secondary image):
@@ -107,7 +119,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
-    # is released to dev right away. Staging and Prod keep their environments.
+    # is released to dev right away. Staging and prod are promote-staging.yml / promote-prod.yml
+    # (MAIR-494), manual runs that retag this image.
     permissions:
       contents: read
       packages: write
@@ -129,7 +142,7 @@ jobs:
 
       - name: Build & Push Images (Dev)
         id: release
-        uses: ./cicd-repo/actions/docker-release
+        uses: ./cicd-repo/actions/release/docker-release
         with:
           stage: dev
           package_name: ${{ inputs.package_name }}
@@ -138,75 +151,57 @@ jobs:
           extra_dockerfile: ./liquibase/Dockerfile
           scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
-  release-staging:
-    name: Release to Staging
-    needs: release-dev
+      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
+      # A journal failure never fails the release.
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: dev
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
+
+  # [NOUVEAU] MAIR-476: schema load test, gate between dev and staging, like the
+  # `performance_tests` job of the other stacks. The repo's `./performance_test.sh`
+  # migrates an empty database, loads a volume seed and runs pgbench scripts that replay
+  # the APIs' hot queries; a script over its threshold (`bench/thresholds.conf`) fails the
+  # job, and promote-staging.yml refuses a commit whose main run has a failed job (MAIR-494).
+  # Dev is still released on every commit (`release-dev` does not need it). It builds from the commit's sources and never uses the dev image, so
+  # it runs on PRs too, in parallel with the other jobs: a regression shows before merge.
+  performance_tests:
+    name: Performance Tests (schema bench)
     runs-on: ubuntu-latest
-    environment: Staging
+    timeout-minutes: 25
     permissions:
       contents: read
-      packages: write
-    outputs:
-      digest: ${{ steps.release.outputs.digest }}
-      extra_digest: ${{ steps.release.outputs.extra_digest }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
+      # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
+          sparse-checkout: actions
 
-      - name: Promote Images to Staging
-        id: release
-        uses: ./cicd-repo/actions/docker-release
+      - name: Run schema bench
+        timeout-minutes: 20
+        uses: ./cicd-repo/actions/performance/db
+
+      # Outside the action so that it still runs when the 20 min timeout above kills the bench.
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          stage: staging
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_package_name: liquibase-migrations
-          expected_digest: ${{ needs.release-dev.outputs.digest }}
-          expected_extra_digest: ${{ needs.release-dev.outputs.extra_digest }}
-
-  release-prod:
-    name: Release to Prod
-    needs: release-staging
-    runs-on: ubuntu-latest
-    environment: Prod
-    permissions:
-      contents: write
-      packages: write
-    outputs:
-      PUBLISHED: ${{ steps.set_tag.outputs.new_release_published }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Checkout CICD Tools
-        uses: actions/checkout@v7
-        with:
-          repository: mairie360/CICD
-          ref: ${{ inputs.cicd_version }}
-          path: cicd-repo
-
-      - name: Calculate & Create Tag
-        id: set_tag
-        uses: ./cicd-repo/actions/semantic-tag
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Promote Images to Prod
-        uses: ./cicd-repo/actions/docker-release
-        with:
-          stage: prod
-          package_name: ${{ inputs.package_name }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_package_name: liquibase-migrations
-          expected_digest: ${{ needs.release-staging.outputs.digest }}
-          expected_extra_digest: ${{ needs.release-staging.outputs.extra_digest }}
-          release_published: ${{ steps.set_tag.outputs.new_release_published }}
-          release_version: ${{ steps.set_tag.outputs.new_release_version }}
+          name: schema-bench-results
+          path: bench/results/
+          if-no-files-found: ignore
 
   notify-cicd-failure:
     name: Notify n8n on failure
@@ -215,8 +210,7 @@ jobs:
       - tests
       - security_sast
       - release-dev
-      - release-staging
-      - release-prod
+      - performance_tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
@@ -227,6 +221,6 @@ jobs:
           path: cicd-repo
 
       - name: Notify n8n
-        uses: ./cicd-repo/actions/notify-cicd-failure
+        uses: ./cicd-repo/actions/notify/cicd-failure
         with:
           n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}
