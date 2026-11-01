@@ -11,7 +11,8 @@
 
 const BOX = /^\s*[-*]\s*\[( |x|X)\]\s*(No|Yes)\b(.*)$/;
 const INVENTORY = /^\s*(?:[-*]\s*)?Inventory\s*:\s*(.*)$/i;
-const PLACEHOLDER = /^(?:<[^>]*>|_+|\.{3}|…|n\/?a|-|)$/i;
+// Template placeholders and to-do markers are no answer (review of mairie360/bffs_lib#19).
+const PLACEHOLDER = /^(?:<[^>]*>|_+|\.{3}|…|n\/?a|-|\?+|(?:todo|tbd|tbc|to ?do|later|wip|à faire|a faire)\W*)$/i;
 
 // The answer of the description: { answer: "yes" | "no" | null, inventory: string | null, errors }.
 export function parseAnswer(body) {
