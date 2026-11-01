@@ -56,6 +56,6 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Notify n8n
-        uses: ./actions/notify-cicd-failure
+        uses: ./actions/notify/cicd-failure
         with:
           n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

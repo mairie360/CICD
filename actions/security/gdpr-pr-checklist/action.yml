@@ -1,0 +1,108 @@
+name: "GDPR PR checklist"
+description: >
+  GDPR checklist of a pull request (MAIR-295, epic MAIR-284). Reads the "Personal data" answer of
+  the description (organization PR template, mairie360/.github): fails when it is not answered,
+  or answered "Yes" without the inventory change (in the repo that holds gdpr/inventory.yaml) or
+  a reference to it (elsewhere). Claude reads the diff with the inventory and warns, never
+  blocking, when the PR seems to touch personal data against the answer (tests/gdpr/pr).
+  The caller checks the repo out with `fetch-depth: 0` and `mairie360/CICD` into `cicd-repo/`.
+
+inputs:
+  pr_body:
+    description: "Description of the pull request"
+    required: false
+    default: ""
+  base_sha:
+    description: "Base commit of the pull request"
+    required: true
+  head_sha:
+    description: "Head commit of the pull request"
+    required: true
+  inventory_path:
+    description: "Path of the inventory when this repo holds it (Database); empty elsewhere"
+    required: false
+    default: ""
+  inventory_repository:
+    description: "Repository of the inventory, for the repos that do not hold it"
+    required: false
+    default: "mairie360/Database"
+  inventory_ref:
+    description: "Ref of that repository"
+    required: false
+    default: "main"
+  ai_model:
+    description: "Claude model of the review"
+    required: false
+    default: "claude-sonnet-5-5"
+  anthropic_api_key:
+    description: "Anthropic API key; without it there is no AI review (the check still runs)"
+    required: false
+    default: ""
+  anthropic_workspace_id:
+    description: "Anthropic workspace id, only for a key that is not scoped to a workspace"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout the GDPR inventory
+      if: inputs.inventory_path == ''
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ inputs.inventory_repository }}
+        ref: ${{ inputs.inventory_ref }}
+        path: gdpr-inventory-repo
+        sparse-checkout: gdpr/inventory.yaml
+        sparse-checkout-cone-mode: false
+
+    - name: Setup Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Restore the AI reviews
+      uses: actions/cache/restore@v6
+      with:
+        path: .gdpr-ai-cache
+        key: gdpr-pr-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: gdpr-pr-ai-${{ github.repository }}-
+
+    - name: Check the checklist
+      shell: bash
+      env:
+        PR_BODY: ${{ inputs.pr_body }}
+        BASE_SHA: ${{ inputs.base_sha }}
+        HEAD_SHA: ${{ inputs.head_sha }}
+        INVENTORY_PATH: ${{ inputs.inventory_path }}
+        GDPR_AI_MODEL: ${{ inputs.ai_model }}
+        GDPR_AI_CACHE: ${{ github.workspace }}/.gdpr-ai-cache/pr.json
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        ANTHROPIC_WORKSPACE_ID: ${{ inputs.anthropic_workspace_id }}
+      run: |
+        set -uo pipefail
+        work="$RUNNER_TEMP/gdpr-pr"
+        mkdir -p "$work"
+        printf '%s' "$PR_BODY" > "$work/body.md"
+        git diff --name-only "$BASE_SHA...$HEAD_SHA" -- . ':!cicd-repo' ':!gdpr-inventory-repo' > "$work/changed.txt" || exit 2
+        git diff "$BASE_SHA...$HEAD_SHA" -- . ':!cicd-repo' ':!gdpr-inventory-repo' > "$work/diff.patch" || exit 2
+        if [ -n "$INVENTORY_PATH" ]; then inventory="$INVENTORY_PATH"; else inventory="gdpr-inventory-repo/gdpr/inventory.yaml"; fi
+        # The inventory only feeds the AI review: without it (not merged yet on that ref), the
+        # deterministic check still runs and Claude reads the diff alone.
+        if [ ! -f "$inventory" ]; then
+          echo "::warning title=GDPR checklist::$inventory not found: the AI review runs without the inventory."
+          inventory="$work/no-inventory.yaml"
+          printf '# no inventory on this ref\n' > "$inventory"
+        fi
+        (cd cicd-repo/tests/gdpr && npm ci --no-audit --no-fund --silent) || exit 2
+        node cicd-repo/tests/gdpr/pr/check.mjs "$work/body.md" "$work/changed.txt" "$work/diff.patch" "$inventory" "$work/report" "$INVENTORY_PATH"
+        code=$?
+        [ -f "$work/report/summary.md" ] && cat "$work/report/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        exit "$code"
+
+    - name: Save the AI reviews
+      if: always() && hashFiles('.gdpr-ai-cache/pr.json') != ''
+      uses: actions/cache/save@v6
+      with:
+        path: .gdpr-ai-cache
+        key: gdpr-pr-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}

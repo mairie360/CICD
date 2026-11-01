@@ -1,0 +1,25 @@
+name: "Security and license audit (back-lib)"
+description: >-
+  `cargo audit` and `cargo deny check advisories licenses` of the Rust library (`security_audit`
+  job of back-lib-cicd.yml).
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run Cargo Audit (Vulnerability Check)
+      shell: bash
+      run: |
+        cargo install cargo-audit --locked
+        cargo audit
+
+    - name: Run Cargo Deny (License & Advisory Check)
+      shell: bash
+      run: |
+        cargo install cargo-deny --locked
+        cargo deny check advisories licenses

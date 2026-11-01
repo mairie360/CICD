@@ -1,0 +1,5 @@
+# Test JWT of the RGAA engine (tests/a11y/session.test.mjs, MAIR-317): the static token of the
+# fronts' ZAP stacks, signed with the test secret b"secret". Its line now carries
+# `gitleaks:allow`; these fingerprints cover the commit that added it before that comment.
+df18598323fa1c2a4bd63973d1dd82ac8ea27ac2:tests/a11y/session.test.mjs:generic-api-key:7
+df18598323fa1c2a4bd63973d1dd82ac8ea27ac2:tests/a11y/session.test.mjs:jwt:8
