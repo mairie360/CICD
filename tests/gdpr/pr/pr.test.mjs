@@ -28,6 +28,10 @@ test("the answer is read from the Personal data section only", () => {
   assert.deepEqual(parseAnswer(body(true, true)).errors, ['tick only one of "No" and "Yes" in the "Personal data" section']);
   assert.match(parseAnswer("## What\n- [x] Yes\n").errors[0], /no "Personal data" section/);
   assert.equal(parseAnswer(body(false, true, "<link>")).inventory, null, "a placeholder is no answer");
+  for (const marker of ["TODO", "todo.", "TBD", "to do", "later", "WIP", "?", "à faire"]) {
+    assert.equal(parseAnswer(body(false, true, marker)).inventory, null, `"${marker}" is no answer`);
+  }
+  assert.equal(parseAnswer(body(false, true, "mairie360/Database#180")).inventory, "mairie360/Database#180");
 });
 
 test("Yes needs the inventory change in Database, or a reference elsewhere", () => {
