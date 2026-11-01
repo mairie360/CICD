@@ -61,7 +61,7 @@ function checkSteps(scope) {
     (Array.isArray(state?.steps) ? state.steps : []).forEach((step, i) => {
       const path = `/states/${s}/steps/${i}`;
       const actions = step && typeof step === "object" ? Object.keys(step) : [];
-      if (actions.length !== 1 || !(actions[0] in stepValidators)) {
+      if (actions.length !== 1 || !Object.hasOwn(stepValidators, actions[0])) {
         errors.push(`${path}: a step is exactly one action among ${Object.keys(stepValidators).join(", ")}`);
         return;
       }
@@ -98,7 +98,7 @@ function crossCheck(scope) {
   const users = scope.users ?? {};
   const logged = scope.states.filter((s) => s.as);
   for (const state of logged) {
-    if (!(state.as in users)) errors.push(`/states/${state.id}: unknown user "${state.as}" in "as"`);
+    if (!Object.hasOwn(users, state.as)) errors.push(`/states/${state.id}: unknown user "${state.as}" in "as"`);
   }
   if (logged.length > 0 && !scope.session) {
     errors.push("/session: required when a state logs in with \"as\"");
