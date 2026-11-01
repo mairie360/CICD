@@ -775,7 +775,7 @@ test engine that plays the scope (MAIR-317 to MAIR-319); no front-specific file 
 | `criteria` | applicable criteria, transverse ones (12.1 to 12.5) included. A criterion that is not listed is not applicable: give the reason in a YAML comment |
 | `session` | `jwt_secret` and `jwt_timeout` (default 3600): the `JWT_SECRET` / `JWT_TIMEOUT` of the test stack. The engine signs an HS256 JWT `{sub, role, exp}` per user, like the static token of the ZAP stacks, and sets it as `cookie` (default `accessToken`) on the target origin |
 | `users` | seed users by name (`admin`, `agent`…), one per role that changes what the page shows: `id` (must exist in the seed, the APIs check it) and `role` |
-| `states` | renderings to capture: `id`, then either `route` (+ optional `as: <user>`) for a front, or `story` (Storybook id) for `lib-components`, and optional `steps` |
+| `states` | renderings to capture: `id`, then either `route` (+ optional `as: <user>`) for a front, or `story` (Storybook id) for `lib-components`, optional `viewport: { width, height }` (default 1280 × 800, e.g. a mobile layout; the 320 px reflow check comes back to it) and optional `steps` |
 
 A step is exactly one action. `click`, `hover`, `wait_for` and `wait_for_hidden` take a locator,
 `fill` and `select` a locator plus `value`, `press` a key name and `goto` a route. A locator is one

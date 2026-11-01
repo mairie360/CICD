@@ -162,6 +162,8 @@ async function settleLayout(page) {
 }
 
 async function reflow320(page, { screenshot }) {
+  // Back to the state's own size afterwards (a mobile state keeps its layout for the next checks).
+  const before = page.viewportSize() ?? DESKTOP;
   await page.setViewportSize({ width: 320, height: 256 });
   await settleLayout(page);
   if (screenshot) await screenshot("mobile-320");
@@ -181,7 +183,7 @@ async function reflow320(page, { screenshot }) {
     const outermost = out.filter((el) => !out.some((o) => o !== el && o.contains(el)));
     return outermost.slice(0, 20).map((el) => window.__rgaa.failure(el, `overflows a 320 px viewport (horizontal scroll of ${document.documentElement.scrollWidth}px)`));
   });
-  await page.setViewportSize(DESKTOP);
+  await page.setViewportSize(before);
   await settleLayout(page);
   return failures;
 }

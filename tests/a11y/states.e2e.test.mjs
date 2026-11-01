@@ -19,6 +19,10 @@ const PAGES = {
     <ul role="listbox" hidden><li role="option" onclick="document.title=this.textContent">Haute</li></ul>
   </main>`,
   "/iframe.html": `<button>Bouton de story</button>`,
+  // A menu button shown only on a narrow screen, like a mobile navigation drawer.
+  "/mobile": `<style>#menu{display:none}@media (max-width:600px){#menu{display:block}}</style>
+    <main><h1>Accueil</h1><button id="menu" onclick="document.querySelector('nav').hidden=false">Ouvrir la navigation</button>
+    <nav hidden><a href="/">Tableau de bord</a></nav></main>`,
   // Reads a never-ending stream with fetch(), like the messaging front: the network never idles.
   "/live": `<main><h1>Messagerie</h1><p>Conversations</p></main>
     <script>fetch("/stream").then((response) => { const reader = response.body.getReader(); const pump = () => reader.read().then(({ done }) => done || pump()); pump(); });</script>`,
@@ -133,4 +137,20 @@ test("MAIR-318: a page that keeps a stream open is still reached", { skip: !e2e 
     steps: [{ wait_for: { text: "Conversations" } }],
   });
   assert.equal(result.reached, true, result.error);
+});
+
+test("MAIR-318: a state plays in its own viewport", { skip: !e2e }, async () => {
+  const state = {
+    id: "mobile",
+    route: "/mobile",
+    steps: [{ click: { role: "button", name: "Ouvrir la navigation" } }, { wait_for: { role: "link", name: "Tableau de bord" } }],
+  };
+  const desktop = await playState(browser, scope, state);
+  assert.equal(desktop.reached, false, "the menu button is hidden on a desktop window");
+  let width;
+  const mobile = await playState(browser, scope, { ...state, viewport: { width: 375, height: 812 } }, {
+    onReached: async (page) => { width = page.viewportSize().width; },
+  });
+  assert.equal(mobile.reached, true, mobile.error);
+  assert.equal(width, 375);
 });

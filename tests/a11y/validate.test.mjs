@@ -94,3 +94,17 @@ test("inherited object keys are neither actions nor users", () => {
   user.states[0].as = "constructor";
   assert.deepEqual(checkScope(user), ['/states/profile: unknown user "constructor" in "as"']);
 });
+
+test("MAIR-318: a state may set its own viewport, within bounds", () => {
+  const ok = front();
+  ok.states[0].viewport = { width: 375, height: 812 };
+  assert.deepEqual(checkScope(ok), []);
+
+  const narrow = front();
+  narrow.states[0].viewport = { width: 200, height: 812 };
+  assert.ok(checkScope(narrow).some((e) => e.includes("/viewport/width")), checkScope(narrow).join("\n"));
+
+  const partial = front();
+  partial.states[0].viewport = { width: 375 };
+  assert.ok(checkScope(partial).some((e) => e.includes("height")), checkScope(partial).join("\n"));
+});
