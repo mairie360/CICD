@@ -74,7 +74,8 @@ async function open(page, route) {
 async function settle(page) {
   // Fonts and late requests (data loaded after hydration) must be in before a capture.
   await page.waitForLoadState("networkidle", { timeout: IDLE_TIMEOUT }).catch(() => {});
-  await page.evaluate(() => document.fonts?.ready);
+  // Bounded too: a font that never loads must not hold the state until the run's own timeout.
+  await page.evaluate((ms) => Promise.race([document.fonts?.ready, new Promise((resolve) => setTimeout(resolve, ms))]), IDLE_TIMEOUT);
 }
 
 // Plays one state on a fresh context. `onReached(page)` runs once the steps are done and the page
