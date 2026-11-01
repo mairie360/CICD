@@ -1,0 +1,374 @@
+name: Promote to Staging
+
+# MAIR-494: the staging promotion is a manual run of each service repo (its
+# `.github/workflows/promote-staging.yml`, `workflow_dispatch` on main), no longer a job of the
+# main pipeline, which now stops at release-dev. No rebuild: the image released on dev by the main
+# pipeline is tested, then the same digest is tagged `staging-<sha>` / `staging`.
+#
+#   resolve   the commit (input, else main's newest) must have `dev-<sha>` and a green main run
+#   gates     staging gates on `<image>:dev-<sha>`: integration (APIs, BFFs), ZAP and k6 (APIs, BFFs, fronts)
+#   promote   environment Staging: retag by digest + OpenAPI staging package + release journal
+
+on:
+  workflow_call:
+    inputs:
+      stack:
+        required: true
+        type: string
+        description: "Stack of the repo: apis | bffs | fronts | database"
+      package_name:
+        required: true
+        type: string
+        description: "Image base name (same as the main pipeline)"
+      cicd_version:
+        required: true
+        type: string
+        description: "Ref of mairie360/CICD the actions are checked out at (same as the `uses:` ref)"
+      sha:
+        required: false
+        type: string
+        default: ""
+        description: "Commit of main to promote; empty promotes main's newest commit (journal commits left out)"
+      ci_workflow:
+        required: false
+        type: string
+        default: "cicd.yml"
+        description: "File name of the repo's main pipeline, which must have released the commit on dev"
+      npm_scope:
+        required: false
+        type: string
+        default: "@mairie360"
+        description: "npm scope hosted on GitHub Packages (BFFs)"
+      openapi_spec_path:
+        required: false
+        type: string
+        default: "openapi-spec.json"
+        description: "Committed OpenAPI contract of a BFF (same as the main pipeline's input)"
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PK:
+        required: false
+      N8N_WEBHOOK_SECRET:
+        required: true
+    outputs:
+      sha:
+        description: "Promoted commit"
+        value: ${{ jobs.resolve.outputs.sha }}
+      digest:
+        description: "Digest tagged staging-<sha>"
+        value: ${{ jobs.promote.outputs.digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve the commit
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+      actions: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      sha_tag: ${{ steps.resolve.outputs.sha_tag }}
+      image: ${{ steps.resolve.outputs.image }}
+      digest: ${{ steps.resolve.outputs.digest }}
+      extra_digest: ${{ steps.resolve.outputs.extra_digest }}
+    steps:
+      - name: Check the stack
+        env:
+          STACK: ${{ inputs.stack }}
+        run: |
+          case "$STACK" in apis|bffs|fronts|database) ;; *) echo "::error::unknown stack '$STACK' (apis | bffs | fronts | database)"; exit 1 ;; esac
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      - name: Resolve and check the commit
+        id: resolve
+        uses: ./cicd-repo/actions/promote/resolve
+        with:
+          target: staging
+          sha: ${{ inputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
+          ci_workflow: ${{ inputs.ci_workflow }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ==========================================================================
+  # Staging gates, on the published dev image of the commit. The database has none of its own:
+  # its tests and schema bench run in the main pipeline, whose green run resolve requires.
+  # ==========================================================================
+  # MAIR-262: the BFFs run their newman collection here too (`integration/bffs`); a failed
+  # collection fails this job, and `promote` refuses any failed gate.
+  integration_tests:
+    name: Integration tests
+    if: inputs.stack == 'apis' || inputs.stack == 'bffs'
+    needs: resolve
+    runs-on: ubuntu-latest
+    # The BFF stacks pull the database and several API images: 40 min for them, 25 for the APIs.
+    timeout-minutes: ${{ inputs.stack == 'bffs' && 40 || 25 }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      # Outside the API action so that its 15 min step timeout only covers the test script
+      # (the BFF action logs in itself, like security/bffs).
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      - name: Run integration tests via Docker Compose (APIs)
+        if: inputs.stack == 'apis'
+        timeout-minutes: 15
+        uses: ./cicd-repo/actions/integration/apis
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}:dev-${{ needs.resolve.outputs.sha_tag }}
+
+      # No step timeout, like the BFF ZAP / k6 steps: the job timeout bounds the stack.
+      - name: Run integration tests via Docker Compose (BFFs)
+        if: inputs.stack == 'bffs'
+        uses: ./cicd-repo/actions/integration/bffs
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}:dev-${{ needs.resolve.outputs.sha_tag }}
+          npm_scope: ${{ inputs.npm_scope }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dump container logs
+        if: failure()
+        uses: ./cicd-repo/actions/integration/container-logs
+
+  security_tests:
+    name: Dynamic Security Tests (OWASP ZAP)
+    if: inputs.stack == 'apis' || inputs.stack == 'bffs' || inputs.stack == 'fronts'
+    needs: resolve
+    runs-on: ubuntu-latest
+    # Same bounds as the main pipeline had: 60 min for the BFF stacks, 25 for the others.
+    timeout-minutes: ${{ inputs.stack == 'bffs' && 60 || 25 }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # Full checkout: the API / BFF stacks mount the OpenAPI coverage gate (`cicd-repo/tests/`).
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run ZAP Security Scan via Docker Compose (APIs)
+        if: inputs.stack == 'apis'
+        timeout-minutes: 15
+        uses: ./cicd-repo/actions/security/apis
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}:dev-${{ needs.resolve.outputs.sha_tag }}
+
+      - name: Run ZAP Security Scan via Docker Compose (BFFs)
+        if: inputs.stack == 'bffs'
+        uses: ./cicd-repo/actions/security/bffs
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}:dev-${{ needs.resolve.outputs.sha_tag }}
+          npm_scope: ${{ inputs.npm_scope }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run ZAP Security Scan via Docker Compose (fronts)
+        if: inputs.stack == 'fronts'
+        timeout-minutes: 15
+        uses: ./cicd-repo/actions/security/fronts
+        with:
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          target_image: ${{ needs.resolve.outputs.image }}:dev-${{ needs.resolve.outputs.sha_tag }}
+
+      - name: Dump container logs
+        if: failure()
+        uses: ./cicd-repo/actions/integration/container-logs
+
+  performance_tests:
+    name: Isolated Performance Tests (k6)
+    if: inputs.stack == 'apis' || inputs.stack == 'bffs' || inputs.stack == 'fronts'
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.stack == 'bffs' && 60 || 25 }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run Performance Tests via Docker Compose (APIs)
+        if: inputs.stack == 'apis'
+        timeout-minutes: 15
+        uses: ./cicd-repo/actions/performance/apis
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}:dev-${{ needs.resolve.outputs.sha_tag }}
+
+      - name: Run Performance Tests via Docker Compose (BFFs)
+        if: inputs.stack == 'bffs'
+        uses: ./cicd-repo/actions/performance/bffs
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}:dev-${{ needs.resolve.outputs.sha_tag }}
+          npm_scope: ${{ inputs.npm_scope }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Performance Tests via Docker Compose (fronts)
+        if: inputs.stack == 'fronts'
+        timeout-minutes: 15
+        uses: ./cicd-repo/actions/performance/fronts
+        with:
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          target_image: ${{ needs.resolve.outputs.image }}:dev-${{ needs.resolve.outputs.sha_tag }}
+
+      - name: Dump container logs
+        if: failure()
+        uses: ./cicd-repo/actions/integration/container-logs
+
+  promote:
+    name: Release Staging
+    needs: [resolve, integration_tests, security_tests, performance_tests]
+    # The gates of the other stacks are skipped; every gate that ran must have passed: a failed
+    # `integration_tests` (an API or BFF collection, MAIR-262) is a 'failure' here and blocks it.
+    if: >-
+      always()
+      && needs.resolve.result == 'success'
+      && !contains(needs.*.result, 'failure')
+      && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    environment: Staging
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.release.outputs.digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      # Same digest as dev-<sha>, checked against resolve's digest and the cosign signature.
+      - name: Promote image(s) to Staging
+        id: release
+        uses: ./cicd-repo/actions/release/docker-release
+        with:
+          stage: staging
+          source_sha: ${{ needs.resolve.outputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          expected_digest: ${{ needs.resolve.outputs.digest }}
+          extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
+          expected_extra_digest: ${{ needs.resolve.outputs.extra_digest }}
+
+      # Same package versions as the v4 pipeline: `0.0.0-staging.<sha7>` for the APIs,
+      # `0.0.0-staging.<sha40>` for the BFFs (the fronts' contract-version.mjs expects it).
+      - name: Publish OpenAPI (APIs)
+        if: inputs.stack == 'apis'
+        uses: ./cicd-repo/actions/release/publish-openapi-rust
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-staging.${{ needs.resolve.outputs.sha_tag }}
+          dist_tag: staging
+
+      - name: Publish OpenAPI (BFFs)
+        if: inputs.stack == 'bffs'
+        uses: ./cicd-repo/actions/release/publish-openapi-typescript
+        with:
+          package_name: ${{ inputs.package_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 0.0.0-staging.${{ needs.resolve.outputs.sha }}
+          dist_tag: staging
+          spec_file: ${{ inputs.openapi_spec_path }}
+
+      - name: Release journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          stage: staging
+          sha: ${{ needs.resolve.outputs.sha }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app_id: ${{ secrets.RELEASE_APP_ID }}
+          app_private_key: ${{ secrets.RELEASE_APP_PK }}
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs: [resolve, integration_tests, security_tests, performance_tests, promote]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      - name: Notify n8n
+        uses: ./cicd-repo/actions/notify/cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}

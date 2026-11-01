@@ -82,3 +82,15 @@ test("cross references are checked", () => {
   mixed.states.push({ id: "button", story: "components-button--primary" });
   assert.equal(checkScope(mixed).length, 1);
 });
+
+test("inherited object keys are neither actions nor users", () => {
+  const step = front();
+  step.states[0].steps = [{ constructor: { role: "tab" } }];
+  assert.deepEqual(checkScope(step), [
+    "/states/0/steps/0: a step is exactly one action among click, hover, fill, select, press, wait_for, wait_for_hidden, goto",
+  ]);
+
+  const user = front();
+  user.states[0].as = "constructor";
+  assert.deepEqual(checkScope(user), ['/states/profile: unknown user "constructor" in "as"']);
+});

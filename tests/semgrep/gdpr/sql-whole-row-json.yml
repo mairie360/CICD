@@ -1,0 +1,22 @@
+# GDPR Semgrep rules of the mairie360 CI (MAIR-291, epic MAIR-284). Run by the `security_sast` job
+# of every stack workflow (`semgrep_config` default: cicd-repo/tests/semgrep/gdpr), tested by
+# `semgrep --test` (the file of the same name next to it, lint.yml).
+#
+# Rule of the epic: a log describes an error by its type and context, never by the value it
+# received. The GDPR log marker test (tests/gdpr/marker) proves it at run time; these rules catch
+# the obvious cases at review time. A finding that is a false positive gets a `nosemgrep: <rule id>`
+# comment with the reason.
+rules:
+  - id: gdpr-sql-whole-row-json
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include: ["*.sql"]
+    message: >-
+      to_jsonb(OLD|NEW) / row_to_json copies the whole row, password hash and photo included, into
+      a JSON column (an audit log is kept for years and cannot be erased). Remove the columns that
+      gdpr/inventory.yaml marks `audit_log: false`: to_jsonb(NEW) - ARRAY['password', 'photo'] (MAIR-286).
+    metadata:
+      category: security
+      references: ["https://mairie-360.atlassian.net/browse/MAIR-291"]
+    pattern-regex: (?i)\b(?:to_jsonb|row_to_json|to_json)\s*\(\s*(?:OLD|NEW)\s*\)(?!\s*-)

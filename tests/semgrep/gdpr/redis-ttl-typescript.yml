@@ -1,0 +1,38 @@
+# GDPR Semgrep rules of the mairie360 CI (MAIR-291, epic MAIR-284). Run by the `security_sast` job
+# of every stack workflow (`semgrep_config` default: cicd-repo/tests/semgrep/gdpr), tested by
+# `semgrep --test` (the file of the same name next to it, lint.yml).
+#
+# Rule of the epic: a log describes an error by its type and context, never by the value it
+# received. The GDPR log marker test (tests/gdpr/marker) proves it at run time; these rules catch
+# the obvious cases at review time. A finding that is a false positive gets a `nosemgrep: <rule id>`
+# comment with the reason.
+rules:
+  - id: gdpr-ts-redis-write-without-ttl
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      This Redis write has no time to live: the key would keep its data forever. Use the
+      createTtlRedis client of @mairie360/bffs-lib (setWithTtl), or pass EX / PX in the same
+      command (MAIR-499).
+    metadata:
+      category: security
+      references: ["https://mairie-360.atlassian.net/browse/MAIR-499"]
+    patterns:
+      - pattern-either:
+          - pattern: '$R.set($K, $V)'
+          - pattern: '$R.set($K, $V, "NX")'
+          - patterns:
+              - pattern: '$R.set($K, $V, {...})'
+              - pattern-not: '$R.set($K, $V, {..., EX: $T, ...})'
+              - pattern-not: '$R.set($K, $V, {..., PX: $T, ...})'
+              - pattern-not: '$R.set($K, $V, {..., EXAT: $T, ...})'
+              - pattern-not: '$R.set($K, $V, {..., KEEPTTL: $T, ...})'
+          - pattern: '$R.setnx(...)'
+          - pattern: '$R.setNX(...)'
+          - pattern: '$R.mset(...)'
+          - pattern: '$R.mSet(...)'
+          - pattern: '$R.hset(...)'
+          - pattern: '$R.hSet(...)'
+      - metavariable-regex:
+          metavariable: $R
+          regex: (?i)(redis|client|conn|connection|pub|sub)$
