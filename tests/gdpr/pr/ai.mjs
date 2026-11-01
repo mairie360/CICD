@@ -43,7 +43,9 @@ export function fingerprint(model, diff, answer) {
 }
 
 // Returns { review, cached, error, usage }.
-export async function reviewPullRequest({ client, model, inventoryText, diff, answer, cache }) {
+// `signal` bounds the whole request (body reads and retry waits included): the SDK timeout stops
+// once the response headers arrive.
+export async function reviewPullRequest({ client, model, inventoryText, diff, answer, cache, signal }) {
   const { text, truncated } = reviewableDiff(diff);
   const key = fingerprint(model, text, answer);
   if (cache.answers[key]) return { review: cache.answers[key], cached: true, error: null, usage: null, truncated };
@@ -59,13 +61,16 @@ export async function reviewPullRequest({ client, model, inventoryText, diff, an
       ],
       messages: [{ role: "user", content: `The author answered "${answer ?? "nothing"}" to "does this PR touch personal data?".${truncated ? " The diff is truncated." : ""}\n\n${text}` }],
       ...(FALLBACK_MODELS.has(model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" } : {}),
-    });
+    }, signal ? { signal } : undefined);
     if (response.stop_reason === "refusal" || response.stop_reason === "max_tokens" || !response.parsed_output) {
       return { review: null, cached: false, error: `no usable answer (${response.stop_reason})`, usage: response.usage ?? null, truncated };
     }
     cache.answers[key] = response.parsed_output;
     return { review: response.parsed_output, cached: false, error: null, usage: response.usage ?? null, truncated };
   } catch (caught) {
+    if (signal?.aborted) {
+      return { review: null, cached: false, error: "the review took too long and was cancelled", usage: null, truncated };
+    }
     if (!(caught instanceof Anthropic.APIError)) throw caught;
     return { review: null, cached: false, error: `API error ${caught.status ?? "network"}: ${caught.error?.error?.message ?? caught.message}`.slice(0, 300), usage: null, truncated };
   }

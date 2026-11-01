@@ -36,7 +36,9 @@ permissions:
 jobs:
   gdpr_checklist:
     name: GDPR checklist
-    if: github.event_name == 'pull_request'
+    # Bot PRs (Renovate) carry no "Personal data" section and only bump dependencies: skipped,
+    # which a required check accepts, so their automerge is not blocked.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

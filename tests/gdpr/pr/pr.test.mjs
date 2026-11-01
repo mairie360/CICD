@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { reviewableDiff, reviewPullRequest, warning } from "./ai.mjs";
-import { main } from "./check.mjs";
+import { clientOptions, main, REVIEW_DEADLINE_MS } from "./check.mjs";
 import { parseAnswer, verdict } from "./checklist.mjs";
 
 // The section of the organization PR template (mairie360/.github), as an author fills it.
@@ -67,4 +67,37 @@ test("the CLI exits 1 on a missing answer and writes the summary", async () => {
   assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /Personal data: \*\*not answered\*\*/);
   writeFileSync(join(dir, "body.md"), body(true, false));
   assert.equal(await main([...args, join(dir, "report")], { env: { GDPR_AI: "off" }, log: () => {} }), 0);
+});
+
+test("the AI client is bounded under the job's 10 minutes", () => {
+  const options = clientOptions({ ANTHROPIC_API_KEY: "k", ANTHROPIC_WORKSPACE_ID: "ws" });
+  // maxRetries counts the retries after the first request: two attempts in all.
+  assert.equal(options.maxRetries + 1, 2);
+  assert.ok(options.timeout > 0 && options.timeout * (options.maxRetries + 1) < 10 * 60_000);
+  assert.ok(REVIEW_DEADLINE_MS < 10 * 60_000);
+  assert.deepEqual(options.defaultHeaders, { "anthropic-workspace-id": "ws" });
+});
+
+test("without ANTHROPIC_API_KEY (fork pull request) the skipped review is annotated", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-pr-"));
+  for (const [name, text] of [["body.md", body(true, false)], ["changed.txt", "src/a.rs\n"], ["diff.patch", ""], ["inventory.yaml", "version: 1\n"]]) writeFileSync(join(dir, name), text);
+  const args = ["body.md", "changed.txt", "diff.patch", "inventory.yaml"].map((f) => join(dir, f));
+  const notes = [];
+  assert.equal(await main([...args, join(dir, "report")], { env: {}, log: () => {}, annotate: (l) => notes.push(l) }), 0);
+  assert.ok(notes.some((l) => l.startsWith("::notice") && /no ANTHROPIC_API_KEY/.test(l)));
+});
+
+test("a review that never ends is cancelled by the deadline and does not decide the check", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-pr-"));
+  for (const [name, text] of [["body.md", body(true, false)], ["changed.txt", "src/a.rs\n"], ["diff.patch", "diff --git a/src/a.rs b/src/a.rs\n+let x = 1;\n"], ["inventory.yaml", "version: 1\n"]]) writeFileSync(join(dir, name), text);
+  const args = ["body.md", "changed.txt", "diff.patch", "inventory.yaml"].map((f) => join(dir, f));
+  // A response whose body never ends: only the request's signal can stop it.
+  const hanging = { beta: { messages: { parse: (_params, options) => new Promise((_resolve, reject) => {
+    options?.signal?.addEventListener("abort", () => reject(options.signal.reason));
+  }) } } };
+  const started = Date.now();
+  const code = await main([...args, join(dir, "report")], { env: { ANTHROPIC_API_KEY: "k" }, client: hanging, log: () => {}, annotate: () => {}, deadlineMs: 200 });
+  assert.equal(code, 0);
+  assert.ok(Date.now() - started < 5_000);
+  assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /No review: the review took too long and was cancelled/);
 });
