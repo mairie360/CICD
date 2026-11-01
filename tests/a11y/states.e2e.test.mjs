@@ -19,9 +19,13 @@ const PAGES = {
     <ul role="listbox" hidden><li role="option" onclick="document.title=this.textContent">Haute</li></ul>
   </main>`,
   "/iframe.html": `<button>Bouton de story</button>`,
+  // Reads a never-ending stream with fetch(), like the messaging front: the network never idles.
+  "/live": `<main><h1>Messagerie</h1><p>Conversations</p></main>
+    <script>fetch("/stream").then((response) => { const reader = response.body.getReader(); const pump = () => reader.read().then(({ done }) => done || pump()); pump(); });</script>`,
 };
 
 let server;
+const streams = new Set();
 let browser;
 let scope;
 
@@ -29,6 +33,15 @@ before(async () => {
   if (!e2e) return;
   server = createServer((request, response) => {
     const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/stream") {
+      // Answered, then held open: a fetch() that reads it keeps a request in flight for as long as
+      // the page lives.
+      response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+      response.write("data: ready\n\n");
+      streams.add(response);
+      request.on("close", () => streams.delete(response));
+      return;
+    }
     if (url.pathname === "/private" && !(request.headers.cookie ?? "").includes("accessToken=")) {
       response.writeHead(401).end("no session");
       return;
@@ -51,6 +64,7 @@ before(async () => {
 });
 
 after(async () => {
+  for (const stream of streams) stream.end();
   await browser?.close();
   server?.close();
 });
@@ -110,4 +124,13 @@ test("a story that renders Storybook's error page is not reached", { skip: !e2e 
   const result = await playState(browser, scope, { id: "broken", story: "components-broken--default" });
   assert.equal(result.reached, false);
   assert.match(result.error, /did not render: React is not defined/);
+});
+
+test("MAIR-318: a page that keeps a stream open is still reached", { skip: !e2e }, async () => {
+  const result = await playState(browser, scope, {
+    id: "live",
+    route: "/live",
+    steps: [{ wait_for: { text: "Conversations" } }],
+  });
+  assert.equal(result.reached, true, result.error);
 });

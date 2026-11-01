@@ -106,7 +106,7 @@ give unreadable errors), `validate.test.mjs` (`node --test`) and `examples/`, al
 `version`. Engine (MAIR-317; an unreached state is played once more, `attempts` in the report, since a test stack under parallel load can drop a request): `run.sh` (runner command: copies the read-only `/engine` mount to
 `/tmp/engine` (never extract into `/tmp` itself: it resets its 1777 mode and Chromium crashes),
 `npm ci`, then `run.mjs <scope> <report dir>`), `run.mjs` (exit 0 / 1 a state failed / 2 invalid scope), `states.mjs` (`playState`:
-fresh context per state, JWT cookie, steps, `onReached` hook where MAIR-318 captures),
+fresh context per state, JWT cookie, opened on `load` then a best-effort network idle bounded to 10 s (a page that keeps a stream open, like Messages, never goes idle), steps, `onReached` hook where MAIR-318 captures),
 `session.mjs` (HS256 signing, tested against the ZAP stacks' static token). The runner image is
 pinned in `tests/a11y/runner-image` (version + digest) and must match the exact `playwright`
 dependency (a test checks it); bump both together. `states.e2e.test.mjs` only runs with
