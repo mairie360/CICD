@@ -36,18 +36,20 @@ export function summary({ parsed, result, ai, warn }) {
 }
 
 // The Anthropic client of the review: bounded so that a slow API cannot outlive the job's 10 min
-// (SDK default: 10 min per attempt). The review never decides the check.
+// (SDK default: 10 min per attempt): 2 attempts of 2 min at most, and REVIEW_DEADLINE_MS over the
+// whole request (body reads and retry waits included). The review never decides the check.
+export const REVIEW_DEADLINE_MS = 5 * 60_000;
 export function clientOptions(env = process.env) {
   const workspace = (env.ANTHROPIC_WORKSPACE_ID ?? "").trim();
   return {
     apiKey: env.ANTHROPIC_API_KEY,
-    maxRetries: 2,
+    maxRetries: 1,
     timeout: 120_000,
     ...(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {}),
   };
 }
 
-export async function main(argv, { env = process.env, client = null, log = console.log, annotate = console.log } = {}) {
+export async function main(argv, { env = process.env, client = null, log = console.log, annotate = console.log, deadlineMs = REVIEW_DEADLINE_MS } = {}) {
   const [bodyFile, changedFile, diffFile, inventoryFile, reportDir, inventoryPath] = argv;
   if (!bodyFile || !changedFile || !diffFile || !inventoryFile || !reportDir) {
     console.error("usage: node pr/check.mjs <body> <changed files> <diff> <inventory.yaml> <report dir> [<inventory path in this repo>]");
@@ -75,6 +77,7 @@ export async function main(argv, { env = process.env, client = null, log = conso
       diff: readFileSync(diffFile, "utf8"),
       answer: parsed.answer,
       cache,
+      signal: AbortSignal.timeout(deadlineMs),
     });
     Object.assign(ai, out);
     saveCache(settings.cache, cache);
