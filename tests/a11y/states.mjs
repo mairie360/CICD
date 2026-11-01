@@ -8,6 +8,9 @@ const STATUS_OBSERVER = readFileSync(new URL("./status-observer.js", import.meta
 
 const ACTION_TIMEOUT = 10_000;
 const NAVIGATION_TIMEOUT = 30_000;
+// Best-effort wait for the network to go idle (late requests, fonts). A page that keeps a stream
+// open never goes idle, so it costs at most this, not a failure.
+const IDLE_TIMEOUT = 10_000;
 // Date seen by the page (Date.now, new Date), so that relative dates render the same at every run.
 export const FIXED_TIME = new Date("2026-01-15T09:00:00+01:00");
 
@@ -43,7 +46,7 @@ const ACTIONS = {
   press: (page, key) => page.keyboard.press(key),
   wait_for: (page, arg) => locate(page, arg).waitFor({ state: "visible" }),
   wait_for_hidden: (page, arg) => locate(page, arg).waitFor({ state: "hidden" }),
-  goto: (page, route) => page.goto(route, { waitUntil: "networkidle" }),
+  goto: (page, route) => open(page, route),
 };
 
 // A story that throws renders Storybook's error page with HTTP 200: checking it would report the
@@ -59,9 +62,18 @@ async function assertStoryRendered(page, story) {
   if (error !== null) throw new Error(`story ${story} did not render: ${error.slice(0, 200)}`);
 }
 
+// Opens a route once its document is loaded, then gives late requests a bounded chance to end.
+// The network never goes idle on a page that keeps a stream open (Server-Sent Events, long
+// polling): waiting for "networkidle" in page.goto failed every such state with a timeout.
+async function open(page, route) {
+  const response = await page.goto(route, { waitUntil: "load" });
+  await page.waitForLoadState("networkidle", { timeout: IDLE_TIMEOUT }).catch(() => {});
+  return response;
+}
+
 async function settle(page) {
   // Fonts and late requests (data loaded after hydration) must be in before a capture.
-  await page.waitForLoadState("networkidle", { timeout: NAVIGATION_TIMEOUT }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: IDLE_TIMEOUT }).catch(() => {});
   await page.evaluate(() => document.fonts?.ready);
 }
 
@@ -89,7 +101,7 @@ export async function playState(browser, scope, state, { onReached, onFailure } 
   const result = { id: state.id, reached: false };
   let step = -1;
   try {
-    const response = await page.goto(stateUrl(state), { waitUntil: "networkidle" });
+    const response = await open(page, stateUrl(state));
     if (response && response.status() >= 400) {
       throw new Error(`${stateUrl(state)} answered HTTP ${response.status()}`);
     }
