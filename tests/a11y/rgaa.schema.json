@@ -1,0 +1,514 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mairie360/CICD/tests/a11y/rgaa.schema.json",
+  "title": "rgaa.yaml",
+  "description": "RGAA 4.1.2 scope of a front or of lib-components: applicable criteria and page states to capture (MAIR-316). Lives at the root of the consumer repo; CICD only holds this schema and the test engine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "target",
+    "criteria",
+    "states"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Format version of this file."
+    },
+    "target": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://",
+      "description": "Base URL of the front (or of the static Storybook for lib-components) inside the test stack, e.g. http://settings-front:5000."
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jwt_secret"
+      ],
+      "description": "How the engine opens a session for a seed user: it signs an HS256 JWT {sub, role, exp} with the stack's JWT_SECRET, like the static token of the ZAP stacks, and sets it as the session cookie on the target origin.",
+      "properties": {
+        "jwt_secret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "JWT_SECRET of the test stack, verbatim (e.g. b\"secret\"). Test-only value."
+        },
+        "jwt_timeout": {
+          "type": "integer",
+          "minimum": 60,
+          "default": 3600,
+          "description": "Token lifetime in seconds (JWT_TIMEOUT of the stack)."
+        },
+        "cookie": {
+          "type": "string",
+          "default": "accessToken",
+          "description": "Name of the session cookie set on the target origin."
+        }
+      }
+    },
+    "users": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Seed users, keyed by the name states refer to with `as` (one per role that changes what the page shows). The id must exist in the seed: the APIs check that the user exists.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "User id in the seed, used as the `sub` claim."
+          },
+          "role": {
+            "type": "string",
+            "description": "`role` claim, e.g. user or admin."
+          }
+        }
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "description": "Applicable RGAA 4.1.2 criteria, transverse ones included. A criterion that is not listed is not applicable: give the reason in a YAML comment.",
+      "items": {
+        "enum": [
+          "1.1",
+          "1.2",
+          "1.3",
+          "1.4",
+          "1.5",
+          "1.6",
+          "1.7",
+          "1.8",
+          "1.9",
+          "2.1",
+          "2.2",
+          "3.1",
+          "3.2",
+          "3.3",
+          "4.1",
+          "4.2",
+          "4.3",
+          "4.4",
+          "4.5",
+          "4.6",
+          "4.7",
+          "4.8",
+          "4.9",
+          "4.10",
+          "4.11",
+          "4.12",
+          "4.13",
+          "5.1",
+          "5.2",
+          "5.3",
+          "5.4",
+          "5.5",
+          "5.6",
+          "5.7",
+          "5.8",
+          "6.1",
+          "6.2",
+          "7.1",
+          "7.2",
+          "7.3",
+          "7.4",
+          "7.5",
+          "8.1",
+          "8.2",
+          "8.3",
+          "8.4",
+          "8.5",
+          "8.6",
+          "8.7",
+          "8.8",
+          "8.9",
+          "8.10",
+          "9.1",
+          "9.2",
+          "9.3",
+          "9.4",
+          "10.1",
+          "10.2",
+          "10.3",
+          "10.4",
+          "10.5",
+          "10.6",
+          "10.7",
+          "10.8",
+          "10.9",
+          "10.10",
+          "10.11",
+          "10.12",
+          "10.13",
+          "10.14",
+          "11.1",
+          "11.2",
+          "11.3",
+          "11.4",
+          "11.5",
+          "11.6",
+          "11.7",
+          "11.8",
+          "11.9",
+          "11.10",
+          "11.11",
+          "11.12",
+          "11.13",
+          "12.1",
+          "12.2",
+          "12.3",
+          "12.4",
+          "12.5",
+          "12.6",
+          "12.7",
+          "12.8",
+          "12.9",
+          "12.10",
+          "12.11",
+          "13.1",
+          "13.2",
+          "13.3",
+          "13.4",
+          "13.5",
+          "13.6",
+          "13.7",
+          "13.8",
+          "13.9",
+          "13.10",
+          "13.11",
+          "13.12"
+        ]
+      }
+    },
+    "states": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/state"
+      }
+    }
+  },
+  "$defs": {
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Element to act on. Prefer role + name, as a user of assistive technologies would find it.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "ARIA role (button, link, tab, textbox, dialog...)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Accessible name, with role."
+        },
+        "label": {
+          "type": "string",
+          "description": "Text of the associated <label>."
+        },
+        "text": {
+          "type": "string",
+          "description": "Visible text."
+        },
+        "test_id": {
+          "type": "string",
+          "description": "data-testid value."
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS selector, last resort."
+        },
+        "exact": {
+          "type": "boolean",
+          "description": "Match name/label/text exactly (false by default: substring, case-insensitive)."
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "required": [
+            "label"
+          ]
+        },
+        {
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "required": [
+            "test_id"
+          ]
+        },
+        {
+          "required": [
+            "selector"
+          ]
+        }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ],
+      "description": "One rendering to capture: a route of the front (optionally logged in as a seed user, then a sequence of actions) or a Storybook story (lib-components).",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Stable identifier, used in reports and fingerprints."
+        },
+        "description": {
+          "type": "string"
+        },
+        "route": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Path under target, e.g. /profile."
+        },
+        "story": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+--[a-z0-9-]+$",
+          "description": "Storybook story id, e.g. components-button--primary (lib-components)."
+        },
+        "as": {
+          "type": "string",
+          "description": "Key of a seed user in `users`. Omit for a public page."
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/step"
+          },
+          "description": "Actions played in order after the page has loaded."
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "route"
+          ],
+          "not": {
+            "required": [
+              "story"
+            ]
+          }
+        },
+        {
+          "required": [
+            "story"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "route"
+                ]
+              },
+              {
+                "required": [
+                  "as"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Click an element.",
+          "required": [
+            "click"
+          ],
+          "properties": {
+            "click": {
+              "$ref": "#/$defs/locator"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Hover an element.",
+          "required": [
+            "hover"
+          ],
+          "properties": {
+            "hover": {
+              "$ref": "#/$defs/locator"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Type a value into a field.",
+          "required": [
+            "fill"
+          ],
+          "properties": {
+            "fill": {
+              "$ref": "#/$defs/locator_value"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Pick an option of a select or listbox (by its label).",
+          "required": [
+            "select"
+          ],
+          "properties": {
+            "select": {
+              "$ref": "#/$defs/locator_value"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Press a key on the focused element.",
+          "required": [
+            "press"
+          ],
+          "properties": {
+            "press": {
+              "type": "string",
+              "description": "Playwright key name: Enter, Escape, Tab..."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Wait until an element is visible.",
+          "required": [
+            "wait_for"
+          ],
+          "properties": {
+            "wait_for": {
+              "$ref": "#/$defs/locator"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Wait until an element is hidden.",
+          "required": [
+            "wait_for_hidden"
+          ],
+          "properties": {
+            "wait_for_hidden": {
+              "$ref": "#/$defs/locator"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Navigate to another route of the target.",
+          "required": [
+            "goto"
+          ],
+          "properties": {
+            "goto": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        }
+      ]
+    },
+    "locator_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Locator of a field plus the value to enter or pick.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "ARIA role (button, link, tab, textbox, dialog...)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Accessible name, with role."
+        },
+        "label": {
+          "type": "string",
+          "description": "Text of the associated <label>."
+        },
+        "text": {
+          "type": "string",
+          "description": "Visible text."
+        },
+        "test_id": {
+          "type": "string",
+          "description": "data-testid value."
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS selector, last resort."
+        },
+        "exact": {
+          "type": "boolean",
+          "description": "Match name/label/text exactly (false by default: substring, case-insensitive)."
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "required": [
+            "label"
+          ]
+        },
+        {
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "required": [
+            "test_id"
+          ]
+        },
+        {
+          "required": [
+            "selector"
+          ]
+        }
+      ]
+    }
+  }
+}
