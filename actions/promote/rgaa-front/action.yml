@@ -4,7 +4,7 @@ description: >
   (`stack: fronts`) on `<image>@<staging digest>` of the promoted commit: starts the front's
   `accessibility_test.sh` / `docker-compose-accessibility.yml` stack, whose `a11y` runner plays the
   states of `rgaa.yaml` with the engine of `cicd-repo/tests/a11y` and writes `rgaa-report/` (job
-  summary + `rgaa-report` artifact). Fails when the scope files are missing, a state cannot be
+  summary + `rgaa-report` artifact); AI verdicts are kept between runs with actions/cache (MAIR-320). Fails when the scope files are missing, a state cannot be
   reached, a criterion is undeclared or the rate is below `min_rate`. The caller checks out the front at the promoted commit and the full `mairie360/CICD`
   into `cicd-repo/` first.
 
@@ -19,6 +19,18 @@ inputs:
     description: "Minimum rate (percent) of the automatically decided criteria (MAIR-319)"
     required: false
     default: "60"
+  ai_model:
+    description: "Claude model of the AI pre-audit (MAIR-320)"
+    required: false
+    default: ""
+  anthropic_api_key:
+    description: "Anthropic API key; without it the AI pre-audit is skipped"
+    required: false
+    default: ""
+  anthropic_workspace_id:
+    description: "Anthropic workspace id, only when the key is not scoped to a workspace"
+    required: false
+    default: ""
   timeout_minutes:
     description: "Bound of the stack run (MAIR-468)"
     required: false
@@ -45,6 +57,15 @@ runs:
         GHCR_TOKEN: ${{ inputs.github_token }}
       run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+    # AI verdicts by element fingerprint, so that only new or changed elements are sent to Claude
+    # (until the n8n store, MAIR-275, holds them).
+    - name: Restore RGAA AI verdicts
+      uses: actions/cache/restore@v6
+      with:
+        path: .rgaa-ai-cache
+        key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: rgaa-ai-${{ github.repository }}-
+
     # Composite steps take no timeout-minutes: the run is bounded by `timeout` instead.
     - name: Run accessibility tests via Docker Compose
       shell: bash
@@ -55,6 +76,16 @@ runs:
         IMAGE_REF: ${{ inputs.image_ref }}
         # The runner service forwards it to the engine (exit 3 below it, MAIR-319).
         RGAA_MIN_RATE: ${{ inputs.min_rate }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        ANTHROPIC_WORKSPACE_ID: ${{ inputs.anthropic_workspace_id }}
+        RGAA_AI_MODEL: ${{ inputs.ai_model }}
+
+    - name: Save RGAA AI verdicts
+      if: always() && hashFiles('.rgaa-ai-cache/verdicts.json') != ''
+      uses: actions/cache/save@v6
+      with:
+        path: .rgaa-ai-cache
+        key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: RGAA job summary
       if: always()

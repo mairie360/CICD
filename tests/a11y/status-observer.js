@@ -28,13 +28,18 @@
     const roots = all.filter((el) => !all.some((other) => other !== el && other.contains(el)));
     for (const el of roots) {
       if (!el.isConnected || !text(el) || el.closest("head, script, style, noscript, template")) continue;
-      // Only a region that is itself new can have been inserted with its text.
-      const newRegions = added.has(el) ? liveIn(el).filter((region) => text(region)) : [];
+      // Only a region that is itself new can have been inserted with its text. role="alert" is the
+      // exception: assistive technologies announce an alert when it is inserted (WAI-ARIA alert
+      // pattern), while status / log / aria-live regions must exist before their text arrives.
+      const newRegions = added.has(el)
+        ? liveIn(el).filter((region) => text(region) && !region.matches('[role="alert"], [role="alertdialog"]'))
+        : [];
       if (newRegions.length > 0) {
         for (const region of newRegions) state.events.push({ kind: "region-with-text", step: state.step, element: region, text: text(region) });
         continue;
       }
-      if (el.closest(LIVE)) continue; // Text written into a region that was already there: announced.
+      // Text written into a region that was already there, or an inserted alert: announced.
+      if (el.closest(LIVE) || liveIn(el).some((region) => region.matches('[role="alert"]'))) continue;
       state.events.push({ kind: "text", step: state.step, element: el, text: text(el) });
     }
   }

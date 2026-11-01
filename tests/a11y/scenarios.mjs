@@ -248,9 +248,15 @@ const orientation = dom(() => {
 // that the three scenarios share one walk.
 async function keyboardWalk(page) {
   const prepared = await page.evaluate(() => {
-    document.activeElement?.blur?.();
     const modal = window.__rgaa.modalRoot();
     if (modal) modal.dataset.rgaaModal = "";
+    // Start the walk at the top of the page (of the open modal, where a user's focus is). blur()
+    // is not enough: Chromium resumes Tab from the element the steps focused last.
+    const start = document.createElement("span");
+    start.tabIndex = -1;
+    start.dataset.rgaaStart = "";
+    (modal ?? document.body).prepend(start);
+    start.focus();
     const list = window.__rgaa.tabbables();
     list.forEach((el, i) => {
       el.dataset.rgaaTab = String(i);
@@ -259,8 +265,16 @@ async function keyboardWalk(page) {
     return list.length;
   });
   const visits = [];
-  const max = Math.min(prepared + 5, 300);
+  // Tab through one full cycle: until the focus has left the page (body / browser UI) twice, the
+  // second time after wrapping around (a modal can only be escaped backwards). The page can hold Tab
+  // stops tabbables() does not count (Chromium makes scroll containers without focusable content
+  // focusable), so the bound leaves room for them before concluding to a trap.
+  const max = Math.min(prepared * 2 + 20, 400);
+  let exits = 0;
   for (let i = 0; i < max; i += 1) {
+    // One exit per move from the page to the outside, however many Tab stops the browser UI takes.
+    if (visits.length > 0 && !visits.at(-1).failure && (visits.length === 1 || visits.at(-2).failure)) exits += 1;
+    if (exits === 2) break;
     await page.keyboard.press("Tab");
     visits.push(
       await page.evaluate(() => {
@@ -287,6 +301,7 @@ async function keyboardWalk(page) {
     const root = document.querySelector("[data-rgaa-modal]");
     const failure = root ? window.__rgaa.failure(root, "") : null;
     delete root?.dataset.rgaaModal;
+    document.querySelector("[data-rgaa-start]")?.remove();
     document.querySelectorAll("[data-rgaa-tab]").forEach((el) => {
       delete el.dataset.rgaaTab;
       delete el.dataset.rgaaStyle;
@@ -339,6 +354,10 @@ async function focusVisible(page) {
 async function skipLink(page) {
   const { count, visits } = await walk(page);
   if (count === 0) return [];
+  // Nothing to bypass when the keyboard already starts in the main content (a login form alone on
+  // its page): a skip link is only required in front of repeated blocks (header, navigation).
+  const startsInMain = await page.evaluate(() => Boolean(window.__rgaa.tabbables()[0]?.closest('main, [role="main"]')));
+  if (startsInMain) return [];
   return visits[0]?.skip
     ? []
     : [{ ...(visits[0]?.failure ?? { target: "body", html: "" }), message: "the first focusable element is not a visible skip link to the main content" }];

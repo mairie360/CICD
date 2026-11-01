@@ -103,7 +103,7 @@ action, a locator one of `role`/`label`/`text`/`test_id`/`selector`; sessions ar
 `loadScope()` for the engine; it reports steps and states itself because the schema `oneOf`s
 give unreadable errors), `validate.test.mjs` (`node --test`) and `examples/`, all run by the
 `a11y` job of `lint.yml`. Changing the format is a breaking change for every front: bump
-`version`. Engine (MAIR-317): `run.sh` (runner command: copies the read-only `/engine` mount to
+`version`. Engine (MAIR-317; an unreached state is played once more, `attempts` in the report, since a test stack under parallel load can drop a request): `run.sh` (runner command: copies the read-only `/engine` mount to
 `/tmp/engine` (never extract into `/tmp` itself: it resets its 1777 mode and Chromium crashes),
 `npm ci`, then `run.mjs <scope> <report dir>`), `run.mjs` (exit 0 / 1 a state failed / 2 invalid scope), `states.mjs` (`playState`:
 fresh context per state, JWT cookie, steps, `onReached` hook where MAIR-318 captures),
@@ -132,7 +132,18 @@ records the DOM changes between the first step (`__rgaaStatus.mark`) and the end
 with nothing to review → `validated`; else `to_review`), CI rate = validated / (validated +
 invalidated), `RGAA_MIN_RATE` (input `rgaa_min_rate` of `promote-prod.yml` / `front-libs-cicd.yml`,
 default 60, the front's compose must forward it) → `run.mjs` exits 3 below it (exit 1 still wins
-for unreached states / undeclared criteria).
+for unreached states / undeclared criteria). AI pre-audit (MAIR-320): `extract.mjs` (in-page
+extraction for 1.3 / 6.1 / 11.2 / 11.9 / 13.5 / 13.6, before the scenarios move the focus;
+image screenshots; fingerprint = sha256 of criterion + fields + `EXTRACTION_VERSION`, bump it
+when a prompt changes), `ai.mjs` (`@anthropic-ai/sdk` `client.beta.messages.parse` +
+`betaZodOutputFormat`, default `claude-sonnet-5-5` / `RGAA_AI_MODEL`, effort `low`, system
+prompt per criterion with `cache_control`, `fallbacks: "default"` only on the models in
+`FALLBACK_MODELS`, verdict cache by fingerprint in `/ai-cache/verdicts.json` (`RGAA_AI_CACHE`),
+errors/refusals → uncertain and not cached, but every request failing throws: a configuration
+problem must not look like hundreds of uncertain verdicts; `ANTHROPIC_WORKSPACE_ID` → the
+`anthropic-workspace-id` header, for keys not scoped to a workspace). Proposals and `estimated_rate` live in
+`report.ai` and never touch `report.rate`. No `ANTHROPIC_API_KEY` → skipped. `ai.test.mjs`
+mocks the client; no test calls the real API.
 
 ## GDPR inventory gate (`tests/gdpr/`, MAIR-285, epic MAIR-284)
 
@@ -269,7 +280,7 @@ Release, shared and notify actions:
 - **`security/gitleaks`** (MAIR-416) — secret scan with a Gitleaks image pinned by version + digest (not `gitleaks-action`, which needs a paid org license), run as the checkout's uid. Scans only the commits of the run (`pull_request.base.sha..sha`, `event.before..sha`, else the last commit), so the caller checks out with `fetch-depth: 0`; `.gitleaksignore` for rotated secrets. Called after Semgrep in the `security_sast` job of every workflow. Without a `.gitleaks.toml` in the calling repo it mounts its own `actions/security/gitleaks/gitleaks.toml` (built-in rules + allowlists; MAIR-316 allows only the `jwt_secret:` line of `rgaa.yaml`); a repo config replaces it entirely.
 - **`promote/gdpr-inventory`** (MAIR-285) — GDPR inventory gate of the database, called by the `gdpr_inventory` job of `promote-prod.yml` (`stack: database`) with the staging digests `resolve` read: runs the database image, applies the migrations image (same invocation as Deploiment's migration job), dumps the columns (`tests/gdpr/schema.sql`), then `tests/gdpr/check.mjs` against the repo's `gdpr/inventory.yaml` and the inventory of the last tag before the promoted commit (`sha` input, `git describe --tags "<sha>^"`, so the caller checks out with `fetch-depth: 0`). Job summary + `gdpr-inventory` artifact. Skipped with a warning when the repo has no inventory.
 - **`promote/gdpr-marker`** (MAIR-290) — personal data in logs test of an API or a BFF, called by the `gdpr_marker` job of `promote-prod.yml` (`stack: apis | bffs`) with `<image>@<staging digest>` of the promoted commit: runs the repo's `gdpr_marker_test.sh` (checked out at that commit), whose `docker-compose-gdpr-marker.yml` starts the service and the `gdpr-marker` runner (`tests/gdpr/marker`), then searches the logs of every container for the marker's values. Job summary + `gdpr-marker` artifact (values masked). Skipped with a warning without `gdpr-marker.yaml`. BFFs get the `npm_scope` / token `.npmrc` like the ZAP job.
-- **`promote/rgaa-front`** (MAIR-317) — RGAA gate of a front, called by the `rgaa` job of `promote-prod.yml` (`stack: fronts`) with `<image>@<staging digest>` of the promoted commit: checks the scope files, runs the front's `accessibility_test.sh` (exports `IMAGE_REF`, bounded by `timeout`), job summary + `rgaa-report` artifact. The workflow job keeps the container log dump outside the action. See "RGAA engine" above.
+- **`promote/rgaa-front`** (MAIR-317, epic MAIR-492) — RGAA gate of a front, called by the `rgaa` job of `promote-prod.yml` (`stack: fronts`) with `<image>@<staging digest>` of the promoted commit: scope files check, GHCR login, AI verdict cache restore/save (`actions/cache`, MAIR-320), the front's `accessibility_test.sh` bounded by `timeout` (composite steps take no `timeout-minutes`), job summary, `rgaa-report` artifact. Inputs `image_ref`, `github_token`, `min_rate`, `ai_model`, `anthropic_api_key`, `anthropic_workspace_id`. The workflow job keeps the container log dump outside the action. See "RGAA engine" above.
 - **`notify/cicd-failure`** — posts the failure to the n8n webhook. Context values and the secret go through `env:` and the JSON is built with `jq -n --arg` (MAIR-416: a forged branch name used to be able to inject shell code); keep it that way.
 - **`security/semgrep`** (MAIR-230) — SAST with a Semgrep image pinned by **version + digest** (input `image`; the org's "major tag" pinning rule does not apply here, bump tag and digest together). Inputs: `config` (space/newline-separated rulesets, one `--config` each), `paths`, `exclude` (defaults to `cicd-repo`, which every workflow checks out inside the workspace), `fail_on_findings` (default `'true'`), `upload_sarif` (default `'false'`, needs `security-events: write`), `sarif_category`, `artifact_name` (`semgrep-sarif`). The scan step never fails by itself: it records the exit code, the SARIF is uploaded (artifact, optionally code scanning), then a last step applies the verdict (exit 1 → findings, fail or warn; any other non-zero → Semgrep error, always fails). Outputs `findings`, `exit_code`, `sarif_file`. Called by the `security_sast` job of **every** stack workflow through the `semgrep_config` / `semgrep_fail_on_findings` workflow inputs (per-stack defaults and the rollout are in `README.md`). Code-scanning upload stays off in the workflows: consumer callers declare top-level `permissions:` without `security-events`, and a nested job cannot request more than its caller grants (startup failure).
 - **`release/publish-openapi-rust`** — `cargo open_api > openapi.json` → `npx -y orval` → publishes `@<org>/<package_name>-openapi` to `npm.pkg.github.com`.

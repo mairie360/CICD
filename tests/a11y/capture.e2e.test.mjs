@@ -40,9 +40,22 @@ const GOOD = page(
   "<style>.skip{position:absolute;left:-999px}.skip:focus{left:0}a:focus,button:focus,input:focus{outline:3px solid #000}</style>",
 );
 
+// A form alone on its page, inside main: the keyboard starts in the content, nothing to bypass.
+const FORM = page("fr", `<main><h1>Connexion</h1><label for="e">Email</label><input id="e"><button>Se connecter</button></main>`);
+
+// A board of scrollable columns without focusable content: Chromium makes each scroller a Tab stop
+// that tabbables() does not count. Not a keyboard trap.
+const SCROLLERS = page(
+  "fr",
+  `<main><h1>Tableau</h1>${Array.from({ length: 8 }, (_, i) =>
+    `<div style="height:60px;overflow:auto"><p style="height:200px">Colonne ${i + 1}</p></div><button>Carte ${i + 1}</button>`,
+  ).join("")}</main>`,
+);
+
 const BAD = page(
   "en",
-  `<main><h1>Projets</h1>
+  `<header><a href="/">Accueil</a></header>
+  <main><h1>Projets</h1>
     <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="10" height="10">
     <svg width="10" height="10"><circle r="4"></circle></svg>
     <p id="dup">a</p><p id="dup">b</p>
@@ -67,7 +80,7 @@ const STATUS = page(
   "fr",
   `<main><h1>Projets</h1>
     <div role="status" id="live"></div>
-    <button id="toast">Créer</button><button id="good">Enregistrer</button><button id="plain">Rechercher</button>
+    <button id="toast">Créer</button><button id="good">Enregistrer</button><button id="plain">Rechercher</button><button id="alert">Valider</button>
   </main>
   <script>
     document.getElementById("toast").onclick = () => {
@@ -78,6 +91,12 @@ const STATUS = page(
       setTimeout(() => toast.remove(), 200);
     };
     document.getElementById("good").onclick = () => (document.getElementById("live").textContent = "Modifications enregistrées");
+    document.getElementById("alert").onclick = () => {
+      const alert = document.createElement("p");
+      alert.setAttribute("role", "alert");
+      alert.textContent = "Email ou mot de passe incorrect.";
+      document.querySelector("main").append(alert);
+    };
     document.getElementById("plain").onclick = () => {
       const p = document.createElement("p");
       p.textContent = "3 résultats";
@@ -99,6 +118,21 @@ const MODAL = page(
   "<style>@media (orientation: portrait) { main { display: none; } } button:focus { outline: 3px solid #000; }</style>",
 );
 
+const AI_PAGE = page(
+  "fr",
+  `<main><h1>Projets</h1>
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=" alt="IMG_2041.png" width="40" height="40">
+    <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="" width="10" height="10">
+    <p>Le rapport annuel est disponible. <a href="/rapport.pdf">Cliquez ici</a></p>
+    <label for="d">Date</label><input id="d" placeholder="jj/mm/aaaa" value="15/06/2026">
+    <label>Service <select><option>Direction générale</option><option>Ressources humaines</option></select></label>
+    <button role="switch" aria-checked="false" aria-label="Mode maintenance"></button>
+    <button aria-label="Supprimer le projet"><svg aria-hidden="true" width="8" height="8"></svg></button>
+    <button aria-label="Sélectionner le 15 juin" style="display:flex;flex-direction:column"><span>Lun</span><span>15</span></button>
+    <p>Projet terminé 🎉</p>
+  </main>`,
+);
+
 let server;
 let browser;
 let criteria;
@@ -106,8 +140,18 @@ const target = () => `http://127.0.0.1:${server.address().port}`;
 
 before(async () => {
   if (!e2e) return;
+  let flaky = 0;
   server = createServer((request, response) => {
-    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL }[new URL(request.url, "http://x").pathname];
+    // Fails its first load, like an upstream timeout of a test stack under load.
+    if (new URL(request.url, "http://x").pathname === "/flaky" && flaky++ === 0) {
+      response.writeHead(502).end("bad gateway");
+      return;
+    }
+    if (new URL(request.url, "http://x").pathname === "/flaky") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(FORM);
+      return;
+    }
+    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE, "/form": FORM, "/scrollers": SCROLLERS }[new URL(request.url, "http://x").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" }).end(body ?? "");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -123,12 +167,12 @@ after(async () => {
 
 const ALL = ["1.1", "1.2", "6.2", "8.2", "8.3", "8.4", "8.5", "9.1", "10.4", "10.7", "10.11", "10.13", "11.1", "12.7", "12.9", "13.2"];
 
-async function capture(route, declared = ALL, steps = []) {
+async function capture(route, declared = ALL, steps = [], ai = false) {
   const scope = { target: target(), criteria: declared, states: [] };
   let captured;
   const dir = mkdtempSync(join(tmpdir(), "rgaa-"));
   const result = await playState(browser, scope, { id: route.slice(1), route, steps }, {
-    onReached: async (p) => (captured = await captureState(p, { scope, criteria, dir })),
+    onReached: async (p) => (captured = await captureState(p, { scope, criteria, dir, stateId: route.slice(1), ai })),
   });
   assert.equal(result.reached, true, result.error);
   return { ...captured, dir };
@@ -168,6 +212,27 @@ test("each seeded defect fails its criterion", { skip: !e2e }, async () => {
   assert.deepEqual(bad.undeclared.map((u) => u.criterion), ["5.6"]);
 });
 
+test("the keyboard walk starts at the top of the page, not where the steps left the focus", { skip: !e2e }, async () => {
+  const good = await capture("/good", ALL, [{ fill: { label: "Nom", value: "École" } }]);
+  assert.deepEqual(failing(good, "12.7"), [], "the skip link is the first element reached");
+});
+
+test("focusable scroll containers are not a keyboard trap", { skip: !e2e }, async () => {
+  const board = await capture("/scrollers");
+  for (const criterion of ["7.3", "12.8", "12.9"]) assert.deepEqual(failing(board, criterion), [], criterion);
+});
+
+test("no skip link is required when the keyboard starts in the main content", { skip: !e2e }, async () => {
+  const form = await capture("/form");
+  assert.deepEqual(failing(form, "12.7"), []);
+});
+
+test("run.mjs plays an unreached state once more before failing it", { skip: !e2e }, async () => {
+  const { code, report } = await runEngine(`version: 1\ntarget: ${target()}\ncriteria: ["1.1", "8.3", "11.1"]\nstates:\n  - id: flaky\n    route: /flaky\n`);
+  assert.equal(code, 0);
+  assert.deepEqual([report.states[0].reached, report.states[0].attempts], [true, 2]);
+});
+
 test("run.mjs writes the report and fails on undeclared criteria", { skip: !e2e }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "rgaa-run-"));
   writeFileSync(
@@ -198,6 +263,9 @@ test("status messages: a region inserted with its text fails, a plain text goes 
     { click: { role: "button", name: "Enregistrer" } },
     { click: { role: "button", name: "Rechercher" } },
     { wait_for: { text: "3 résultats" } },
+    // An alert inserted with its text is announced (WAI-ARIA): neither a failure nor a review item.
+    { click: { role: "button", name: "Valider" } },
+    { wait_for: { text: "Email ou mot de passe incorrect." } },
   ]);
   const { failures, review } = captured.checks["scenario:status-messages"];
   // The toast removed itself before the capture: it is still reported.
@@ -247,4 +315,22 @@ test("the rate gate fails the run below the minimum", { skip: !e2e }, async () =
   const failing = await runEngine(scopeYaml, { RGAA_MIN_RATE: "80" });
   assert.equal(failing.code, 3);
   assert.equal(failing.report.rate.passed, false);
+});
+
+test("extracts the elements of the AI criteria, with a screenshot for images", { skip: !e2e }, async () => {
+  const declared = ["1.1", "1.3", "6.1", "6.2", "11.1", "11.2", "11.9", "13.5"];
+  const { aiItems } = await capture("/ai", declared, [], true);
+  const of = (criterion) => aiItems.filter((i) => i.criterion === criterion);
+  assert.deepEqual(of("1.3").map((i) => i.name), ["IMG_2041.png"], "decorative images (alt empty) are left to 1.2");
+  assert.ok(of("1.3")[0].image?.length > 0, "a screenshot of the image is attached");
+  assert.deepEqual(of("6.1").map((i) => i.name), ["Cliquez ici"]);
+  assert.match(of("6.1")[0].context, /rapport annuel/);
+  assert.deepEqual(of("11.2").map((i) => [i.name, i.placeholder]), [["Date", "jj/mm/aaaa"], ["Service", ""], ["Mode maintenance", ""]]);
+  assert.deepEqual(of("11.9").map((i) => i.name), ["Mode maintenance", "Supprimer le projet", "Sélectionner le 15 juin"]);
+  assert.match(of("11.9")[2].visible_text, /^Lun\s+15$/, "rendered text keeps the separation between blocks");
+  assert.ok(aiItems.every((i) => !i.html.includes("data-rgaa-ai")), "the extraction marker never reaches the html");
+  assert.ok(of("11.2").every((i) => !/\svalue=/.test(i.html)), "the value of a field (data) is not judged");
+  assert.deepEqual(of("13.5").map((i) => i.text), ["Projet terminé 🎉"]);
+  const again = await capture("/ai", declared, [], true);
+  assert.deepEqual(again.aiItems.map((i) => i.fingerprint), aiItems.map((i) => i.fingerprint), "stable fingerprints");
 });
