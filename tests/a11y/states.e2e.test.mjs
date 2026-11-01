@@ -3,7 +3,9 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { playState } from "./states.mjs";
+import { SCENARIOS } from "./scenarios.mjs";
 
 const e2e = process.env.RGAA_E2E === "1";
 const SECRET = 'b"secret"';
@@ -19,6 +21,17 @@ const PAGES = {
     <ul role="listbox" hidden><li role="option" onclick="document.title=this.textContent">Haute</li></ul>
   </main>`,
   "/iframe.html": `<button>Bouton de story</button>`,
+  // A menu button shown only on a narrow screen, like a mobile navigation drawer.
+  "/mobile": `<style>#menu{display:none}@media (max-width:600px){#menu{display:block}}</style>
+    <main><h1>Accueil</h1><button id="menu" onclick="document.querySelector('nav').hidden=false">Ouvrir la navigation</button>
+    <nav hidden><a href="/">Tableau de bord</a></nav></main>`,
+  // A drawer that a landscape window closes (orientation change), and one that any resize closes.
+  "/drawer": `<main><h1>Accueil</h1><button onclick="document.querySelector('[role=dialog]').hidden=false">Ouvrir</button>
+    <div role="dialog" aria-label="Navigation mobile" hidden><a href="/">Tableau de bord</a></div></main>
+    <script>matchMedia("(orientation: landscape)").addEventListener("change", (e) => { if (e.matches) document.querySelector("[role=dialog]").hidden = true; });</script>`,
+  "/fragile": `<main><h1>Accueil</h1><button onclick="document.querySelector('[role=dialog]').hidden=false">Ouvrir</button>
+    <div role="dialog" aria-label="Navigation mobile" hidden><a href="/">Tableau de bord</a></div></main>
+    <script>addEventListener("resize", () => { document.querySelector("[role=dialog]").hidden = true; });</script>`,
   // Reads a never-ending stream with fetch(), like the messaging front: the network never idles.
   "/live": `<main><h1>Messagerie</h1><p>Conversations</p></main>
     <script>fetch("/stream").then((response) => { const reader = response.body.getReader(); const pump = () => reader.read().then(({ done }) => done || pump()); pump(); });</script>`,
@@ -133,4 +146,50 @@ test("MAIR-318: a page that keeps a stream open is still reached", { skip: !e2e 
     steps: [{ wait_for: { text: "Conversations" } }],
   });
   assert.equal(result.reached, true, result.error);
+});
+
+test("MAIR-318: a state plays in its own viewport", { skip: !e2e }, async () => {
+  const state = {
+    id: "mobile",
+    route: "/mobile",
+    steps: [{ click: { role: "button", name: "Ouvrir la navigation" } }, { wait_for: { role: "link", name: "Tableau de bord" } }],
+  };
+  const desktop = await playState(browser, scope, state);
+  assert.equal(desktop.reached, false, "the menu button is hidden on a desktop window");
+  let width;
+  const mobile = await playState(browser, scope, { ...state, viewport: { width: 375, height: 812 } }, {
+    onReached: async (page) => { width = page.viewportSize().width; },
+  });
+  assert.equal(mobile.reached, true, mobile.error);
+  assert.equal(width, 375);
+});
+
+test("MAIR-318: the 320 px reflow check keeps a portrait state and reports one it changed", { skip: !e2e }, async () => {
+  const helpers = readFileSync(new URL("./page-helpers.js", import.meta.url), "utf8");
+  const reflow = async (route) => {
+    let outcome;
+    const result = await playState(browser, scope, {
+      id: route.slice(1),
+      route,
+      viewport: { width: 375, height: 812 },
+      steps: [{ click: { role: "button", name: "Ouvrir" } }, { wait_for: { role: "link", name: "Tableau de bord" } }],
+    }, {
+      onReached: async (page) => {
+        await page.addScriptTag({ content: helpers });
+        const checked = await SCENARIOS["reflow-320"](page, {});
+        outcome = { checked, open: await page.locator("[role=dialog]").isVisible(), width: page.viewportSize().width };
+      },
+    });
+    assert.equal(result.reached, true, result.error);
+    return outcome;
+  };
+  // Portrait kept at 320 px: the drawer survives, nothing to review, back to 375.
+  const kept = await reflow("/drawer");
+  assert.equal(kept.open, true);
+  assert.ok(Array.isArray(kept.checked), "no review when the state is unchanged");
+  assert.equal(kept.width, 375);
+  // A page closing its drawer on any resize: the change is reported for review.
+  const changed = await reflow("/fragile");
+  assert.equal(changed.open, false);
+  assert.match(changed.checked.review[0].message, /changed the state/);
 });

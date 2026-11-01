@@ -292,6 +292,27 @@
           "type": "string",
           "description": "Key of a seed user in `users`. Omit for a public page."
         },
+        "viewport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "width",
+            "height"
+          ],
+          "description": "Window size of this state in CSS pixels, e.g. { width: 375, height: 812 } for a mobile layout. Default 1280 x 800.",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 320,
+              "maximum": 3840
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 256,
+              "maximum": 2160
+            }
+          }
+        },
         "steps": {
           "type": "array",
           "items": {

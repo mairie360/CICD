@@ -83,7 +83,8 @@ async function settle(page) {
 export async function playState(browser, scope, state, { onReached, onFailure } = {}) {
   const context = await browser.newContext({
     baseURL: scope.target,
-    viewport: { width: 1280, height: 800 },
+    // A state may ask for another window size (a mobile layout); the default is a desktop one.
+    viewport: state.viewport ?? { width: 1280, height: 800 },
     locale: "fr-FR",
     timezoneId: "Europe/Paris",
     // The engine injects its helpers and axe-core: the fronts' CSP would block them.

@@ -162,7 +162,17 @@ async function settleLayout(page) {
 }
 
 async function reflow320(page, { screenshot }) {
-  await page.setViewportSize({ width: 320, height: 256 });
+  // Back to the state's own size afterwards (a mobile state keeps its layout for the next checks).
+  const before = page.viewportSize() ?? DESKTOP;
+  // Same orientation as the state: a portrait (mobile) state turned landscape could close what it
+  // opened (a drawer, a menu) and the checks after this one would run on another rendering.
+  const portrait = before.height > before.width;
+  const marks = () => page.evaluate(() => ({
+    dialogs: [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog[open]')].filter((el) => window.__rgaa.visible(el)).length,
+    focus: document.activeElement?.outerHTML.slice(0, 200) ?? "",
+  }));
+  const reached = await marks();
+  await page.setViewportSize({ width: 320, height: portrait ? Math.round((320 * before.height) / before.width) : 256 });
   await settleLayout(page);
   if (screenshot) await screenshot("mobile-320");
   const failures = await page.evaluate(() => {
@@ -181,9 +191,16 @@ async function reflow320(page, { screenshot }) {
     const outermost = out.filter((el) => !out.some((o) => o !== el && o.contains(el)));
     return outermost.slice(0, 20).map((el) => window.__rgaa.failure(el, `overflows a 320 px viewport (horizontal scroll of ${document.documentElement.scrollWidth}px)`));
   });
-  await page.setViewportSize(DESKTOP);
+  await page.setViewportSize(before);
   await settleLayout(page);
-  return failures;
+  const after = await marks();
+  if (after.dialogs === reached.dialogs && after.focus === reached.focus) return failures;
+  // The page reacted to the resize: say so instead of letting the next checks run on a state
+  // that is no longer the reached one.
+  return {
+    failures,
+    review: [{ target: "html", html: "", message: `the 320 px reflow check changed the state (open dialogs ${reached.dialogs} -> ${after.dialogs}${after.focus === reached.focus ? "" : ", focus moved"}): the checks that follow ran on another rendering` }],
+  };
 }
 
 async function withStyle(page, css, check) {
