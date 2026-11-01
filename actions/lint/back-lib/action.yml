@@ -1,0 +1,17 @@
+name: "Lint (back-lib)"
+description: "The consumer's `cargo lint_check` alias on the Rust library (`lint` job of back-lib-cicd.yml)."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run lint check
+      shell: bash
+      run: cargo lint_check
