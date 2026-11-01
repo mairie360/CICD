@@ -10,6 +10,7 @@ name: Promote to Prod
 #   gdpr_inventory  database only: every column of the staging schema is in gdpr/inventory.yaml (MAIR-285)
 #   gdpr_marker   APIs and BFFs: no value of a marker user reaches the logs of the staging image (MAIR-290)
 #   gdpr_simulation  APIs and BFFs: GDPR usage simulation on the staging image + AI review (MAIR-497)
+#   rgaa          fronts only: RGAA check of the staging image on the states of rgaa.yaml (MAIR-317)
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package, release journal
 #
@@ -332,10 +333,51 @@ jobs:
           npm_scope: ${{ inputs.stack == 'bffs' && inputs.npm_scope || '' }}
           node_auth_token: ${{ inputs.stack == 'bffs' && secrets.GITHUB_TOKEN || '' }}
 
+  # [NOUVEAU] MAIR-317 (epic MAIR-492), fronts only: RGAA check of the staging image of the promoted
+  # commit. The front's accessibility stack (at that commit) runs `<image>@<staging digest>` and the
+  # runner plays the states of `rgaa.yaml` with the engine of `cicd-repo/tests/a11y`. The report
+  # (job summary + `rgaa-report` artifact, input of the n8n release chain) is read before the Prod
+  # approval; a failure skips the prod release. Unlike the GDPR gates, a front without `rgaa.yaml`
+  # fails: the scope is required from this major on.
+  rgaa:
+    name: RGAA check
+    if: inputs.stack == 'fronts'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run the RGAA check
+        timeout-minutes: 20
+        uses: ./cicd-repo/actions/promote/rgaa-front
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Outside the action: it must still run when the step timeout kills the stack.
+      - name: Dump container logs
+        if: failure()
+        uses: ./cicd-repo/actions/integration/container-logs
+
   promote:
     name: Release Prod
     # [CHANGEMENT] MAIR-285 / MAIR-290 / MAIR-497: also waits for the GDPR inventory, log marker and simulation gates.
-    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation]
+    # [CHANGEMENT] MAIR-317: and for the RGAA check of the fronts.
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa]
     if: >-
       always()
       && needs.resolve.result == 'success'
@@ -345,6 +387,7 @@ jobs:
       && (needs.gdpr_inventory.result == 'success' || needs.gdpr_inventory.result == 'skipped')
       && (needs.gdpr_marker.result == 'success' || needs.gdpr_marker.result == 'skipped')
       && (needs.gdpr_simulation.result == 'success' || needs.gdpr_simulation.result == 'skipped')
+      && (needs.rgaa.result == 'success' || needs.rgaa.result == 'skipped')
     runs-on: ubuntu-latest
     environment: Prod
     timeout-minutes: 30
@@ -439,7 +482,7 @@ jobs:
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
-    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, promote]
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa, promote]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
