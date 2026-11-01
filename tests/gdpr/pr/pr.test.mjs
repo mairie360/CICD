@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { reviewableDiff, reviewPullRequest, warning } from "./ai.mjs";
-import { main } from "./check.mjs";
+import { clientOptions, main } from "./check.mjs";
 import { parseAnswer, verdict } from "./checklist.mjs";
 
 // The section of the organization PR template (mairie360/.github), as an author fills it.
@@ -67,4 +67,19 @@ test("the CLI exits 1 on a missing answer and writes the summary", async () => {
   assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /Personal data: \*\*not answered\*\*/);
   writeFileSync(join(dir, "body.md"), body(true, false));
   assert.equal(await main([...args, join(dir, "report")], { env: { GDPR_AI: "off" }, log: () => {} }), 0);
+});
+
+test("the AI client is bounded under the job's 10 minutes", () => {
+  const options = clientOptions({ ANTHROPIC_API_KEY: "k", ANTHROPIC_WORKSPACE_ID: "ws" });
+  assert.ok(options.timeout > 0 && options.timeout * (options.maxRetries + 1) < 10 * 60_000);
+  assert.deepEqual(options.defaultHeaders, { "anthropic-workspace-id": "ws" });
+});
+
+test("without ANTHROPIC_API_KEY (fork pull request) the skipped review is annotated", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-pr-"));
+  for (const [name, text] of [["body.md", body(true, false)], ["changed.txt", "src/a.rs\n"], ["diff.patch", ""], ["inventory.yaml", "version: 1\n"]]) writeFileSync(join(dir, name), text);
+  const args = ["body.md", "changed.txt", "diff.patch", "inventory.yaml"].map((f) => join(dir, f));
+  const notes = [];
+  assert.equal(await main([...args, join(dir, "report")], { env: {}, log: () => {}, annotate: (l) => notes.push(l) }), 0);
+  assert.ok(notes.some((l) => l.startsWith("::notice") && /no ANTHROPIC_API_KEY/.test(l)));
 });

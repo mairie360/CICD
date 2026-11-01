@@ -35,7 +35,19 @@ export function summary({ parsed, result, ai, warn }) {
   return `${lines.join("\n")}\n`;
 }
 
-export async function main(argv, { env = process.env, client = null, log = console.log } = {}) {
+// The Anthropic client of the review: bounded so that a slow API cannot outlive the job's 10 min
+// (SDK default: 10 min per attempt). The review never decides the check.
+export function clientOptions(env = process.env) {
+  const workspace = (env.ANTHROPIC_WORKSPACE_ID ?? "").trim();
+  return {
+    apiKey: env.ANTHROPIC_API_KEY,
+    maxRetries: 2,
+    timeout: 120_000,
+    ...(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {}),
+  };
+}
+
+export async function main(argv, { env = process.env, client = null, log = console.log, annotate = console.log } = {}) {
   const [bodyFile, changedFile, diffFile, inventoryFile, reportDir, inventoryPath] = argv;
   if (!bodyFile || !changedFile || !diffFile || !inventoryFile || !reportDir) {
     console.error("usage: node pr/check.mjs <body> <changed files> <diff> <inventory.yaml> <report dir> [<inventory path in this repo>]");
@@ -56,9 +68,8 @@ export async function main(argv, { env = process.env, client = null, log = conso
   let warn = null;
   if (settings.enabled) {
     const cache = loadCache(settings.cache);
-    const workspace = (env.ANTHROPIC_WORKSPACE_ID ?? "").trim();
     const out = await reviewPullRequest({
-      client: client ?? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 3, ...(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {}) }),
+      client: client ?? new Anthropic(clientOptions(env)),
       model: settings.model,
       inventoryText: readFileSync(inventoryFile, "utf8"),
       diff: readFileSync(diffFile, "utf8"),
@@ -68,14 +79,17 @@ export async function main(argv, { env = process.env, client = null, log = conso
     Object.assign(ai, out);
     saveCache(settings.cache, cache);
     warn = warning(parsed.answer, ai.review, { inventoryChanged: Boolean(inventoryPath) && changedFiles.includes(inventoryPath) });
+  } else if (!env.ANTHROPIC_API_KEY) {
+    // A fork pull request gets no secrets: say so where the author looks, not only in the summary.
+    annotate("::notice title=GDPR checklist::AI review skipped: no ANTHROPIC_API_KEY (pull requests from a fork get no secrets). The checklist itself still applies.");
   }
 
   mkdirSync(reportDir, { recursive: true });
   const text = summary({ parsed, result, ai, warn });
   writeFileSync(join(reportDir, "summary.md"), text);
   writeFileSync(join(reportDir, "report.json"), `${JSON.stringify({ answer: parsed.answer, inventory: parsed.inventory, ok: result.ok, reasons: result.reasons, ai: { model: ai.model, enabled: ai.enabled, cached: ai.cached, review: ai.review, error: ai.error }, warning: warn }, null, 2)}\n`);
-  if (warn) console.log(`::warning title=GDPR checklist::${warn}`);
-  for (const reason of result.reasons) console.log(`::error title=GDPR checklist::${reason}`);
+  if (warn) annotate(`::warning title=GDPR checklist::${warn}`);
+  for (const reason of result.reasons) annotate(`::error title=GDPR checklist::${reason}`);
   log(text);
   return result.ok ? 0 : 1;
 }
