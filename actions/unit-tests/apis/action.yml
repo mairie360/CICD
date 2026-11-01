@@ -1,0 +1,44 @@
+name: "Unit tests (APIs)"
+description: >-
+  Unit tests and coverage of a Rust API through the consumer's `cargo cov` alias, then the Codecov
+  upload on main and on PRs to main (`unit_test` job of APIs_cicd.yml).
+
+inputs:
+  codecov_token:
+    description: "Codecov upload token (the caller passes secrets.CODECOV_TOKEN)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    # [CHANGEMENT] Installation via taiki-e/install-action (plus rapide que `cargo install`),
+    # aligné sur back-lib-cicd.yml.
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
+
+    # [CHANGEMENT] Passe par l'alias cargo `cov` défini par le repo consommateur
+    # (aligné sur la convention `cargo lint_check`). L'alias doit exécuter les tests,
+    # appliquer le seuil de couverture et produire `codecov.json` pour l'upload ci-dessous.
+    - name: Run Rust Tests & Check Coverage
+      shell: bash
+      run: cargo cov
+
+    # [NOUVEAU] Upload de la couverture vers Codecov (copié de back-lib-cicd.yml),
+    # uniquement sur main ou sur une PR ciblant main.
+    - name: Envoyer à Codecov
+      if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+      uses: codecov/codecov-action@v7
+      with:
+        token: ${{ inputs.codecov_token }}
+        files: codecov.json
+        # [CHANGEMENT] MAIR-467: Codecov only reports coverage, so an outage on its side (expired
+        # certificate on 2026-10-05) must not fail the job and block the release.
+        fail_ci_if_error: false

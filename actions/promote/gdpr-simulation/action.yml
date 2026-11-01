@@ -1,0 +1,150 @@
+name: "GDPR simulation"
+description: >
+  GDPR usage simulation of an API or a BFF (MAIR-497, epic MAIR-284), on the image promoted to
+  staging, before the Prod approval. Runs the repo's `gdpr_simulation_test.sh` (test stack only:
+  GDPR_SIMULATION=test-stack is exported, the engine refuses anything else), which leaves the run
+  in `gdpr-simulation/` (personas, logs of every container, browser console and storage for the
+  fronts, database checks), then tests/gdpr/simulation/analyze.mjs: deterministic checks and the AI
+  review (Haiku 5.5 by default) of the log templates, console, storage and free-text columns.
+  A persona value found, or an unaccepted high risk, fails the step; accepted risks live in the
+  repo's `gdpr-accepted-risks.yaml`. Skipped with a warning while the repo has no
+  `gdpr-simulation.yaml`. The caller checks out the repo and `mairie360/CICD` into `cicd-repo/`.
+
+inputs:
+  image_ref:
+    description: "Image of the service under test (the one promoted to staging, by digest)"
+    required: true
+  github_token:
+    description: "Token that can pull the stack's images from GHCR"
+    required: true
+  npm_scope:
+    description: "BFFs: npm scope of the build .npmrc"
+    required: false
+    default: ""
+  node_auth_token:
+    description: "BFFs: GitHub Packages token for that .npmrc"
+    required: false
+    default: ""
+  ai_model:
+    description: "Claude model of the AI review"
+    required: false
+    default: "claude-haiku-5-5"
+  anthropic_api_key:
+    description: "Anthropic API key; without it there is no AI review (the deterministic checks still run)"
+    required: false
+    default: ""
+  anthropic_workspace_id:
+    description: "Anthropic workspace id, only for a key that is not scoped to a workspace"
+    required: false
+    default: ""
+  timeout_minutes:
+    description: "Bound of the script"
+    required: false
+    default: "20"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check the simulation files
+      id: present
+      shell: bash
+      run: |
+        if [ ! -f gdpr-simulation.yaml ]; then
+          echo "::warning::No gdpr-simulation.yaml in this repo, GDPR simulation skipped."
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ ! -f gdpr_simulation_test.sh ]; then
+          echo "::error file=gdpr-simulation.yaml::gdpr-simulation.yaml is declared but gdpr_simulation_test.sh is missing (see the CICD README, GDPR simulation)."
+          exit 1
+        fi
+        echo "present=true" >> "$GITHUB_OUTPUT"
+
+    - name: Log in to GHCR
+      if: steps.present.outputs.present == 'true'
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.github_token }}
+      run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    - name: Write the build .npmrc
+      if: steps.present.outputs.present == 'true' && inputs.npm_scope != ''
+      shell: bash
+      env:
+        NPM_SCOPE: ${{ inputs.npm_scope }}
+      run: |
+        set -euo pipefail
+        umask 077
+        printf '%s\n' \
+          "${NPM_SCOPE}:registry=https://npm.pkg.github.com" \
+          '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+          > .npmrc
+
+    - name: Run the simulation
+      if: steps.present.outputs.present == 'true'
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image_ref }}
+        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+        GDPR_SIMULATION: test-stack
+      run: |
+        export GDPR_UID="$(id -u)" GDPR_GID="$(id -g)"
+        timeout "$((TIMEOUT_MINUTES * 60))" ./gdpr_simulation_test.sh
+
+    - name: Setup Node
+      if: always() && steps.present.outputs.present == 'true'
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Restore the AI verdicts
+      if: always() && steps.present.outputs.present == 'true'
+      uses: actions/cache/restore@v6
+      with:
+        path: .gdpr-ai-cache
+        key: gdpr-simulation-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: gdpr-simulation-ai-${{ github.repository }}-
+
+    - name: Analyze the run
+      if: always() && steps.present.outputs.present == 'true'
+      shell: bash
+      env:
+        GDPR_SIMULATION_AI_MODEL: ${{ inputs.ai_model }}
+        GDPR_AI_CACHE: ${{ github.workspace }}/.gdpr-ai-cache/simulation.json
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        ANTHROPIC_WORKSPACE_ID: ${{ inputs.anthropic_workspace_id }}
+      run: |
+        set -uo pipefail
+        (cd cicd-repo/tests/gdpr && npm ci --no-audit --no-fund --silent) || exit 2
+        node cicd-repo/tests/gdpr/simulation/analyze.mjs gdpr-simulation gdpr-simulation/report gdpr-accepted-risks.yaml > /dev/null
+        code=$?
+        if [ -f gdpr-simulation/report/summary.md ]; then
+          cat gdpr-simulation/report/summary.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "No report: the run or its input is incomplete (see the step log)." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        exit "$code"
+
+    - name: Save the AI verdicts
+      if: always() && hashFiles('.gdpr-ai-cache/simulation.json') != ''
+      uses: actions/cache/save@v6
+      with:
+        path: .gdpr-ai-cache
+        key: gdpr-simulation-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+    # Only the masked report: the raw logs and the personas stay on the runner.
+    - name: Upload the simulation report
+      if: always() && steps.present.outputs.present == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: gdpr-simulation
+        path: |
+          gdpr-simulation/report/summary.md
+          gdpr-simulation/report/report.json
+        if-no-files-found: ignore
+
+    - name: Remove the build .npmrc
+      if: always() && inputs.npm_scope != ''
+      shell: bash
+      run: rm -f .npmrc
