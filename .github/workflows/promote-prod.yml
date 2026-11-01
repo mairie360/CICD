@@ -52,6 +52,11 @@ on:
         type: string
         default: "claude-haiku-5-5"
         description: "Claude model of the AI review of the GDPR simulation (MAIR-497); only used when ANTHROPIC_API_KEY is set"
+      rgaa_min_rate:
+        required: false
+        type: number
+        default: 60
+        description: "Fronts: minimum RGAA rate (percent) of the automatically decided criteria; below it the rgaa job fails and the front is not promoted (MAIR-319)"
       gdpr_ai_model:
         required: false
         type: string
@@ -367,6 +372,8 @@ jobs:
         with:
           image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # [NOUVEAU] MAIR-319
+          min_rate: ${{ inputs.rgaa_min_rate }}
 
       # Outside the action: it must still run when the step timeout kills the stack.
       - name: Dump container logs

@@ -10,14 +10,16 @@
 //   summary.md         appended to the job summary by the workflow
 //   states/<id>/       page.html (normalized), aria.yml, desktop.png, mobile-320.png, checks.json
 //   failures/<id>.png  states that could not be reached
-// Exit codes: 0 every state reached and checked, 1 a state failed or an element needs a criterion
-// rgaa.yaml does not declare, 2 invalid rgaa.yaml or engine error. Failing criteria do not fail
-// the run by themselves: the rate gate does (MAIR-319).
+// Exit codes: 0 every state reached and the rate gate passed, 1 a state failed or an element needs
+// a criterion rgaa.yaml does not declare, 2 invalid rgaa.yaml / RGAA_MIN_RATE or engine error,
+// 3 the CI rate is below RGAA_MIN_RATE (default 60 %, MAIR-319; see rate.mjs).
+export const EXIT = { ok: 0, failed: 1, invalid: 2, below_rate: 3 };
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { captureState } from "./capture.mjs";
 import { aggregate, loadCriteria } from "./criteria.mjs";
+import { computeRate, criterionStatus, minRate } from "./rate.mjs";
 import { playState } from "./states.mjs";
 import { loadScope } from "./validate.mjs";
 
@@ -54,8 +56,15 @@ const cell = (text) => String(text).replaceAll("|", "\\|").replaceAll("\n", " ")
 
 export function summarize(report) {
   const failed = report.states.filter((s) => !s.reached);
+  const { rate } = report;
+  const verdict =
+    rate.value === null
+      ? `no criterion decided automatically, nothing to gate (minimum ${rate.min} %)`
+      : `**${rate.value} %** (${rate.validated} validated / ${rate.validated + rate.invalidated} decided), minimum ${rate.min} %: ${rate.passed ? "passed" : "**below the minimum**"}`;
   const lines = [
     "## RGAA accessibility",
+    "",
+    `CI rate ${verdict}. ${rate.to_review} criteria go to the RGAA review.`,
     "",
     `Target \`${report.target}\`: ${report.states.length - failed.length}/${report.states.length} state(s) reached, ` +
       `${report.criteria.length} applicable criteria.`,
@@ -72,9 +81,10 @@ export function summarize(report) {
     lines.push("", "### Undeclared criteria", "", "| Criterion | State | Element | Problem |", "| --- | --- | --- | --- |");
     for (const u of report.undeclared) lines.push(`| ${u.criterion} | \`${u.state}\` | \`${cell(u.target)}\` | ${cell(u.message)} |`);
   }
-  lines.push("", "### Criteria", "", "| Criterion | Level | Automated coverage | Failures | To review |", "| --- | --- | --- | --- | --- |");
+  lines.push("", "### Criteria", "", "| Criterion | Status | Level | Automated coverage | Failures | To review |", "| --- | --- | --- | --- | --- | --- |");
   for (const c of report.criteria) {
-    lines.push(`| ${c.id} | ${c.level} | ${c.coverage} | ${c.failures.length || ""} | ${c.review.length || ""} |`);
+    const status = c.status === "invalidated" ? "**invalidated**" : c.status.replace("_", " ");
+    lines.push(`| ${c.id} | ${status} | ${c.level} | ${c.coverage} | ${c.failures.length || ""} | ${c.review.length || ""} |`);
   }
   const failing = report.criteria.filter((c) => c.failures.length > 0);
   if (failing.length > 0) {
@@ -92,14 +102,21 @@ export function summarize(report) {
 async function main([scopeFile, reportDir]) {
   if (!scopeFile || !reportDir) {
     console.error("usage: node run.mjs <rgaa.yaml> <report dir>");
-    return 2;
+    return EXIT.invalid;
   }
   let scope;
+  let min;
   try {
     scope = loadScope(scopeFile);
   } catch (error) {
     for (const detail of error.details ?? [error.message]) console.log(`::error file=rgaa.yaml::${detail}`);
-    return 2;
+    return EXIT.invalid;
+  }
+  try {
+    min = minRate();
+  } catch (error) {
+    console.log(`::error title=RGAA::${error.message}`);
+    return EXIT.invalid;
   }
   let concurrency;
   try {
@@ -145,17 +162,26 @@ async function main([scopeFile, reportDir]) {
     await browser.close();
   }
 
+  const results = aggregate(scope, criteria, states).map((c) => ({ ...c, status: criterionStatus(c) }));
   const report = {
     version: REPORT_VERSION,
     target: scope.target,
-    criteria: aggregate(scope, criteria, states),
+    rate: computeRate(results, min),
+    criteria: results,
     states: states.map(({ checks, ...rest }) => rest),
     undeclared,
   };
   writeFileSync(join(reportDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
   writeFileSync(join(reportDir, "summary.md"), summarize(report));
   for (const u of undeclared) console.log(`::error title=RGAA::${u.state}: ${u.message} (${u.target})`);
-  return states.every((s) => s.reached) && undeclared.length === 0 ? 0 : 1;
+  const { rate } = report;
+  console.log(`CI rate: ${rate.value === null ? "nothing decided" : `${rate.value} %`} (minimum ${rate.min} %)`);
+  if (!states.every((s) => s.reached) || undeclared.length > 0) return EXIT.failed;
+  if (!rate.passed) {
+    console.log(`::error title=RGAA::CI rate ${rate.value} % is below the minimum of ${rate.min} %: ${rate.invalidated} criteria invalidated, see the job summary`);
+    return EXIT.below_rate;
+  }
+  return EXIT.ok;
 }
 
 if (process.argv[1]?.endsWith("run.mjs")) {

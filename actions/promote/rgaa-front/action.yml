@@ -4,8 +4,8 @@ description: >
   (`stack: fronts`) on `<image>@<staging digest>` of the promoted commit: starts the front's
   `accessibility_test.sh` / `docker-compose-accessibility.yml` stack, whose `a11y` runner plays the
   states of `rgaa.yaml` with the engine of `cicd-repo/tests/a11y` and writes `rgaa-report/` (job
-  summary + `rgaa-report` artifact). Fails when the scope files are missing or a state cannot be
-  reached. The caller checks out the front at the promoted commit and the full `mairie360/CICD`
+  summary + `rgaa-report` artifact). Fails when the scope files are missing, a state cannot be
+  reached, a criterion is undeclared or the rate is below `min_rate`. The caller checks out the front at the promoted commit and the full `mairie360/CICD`
   into `cicd-repo/` first.
 
 inputs:
@@ -15,6 +15,10 @@ inputs:
   github_token:
     description: "Token that can pull the stack's images from GHCR (and the npm packages of a local build)"
     required: true
+  min_rate:
+    description: "Minimum rate (percent) of the automatically decided criteria (MAIR-319)"
+    required: false
+    default: "60"
   timeout_minutes:
     description: "Bound of the stack run (MAIR-468)"
     required: false
@@ -49,6 +53,8 @@ runs:
         TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
         NODE_AUTH_TOKEN: ${{ inputs.github_token }}
         IMAGE_REF: ${{ inputs.image_ref }}
+        # The runner service forwards it to the engine (exit 3 below it, MAIR-319).
+        RGAA_MIN_RATE: ${{ inputs.min_rate }}
 
     - name: RGAA job summary
       if: always()

@@ -187,6 +187,8 @@ test("run.mjs writes the report and fails on undeclared criteria", { skip: !e2e 
   assert.deepEqual(report.criteria.map((c) => c.id), ["1.1", "8.3"]);
   assert.deepEqual(report.undeclared.map((u) => u.criterion).sort(), ["11.1", "6.2"]);
   assert.match(report.states[0].fingerprint, /^[0-9a-f]{64}$/);
+  // Both declared criteria have full coverage and pass on /good.
+  assert.deepEqual(report.rate, { validated: 2, invalidated: 0, to_review: 0, value: 100, min: 60, passed: true });
   assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /### Undeclared criteria/);
 });
 
@@ -214,4 +216,35 @@ test("a modal that lets the focus out fails 7.1, not as a keyboard trap", { skip
   assert.deepEqual(ids("12.9"), [], "leaving the modal is not a keyboard trap");
   assert.deepEqual(ids("5.4"), [], "the hidden table must be ignored");
   assert.ok(ids("13.9").includes("scenario:orientation"), "portrait lock should fail 13.9");
+});
+
+async function runEngine(scopeYaml, env = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "rgaa-run-"));
+  writeFileSync(join(dir, "rgaa.yaml"), scopeYaml);
+  let code = 0;
+  try {
+    await promisify(execFile)("node", [new URL("./run.mjs", import.meta.url).pathname, join(dir, "rgaa.yaml"), join(dir, "report")], {
+      env: { ...process.env, ...env },
+    });
+  } catch (error) {
+    code = error.code;
+  }
+  const reportFile = join(dir, "report", "report.json");
+  return { code, report: JSON.parse(readFileSync(reportFile, "utf8")) };
+}
+
+test("the rate gate fails the run below the minimum", { skip: !e2e }, async () => {
+  // On /bad: 1.1 fails (image without alt); 6.2, 8.3 and 8.5 pass with full coverage; 5.6 has a
+  // partial coverage and goes to review. CI rate = 3 / 4 = 75 %.
+  const scopeYaml = `version: 1\ntarget: ${target()}\ncriteria: ["1.1", "5.6", "6.2", "8.3", "8.5"]\nstates:\n  - id: bad\n    route: /bad\n`;
+  const passing = await runEngine(scopeYaml);
+  assert.equal(passing.code, 0);
+  assert.deepEqual(passing.report.rate, { validated: 3, invalidated: 1, to_review: 1, value: 75, min: 60, passed: true });
+  assert.deepEqual(
+    Object.fromEntries(passing.report.criteria.map((c) => [c.id, c.status])),
+    { "1.1": "invalidated", "5.6": "to_review", "6.2": "validated", "8.3": "validated", "8.5": "validated" },
+  );
+  const failing = await runEngine(scopeYaml, { RGAA_MIN_RATE: "80" });
+  assert.equal(failing.code, 3);
+  assert.equal(failing.report.rate.passed, false);
 });
