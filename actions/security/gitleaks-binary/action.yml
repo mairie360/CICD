@@ -16,6 +16,7 @@ runs:
         PUSH_BEFORE: ${{ github.event.before }}
         DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         LOG_OPTS_SCRIPT: ${{ github.action_path }}/../gitleaks/log-opts.sh
+        POLICY_SCRIPT: ${{ github.action_path }}/../gitleaks/policy.sh
         GOMAXPROCS: '1'
       run: |
         set -euo pipefail
@@ -36,8 +37,21 @@ runs:
         echo "Scanning commits: $log_opts"
         exit_code=1
         [ "$FAIL_ON_FINDINGS" = "true" ] || exit_code=0
+        # MAIR-677: config and ignore list from the base / default branch, scan of a clone without a
+        # working tree (see policy.sh).
+        cd "$GITHUB_WORKSPACE"
+        policy_base=""
+        if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
+          policy_base="$PR_BASE_SHA"
+        fi
+        trusted=$("$POLICY_SCRIPT" "$policy_base" "$DEFAULT_BRANCH" "$frontend_gitleaks_directory/policy")
+        echo "Gitleaks policy from: ${trusted:-the built-in rules}"
+        config_args=()
+        [ -f "$frontend_gitleaks_directory/policy/gitleaks.toml" ] && config_args=(--config "$frontend_gitleaks_directory/policy/gitleaks.toml")
+        git clone -q --mirror "$GITHUB_WORKSPACE" "$frontend_gitleaks_directory/repo.git"
         set +e
-        "$frontend_gitleaks_directory/gitleaks" git "$GITHUB_WORKSPACE" \
+        "$frontend_gitleaks_directory/gitleaks" git "$frontend_gitleaks_directory/repo.git" \
+          "${config_args[@]}" --gitleaks-ignore-path "$frontend_gitleaks_directory/policy/.gitleaksignore" \
           --log-opts="$log_opts" --redact --ignore-gitleaks-allow --no-banner --exit-code "$exit_code"
         code=$?
         set -e
