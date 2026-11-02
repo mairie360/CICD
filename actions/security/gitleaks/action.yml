@@ -6,9 +6,11 @@ description: >
   then add its fingerprint to a `.gitleaksignore` at the root of the calling repo. When the base
   is unknown (new branch, force-push), every commit not on the default branch is scanned, or the
   whole history if there is none (`log-opts.sh`, MAIR-677). Inline `gitleaks:allow` comments are
-  ignored: only `.gitleaksignore` and the config's allowlists can silence a finding. Without a
-  `.gitleaks.toml` in the calling repo, the action's `gitleaks.toml` is used (built-in rules plus
-  allowlists for known test values, e.g. the test `jwt_secret` of `rgaa.yaml`).
+  ignored: only `.gitleaksignore` and the config's allowlists can silence a finding, and both are
+  read from the pull request's base or the default branch, never from the scanned commits
+  (`policy.sh`, MAIR-677): a change to them applies once merged. Without a `.gitleaks.toml` there,
+  the action's `gitleaks.toml` is used (built-in rules plus allowlists for known test values, e.g.
+  the test `jwt_secret` of `rgaa.yaml`).
   The caller must check the repository out with `fetch-depth: 0`.
 
 inputs:
@@ -34,6 +36,7 @@ runs:
         PUSH_BEFORE: ${{ github.event.before }}
         DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         LOG_OPTS_SCRIPT: ${{ github.action_path }}/log-opts.sh
+        POLICY_SCRIPT: ${{ github.action_path }}/policy.sh
         DEFAULT_CONFIG: ${{ github.action_path }}/gitleaks.toml
       run: |
         set -uo pipefail
@@ -49,25 +52,35 @@ runs:
 
         exit_code=1
         [ "$FAIL_ON_FINDINGS" = "true" ] || exit_code=0
-        # [NOUVEAU] MAIR-316: the repo's own .gitleaks.toml wins (Gitleaks loads it by itself);
-        # otherwise the action's default config, mounted read-only outside the repo.
-        mount_args=()
-        config_args=()
-        if [ -f "$GITHUB_WORKSPACE/.gitleaks.toml" ]; then
-          echo "Using the repository's .gitleaks.toml"
-        else
-          mount_args=(-v "$DEFAULT_CONFIG:/gitleaks/default.toml:ro")
-          config_args=(--config /gitleaks/default.toml)
+        # MAIR-677: config and ignore list from the base / default branch, never from the
+        # scanned commits, and a scan of a clone without a working tree, where Gitleaks finds
+        # no `.gitleaksignore` of its own to load.
+        cd "$GITHUB_WORKSPACE"
+        # A push to the default branch moves origin/<default> onto the scanned commits: take the
+        # commit before the push there, and no fallback.
+        policy_base=""
+        policy_branch="$DEFAULT_BRANCH"
+        if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
+          policy_base="$PR_BASE_SHA"
+        elif [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
+          policy_base="$PUSH_BEFORE"
+          policy_branch=""
         fi
+        policy_dir=$(mktemp -d "$RUNNER_TEMP/gitleaks-policy.XXXXXX")
+        scan_dir=$(mktemp -d "$RUNNER_TEMP/gitleaks-scan.XXXXXX")
+        trusted=$("$POLICY_SCRIPT" "$policy_base" "$policy_branch" "$policy_dir" "$DEFAULT_CONFIG") || exit 2
+        echo "Gitleaks policy from: ${trusted:-the action defaults}"
+        git clone -q --mirror "$GITHUB_WORKSPACE" "$scan_dir/repo.git" || exit 2
         # Same uid as the checkout, otherwise git refuses the repo ("dubious ownership").
         docker run --rm \
           --user "$(id -u):$(id -g)" \
-          -v "$GITHUB_WORKSPACE:/repo" \
-          "${mount_args[@]}" \
+          -v "$scan_dir/repo.git:/repo:ro" \
+          -v "$policy_dir:/policy:ro" \
           -w /repo \
           "$GITLEAKS_IMAGE" \
           git /repo \
-            "${config_args[@]}" \
+            --config /policy/gitleaks.toml \
+            --gitleaks-ignore-path /policy/.gitleaksignore \
             --log-opts="$log_opts" \
             --redact \
             --ignore-gitleaks-allow \
@@ -77,4 +90,5 @@ runs:
         if [ "$code" -ne 0 ]; then
           echo "::error title=Gitleaks::secret(s) found in the new commits (or Gitleaks failed, exit code $code): rotate them first, see the log above"
         fi
+        rm -rf "$policy_dir" "$scan_dir"
         exit "$code"

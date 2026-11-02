@@ -122,6 +122,13 @@ added in an earlier commit of the push through. Inline `gitleaks:allow` comments
 history therefore does not fail every later build: rotate it first, then add its fingerprint to a
 `.gitleaksignore` at the root of the repo. The job checks the repo out with `fetch-depth: 0`.
 
+`.gitleaksignore` and `.gitleaks.toml` are read from the pull request's base, or from the default
+branch on a push to another branch (the commit before the push on a push to the default branch),
+never from the scanned commits (`actions/security/gitleaks/policy.sh`, MAIR-677),
+and the scan runs on a `git clone --mirror` of the checkout, where Gitleaks finds no working-tree
+file to load: a pull request cannot allowlist its own secret. A change to either file applies once
+it is merged.
+
 Without a `.gitleaks.toml` in the repo, Gitleaks runs with `actions/security/gitleaks/gitleaks.toml`:
 the built-in rules plus allowlists for known test values. Today it only allows the
 `jwt_secret:` line of `rgaa.yaml` (the test-stack secret of the RGAA engine); any other secret
