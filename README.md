@@ -114,7 +114,11 @@ version tag and the digest together. The digest is the one of the multi-arch tag
 The `security_sast` job of every workflow also runs Gitleaks (pinned
 `zricethezav/gitleaks:<version>@sha256:<digest>` image, not the `gitleaks-action`, which needs a
 paid license on organizations). It only scans the commits the run adds: `base..head` of a pull
-request, `before..after` of a push, the last commit for a new branch. A secret already in the
+request, `before..after` of a push. When that base is unknown (new branch, force-push, history
+rewrite), it scans every commit not on the default branch, or the whole history when there is
+none (`actions/security/gitleaks/log-opts.sh`, MAIR-677): never the tip alone, which let a secret
+added in an earlier commit of the push through. Inline `gitleaks:allow` comments are ignored
+(`--ignore-gitleaks-allow`). A secret already in the
 history therefore does not fail every later build: rotate it first, then add its fingerprint to a
 `.gitleaksignore` at the root of the repo. The job checks the repo out with `fetch-depth: 0`.
 

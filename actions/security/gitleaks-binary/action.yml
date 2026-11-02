@@ -14,6 +14,8 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PUSH_BEFORE: ${{ github.event.before }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        LOG_OPTS_SCRIPT: ${{ github.action_path }}/../gitleaks/log-opts.sh
         GOMAXPROCS: '1'
       run: |
         set -euo pipefail
@@ -24,23 +26,19 @@ runs:
         printf '%s  %s\n' '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb' "$frontend_gitleaks_directory/gitleaks.tar.gz" | sha256sum --check --strict
         tar -xzf "$frontend_gitleaks_directory/gitleaks.tar.gz" -C "$frontend_gitleaks_directory" gitleaks
 
-        zero=0000000000000000000000000000000000000000
         if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
           base="$PR_BASE_SHA"
         else
           base="$PUSH_BEFORE"
         fi
-        if [ -n "$base" ] && [ "$base" != "$zero" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-          log_opts="$base..$GITHUB_SHA"
-        else
-          log_opts="-1 $GITHUB_SHA"
-        fi
+        # MAIR-677: never the tip alone when the base is unknown (see log-opts.sh).
+        log_opts=$("$LOG_OPTS_SCRIPT" "$base" "$GITHUB_SHA" "$DEFAULT_BRANCH")
         echo "Scanning commits: $log_opts"
         exit_code=1
         [ "$FAIL_ON_FINDINGS" = "true" ] || exit_code=0
         set +e
         "$frontend_gitleaks_directory/gitleaks" git "$GITHUB_WORKSPACE" \
-          --log-opts="$log_opts" --redact --no-banner --exit-code "$exit_code"
+          --log-opts="$log_opts" --redact --ignore-gitleaks-allow --no-banner --exit-code "$exit_code"
         code=$?
         set -e
         if [ "$code" -ne 0 ]; then

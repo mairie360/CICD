@@ -3,7 +3,10 @@ description: >
   Scans the commits added by the current push or pull request for leaked secrets with a pinned
   Gitleaks image (the gitleaks-action needs a paid license on organizations). Only the new commits
   are scanned, so a secret already in the history does not fail every later build: rotate it,
-  then add its fingerprint to a `.gitleaksignore` at the root of the calling repo. Without a
+  then add its fingerprint to a `.gitleaksignore` at the root of the calling repo. When the base
+  is unknown (new branch, force-push), every commit not on the default branch is scanned, or the
+  whole history if there is none (`log-opts.sh`, MAIR-677). Inline `gitleaks:allow` comments are
+  ignored: only `.gitleaksignore` and the config's allowlists can silence a finding. Without a
   `.gitleaks.toml` in the calling repo, the action's `gitleaks.toml` is used (built-in rules plus
   allowlists for known test values, e.g. the test `jwt_secret` of `rgaa.yaml`).
   The caller must check the repository out with `fetch-depth: 0`.
@@ -29,21 +32,19 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PUSH_BEFORE: ${{ github.event.before }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        LOG_OPTS_SCRIPT: ${{ github.action_path }}/log-opts.sh
         DEFAULT_CONFIG: ${{ github.action_path }}/gitleaks.toml
       run: |
         set -uo pipefail
-        zero=0000000000000000000000000000000000000000
         if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
           base="$PR_BASE_SHA"
         else
           base="$PUSH_BEFORE"
         fi
-        # New branch, force push or unknown event: fall back to the last commit only.
-        if [ -n "$base" ] && [ "$base" != "$zero" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-          log_opts="$base..$GITHUB_SHA"
-        else
-          log_opts="-1 $GITHUB_SHA"
-        fi
+        # MAIR-677: new branch, force push or unknown base: every commit not on the
+        # default branch, or the whole history, never the tip alone.
+        log_opts=$("$LOG_OPTS_SCRIPT" "$base" "$GITHUB_SHA" "$DEFAULT_BRANCH") || exit 2
         echo "Scanning commits: $log_opts"
 
         exit_code=1
@@ -69,6 +70,7 @@ runs:
             "${config_args[@]}" \
             --log-opts="$log_opts" \
             --redact \
+            --ignore-gitleaks-allow \
             --no-banner \
             --exit-code "$exit_code"
         code=$?
