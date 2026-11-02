@@ -56,14 +56,19 @@ runs:
         # scanned commits, and a scan of a clone without a working tree, where Gitleaks finds
         # no `.gitleaksignore` of its own to load.
         cd "$GITHUB_WORKSPACE"
+        # A push to the default branch moves origin/<default> onto the scanned commits: take the
+        # commit before the push there, and no fallback.
+        policy_base=""
+        policy_branch="$DEFAULT_BRANCH"
         if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
           policy_base="$PR_BASE_SHA"
-        else
-          policy_base=""
+        elif [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
+          policy_base="$PUSH_BEFORE"
+          policy_branch=""
         fi
         policy_dir=$(mktemp -d "$RUNNER_TEMP/gitleaks-policy.XXXXXX")
         scan_dir=$(mktemp -d "$RUNNER_TEMP/gitleaks-scan.XXXXXX")
-        trusted=$("$POLICY_SCRIPT" "$policy_base" "$DEFAULT_BRANCH" "$policy_dir" "$DEFAULT_CONFIG") || exit 2
+        trusted=$("$POLICY_SCRIPT" "$policy_base" "$policy_branch" "$policy_dir" "$DEFAULT_CONFIG") || exit 2
         echo "Gitleaks policy from: ${trusted:-the action defaults}"
         git clone -q --mirror "$GITHUB_WORKSPACE" "$scan_dir/repo.git" || exit 2
         # Same uid as the checkout, otherwise git refuses the repo ("dubious ownership").

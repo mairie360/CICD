@@ -2,13 +2,16 @@
 # Writes the Gitleaks policy of a scan from a TRUSTED commit (MAIR-677), shared
 # by actions/security/gitleaks and actions/security/gitleaks-binary.
 #
-#   policy.sh <pr-base> <default-branch> <out-dir> [default-config]
+#   policy.sh <base> <default-branch> <out-dir> [default-config]
 #
 # A scanned commit must not choose the rules it is scanned with: a pull
 # request adding a `.gitleaksignore` entry or an allowlist in `.gitleaks.toml`
 # would otherwise silence its own secret. The policy is read from:
-#   - <pr-base>, the base commit of a pull request (empty on a push);
-#   - otherwise `origin/<default-branch>`;
+#   - <pr-base>: the base commit of a pull request, or the commit before a
+#     push to the default branch (that push moves origin/<default> onto the
+#     scanned commits, so the callers pass an empty <default-branch> then);
+#   - otherwise `origin/<default-branch>` (pushes to other branches: their
+#     own commits are not on it);
 #   - otherwise nothing: the default config, an empty ignore list.
 # Writes <out-dir>/.gitleaksignore (always, maybe empty) and
 # <out-dir>/gitleaks.toml (the trusted `.gitleaks.toml`, else a copy of

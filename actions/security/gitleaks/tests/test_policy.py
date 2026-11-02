@@ -95,6 +95,30 @@ class PolicySourceTest(unittest.TestCase):
         self.assertEqual(trusted, self.repo.main)
         self.assertEqual(files[".gitleaksignore"], "base-fingerprint\n")
 
+    def test_push_to_the_default_branch_reads_the_commit_before_it(self):
+        # Pushed straight to main: origin/main is the scanned commit, so the
+        # callers pass `before` and no fallback branch.
+        head = git(self.repo.path, "rev-parse", "HEAD")
+        git(self.repo.path, "update-ref", "refs/remotes/origin/main", head)
+        out = os.path.join(self.repo.tmp.name, "policy-main")
+        trusted = subprocess.run([POLICY, self.repo.main, "", out, DEFAULT_CONFIG],
+                                 cwd=self.repo.path, check=True, capture_output=True,
+                                 text=True).stdout.strip()
+        self.assertEqual(trusted, self.repo.main)
+        with open(os.path.join(out, ".gitleaksignore")) as f:
+            self.assertEqual(f.read(), "base-fingerprint\n")
+
+    def test_new_default_branch_without_before_gets_the_defaults(self):
+        head = git(self.repo.path, "rev-parse", "HEAD")
+        git(self.repo.path, "update-ref", "refs/remotes/origin/main", head)
+        out = os.path.join(self.repo.tmp.name, "policy-new")
+        trusted = subprocess.run([POLICY, "0" * 40, "", out, DEFAULT_CONFIG],
+                                 cwd=self.repo.path, check=True, capture_output=True,
+                                 text=True).stdout.strip()
+        self.assertEqual(trusted, "")
+        with open(os.path.join(out, ".gitleaksignore")) as f:
+            self.assertEqual(f.read(), "")
+
     def test_unknown_base_falls_back_to_the_default_branch(self):
         trusted, _, _ = self.repo.policy("0" * 40)
         self.assertEqual(trusted, self.repo.main)
@@ -110,6 +134,7 @@ class ActionWiringTest(unittest.TestCase):
                 self.assertIn("git clone -q --mirror", text)
                 self.assertIn("--gitleaks-ignore-path", text)
                 self.assertNotIn('-v "$GITHUB_WORKSPACE:/repo"', text)
+                self.assertIn('elif [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]', text)
 
 
 class PolicyDefaultsTest(unittest.TestCase):

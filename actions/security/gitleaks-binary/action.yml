@@ -41,10 +41,15 @@ runs:
         # working tree (see policy.sh).
         cd "$GITHUB_WORKSPACE"
         policy_base=""
+        policy_branch="$DEFAULT_BRANCH"
         if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
           policy_base="$PR_BASE_SHA"
+        elif [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
+          # The push moved origin/<default> onto the scanned commits: the commit before it.
+          policy_base="$PUSH_BEFORE"
+          policy_branch=""
         fi
-        trusted=$("$POLICY_SCRIPT" "$policy_base" "$DEFAULT_BRANCH" "$frontend_gitleaks_directory/policy")
+        trusted=$("$POLICY_SCRIPT" "$policy_base" "$policy_branch" "$frontend_gitleaks_directory/policy")
         echo "Gitleaks policy from: ${trusted:-the built-in rules}"
         config_args=()
         [ -f "$frontend_gitleaks_directory/policy/gitleaks.toml" ] && config_args=(--config "$frontend_gitleaks_directory/policy/gitleaks.toml")

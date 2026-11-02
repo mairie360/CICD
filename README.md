@@ -123,7 +123,8 @@ history therefore does not fail every later build: rotate it first, then add its
 `.gitleaksignore` at the root of the repo. The job checks the repo out with `fetch-depth: 0`.
 
 `.gitleaksignore` and `.gitleaks.toml` are read from the pull request's base, or from the default
-branch on a push, never from the scanned commits (`actions/security/gitleaks/policy.sh`, MAIR-677),
+branch on a push to another branch (the commit before the push on a push to the default branch),
+never from the scanned commits (`actions/security/gitleaks/policy.sh`, MAIR-677),
 and the scan runs on a `git clone --mirror` of the checkout, where Gitleaks finds no working-tree
 file to load: a pull request cannot allowlist its own secret. A change to either file applies once
 it is merged.
