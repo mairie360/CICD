@@ -24,6 +24,10 @@ def image():
         return re.search(r'default: "(zricethezav/gitleaks:[^"]+)"', f.read()).group(1)
 
 
+# Gitleaks also exits 1 on a scan error: a distinct code proves a finding.
+LEAK_EXIT = 42
+
+
 class ActionFlagsTest(unittest.TestCase):
     def test_both_actions_ignore_inline_allow_and_share_the_range(self):
         for name, path in ACTIONS.items():
@@ -50,14 +54,14 @@ class InlineAllowTest(unittest.TestCase):
             return subprocess.run(
                 ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
                  "-v", f"{repo}:/repo", "-w", "/repo", image(),
-                 "git", "/repo", "--redact", "--no-banner", "--exit-code", "1", *flags],
+                 "git", "/repo", "--redact", "--no-banner", "--exit-code", str(LEAK_EXIT), *flags],
                 capture_output=True).returncode
 
     def test_inline_allow_is_honoured_without_the_flag(self):
         self.assertEqual(self.scan(), 0)
 
     def test_inline_allow_is_ignored_with_the_flag(self):
-        self.assertEqual(self.scan("--ignore-gitleaks-allow"), 1)
+        self.assertEqual(self.scan("--ignore-gitleaks-allow"), LEAK_EXIT)
 
 
 if __name__ == "__main__":
