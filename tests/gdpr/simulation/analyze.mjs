@@ -3,8 +3,9 @@
 // Usage: node simulation/analyze.mjs <run dir> <report dir> [<gdpr-accepted-risks.yaml>]
 //   <run dir>/personas.json, sensitive.json   simulate.mjs
 //   <run dir>/containers.log                  `docker compose logs --no-color` of the whole stack
-//   <run dir>/browser/console.json            [{ state, type, text }]   (fronts, RGAA engine)
+//   <run dir>/browser/console.json            [{ state, type, text }]   (fronts, simulate.mjs browser section)
 //   <run dir>/browser/storage.json            [{ state, area, key, value }]
+//   <run dir>/browser/privacy.json            evaluatePrivacy of tests/gdpr/privacy (report-only)
 //   <run dir>/db/{erasure,retention,content}.sql.json   psql output of sql.mjs's queries
 //   <run dir>/traces.jsonl                    OpenTelemetry collector `file` exporter (MAIR-501)
 //   <run dir>/usage.json                      usage ledger the instance would export (MAIR-501)
@@ -28,6 +29,7 @@ import { needles } from "../marker/marker.mjs";
 import { mask, parseLogs, serviceMatches } from "../marker/scan.mjs";
 import { parseAccepted } from "./accepted.mjs";
 import { aiSettings, review } from "./ai.mjs";
+import { summarizePrivacy } from "../privacy/privacy.mjs";
 import { checkRedis, parseKeys } from "./redis.mjs";
 import { fingerprintOf, groupTemplates, templateOf } from "./templates.mjs";
 import { forbiddenAttributes, forbiddenLedgerKeys, parseTraces, spanText } from "./traces.mjs";
@@ -40,6 +42,16 @@ function allNeedles(personas, sensitive) {
   for (const p of personas) for (const n of needles(p.values)) list.push({ ...n, persona: p.id });
   for (const s of sensitive) for (const n of needles({}, s.sensitive)) list.push({ ...n, persona: s.persona });
   return list;
+}
+
+export function maskPrivacy(privacy, list) {
+  if (!privacy) return privacy;
+  return {
+    ...privacy,
+    third_party: (privacy.third_party ?? []).map((t) => ({ ...t, origin: mask(t.origin, list), example: mask(t.example, list) })),
+    // A cookie the front names after a persona value (an e-mail in the name) is masked too.
+    cookies: (privacy.cookies ?? []).map((c) => ({ ...c, name: mask(c.name, list) })),
+  };
 }
 
 function find(text, list) {
@@ -212,9 +224,13 @@ export async function main(argv, { env = process.env, client = null, log = conso
   }
   const result = analyze(run, { accepted, verdicts, enforceErasure });
   mkdirSync(reportDir, { recursive: true });
-  const text = summary(result, { ai, notChecked });
+  // Fronts (MAIR-497): requests, cookies and legal links of the pages the personas opened.
+  // Report-only (MAIR-292): they never change the exit code.
+  // The third-party examples are request URLs: a persona value in one is masked like in a log.
+  const privacy = maskPrivacy(readJson(join(runDir, "browser", "privacy.json")), allNeedles(run.personas, run.sensitive));
+  const text = summary(result, { ai, notChecked }) + (privacy ? `\n${summarizePrivacy(privacy)}` : "");
   writeFileSync(join(reportDir, "summary.md"), text);
-  writeFileSync(join(reportDir, "report.json"), `${JSON.stringify({ blocked: result.blocked, not_checked: notChecked, deterministic: result.deterministic, expected_failures: result.expected, findings: result.findings, ai: { model: ai.model, enabled: ai.enabled, asked: ai.asked, cached: ai.cached, error: ai.error } }, null, 2)}\n`);
+  writeFileSync(join(reportDir, "report.json"), `${JSON.stringify({ blocked: result.blocked, not_checked: notChecked, privacy, deterministic: result.deterministic, expected_failures: result.expected, findings: result.findings, ai: { model: ai.model, enabled: ai.enabled, asked: ai.asked, cached: ai.cached, error: ai.error } }, null, 2)}\n`);
   log(text);
   return result.blocked ? 1 : 0;
 }

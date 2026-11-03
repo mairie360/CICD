@@ -217,7 +217,10 @@ the inventory and `schema.sql`), `templates.mjs` (log templates and fingerprints
 by default, `effort: low` except for Haiku 4.5, cache by `model:fingerprint`), `accepted.mjs`
 (`gdpr-accepted-risks.yaml`), `analyze.mjs` (the gate: deterministic leak or unaccepted `high`
 blocks; erasure / retention are expected failures until MAIR-289, `GDPR_SIMULATION_ERASURE=enforce`).
-Action `actions/promote/gdpr-simulation`, job `gdpr_simulation` of `promote-prod.yml` (APIs / BFFs),
+`browse.mjs` (fronts: the `browser` section, pages opened per persona with `tests/gdpr/privacy`
+after its journey and before its `erase` steps, `browser/{console,storage,privacy}.json`; the
+privacy findings are appended to the summary, report-only; Playwright is imported only then).
+Action `actions/promote/gdpr-simulation`, job `gdpr_simulation` of `promote-prod.yml` (APIs / BFFs / fronts),
 between `version` and `promote`, on the staging digest of the promoted commit; skipped without
 `gdpr-simulation.yaml`.
 `traces.mjs` (MAIR-501): spans of the collector's `file` export (`traces.jsonl`) and the usage

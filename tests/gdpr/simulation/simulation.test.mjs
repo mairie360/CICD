@@ -183,6 +183,194 @@ test("every Redis key expires within its declared prefix", async () => {
   ]);
 });
 
+// Fronts (MAIR-497): the `browser` section is checked against the journey it follows.
+test("the browser section of a front is validated against the journey's env and captures", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-browser-"));
+  writeFileSync(join(dir, "journey.yaml"), `version: 1
+target: http://front:5001
+env: [ADMIN_JWT]
+steps:
+  - name: create
+    request: {method: POST, path: /api/projects, json: {title: "{{marker.last_name}}"}}
+    capture: {project_id: body.id}
+`);
+  const sim = (browser) => `version: 1\njourney: journey.yaml\nerased: 0\nbrowser:\n${browser}`;
+  const errorsOf = async (browser) => {
+    writeFileSync(join(dir, "sim.yaml"), sim(browser));
+    const lines = [];
+    const original = console.error;
+    console.error = (line) => lines.push(line);
+    try {
+      assert.equal(await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], { env: { GDPR_SIMULATION: "test-stack" }, fetchImpl: async () => new Response("{}"), log: () => {} }), 2);
+    } finally {
+      console.error = original;
+    }
+    return lines.join("\n");
+  };
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: []\n"), /`pages` must list at least one page/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: '/x/{{task_id}}'}]\n"), /unknown placeholder \{\{task_id\}\}/);
+  assert.match(await errorsOf("  target: http://front:5001\n  cookies: {accessToken: '{{env.OTHER}}'}\n  pages: [{name: p, path: /}]\n"), /cookie accessToken: unknown placeholder \{\{env.OTHER\}\}/);
+  assert.match(await errorsOf("  target: http://front:5001/app\n  pages: [{name: p, path: /}]\n"), /`target` must be the front's origin/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, wait: 3}]\n"), /unknown key `wait`/);
+  assert.match(await errorsOf("  target: http://front:5001\n  wait_until: idle\n  pages: [{name: p, path: /}]\n"), /`wait_until` must be one of networkidle, load, domcontentloaded/);
+  assert.match(await errorsOf("  target: http://front:5001?preview=1\n  pages: [{name: p, path: /}]\n"), /without path, query or fragment/);
+  assert.match(await errorsOf("  target: http://front:5001#top\n  pages: [{name: p, path: /}]\n"), /without path, query or fragment/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, expect: []}]\n"), /`expect` must list HTTP status codes \(100-599\)/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, expect: [999]}]\n"), /`expect` must list HTTP status codes \(100-599\)/);
+  writeFileSync(join(dir, "sim.yaml"), sim("  target: https://www.example.com\n  pages: [{name: p, path: /}]\n"));
+  assert.equal(await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], { env: { GDPR_SIMULATION: "test-stack" }, log: () => {} }), 3, "a browser target outside the stack is refused");
+});
+
+test("a front's pages are opened per persona after its journey and before its erasure", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-front-"));
+  writeFileSync(join(dir, "journey.yaml"), `version: 1
+target: http://front:5001
+env: [ADMIN_JWT]
+steps:
+  - name: create
+    request: {method: POST, path: /api/projects, headers: {Cookie: "accessToken={{env.ADMIN_JWT}}"}, json: {title: "{{marker.last_name}}"}}
+    capture: {project_id: body.id}
+`);
+  writeFileSync(join(dir, "sim.yaml"), `version: 1
+journey: journey.yaml
+personas: 2
+erased: 1
+erase:
+  - name: erase
+    request: {method: DELETE, path: "/api/projects/{{project_id}}", headers: {Cookie: "accessToken={{env.ADMIN_JWT}}"}}
+browser:
+  target: http://front:5001
+  cookies: {accessToken: "{{env.ADMIN_JWT}}"}
+  wait_until: load
+  pages:
+    - {name: project, path: "/projects/{{project_id}}"}
+`);
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push(`${init.method} ${new URL(url).pathname}`);
+    return new Response(JSON.stringify({ id: calls.length }), { status: 200 });
+  };
+  let personas = null;
+  const recordPage = async (browser, url, { cookies, waitUntil, settleMs }) => {
+    calls.push(`PAGE ${new URL(url).pathname}`);
+    assert.deepEqual([waitUntil, settleMs], ["load", 2000], "a page with a stream waits for load, then settles");
+    assert.equal(browser, "fake-browser");
+    assert.deepEqual(cookies.map((c) => [c.name, c.value, c.url]), [["accessToken", "jwt", "http://front:5001"]]);
+    const leak = calls.length === 2 ? `title of ${personas ?? "?"}` : "page ready";
+    return {
+      status: 200,
+      url,
+      requests: [{ origin: "http://front:5001", type: "document", example: url }, { origin: "https://cdn.example.com", type: "font", example: "https://cdn.example.com/f.woff2" }],
+      set_cookies: [], js_cookies: [], legal: { legal_notice: false, privacy_policy: true },
+      console: [{ type: "log", text: leak }],
+      storage: [{ area: "local", key: "draft", value: "x" }],
+    };
+  };
+  let closed = false;
+  const launchBrowser = async () => ({ toString: () => "fake-browser", close: async () => { closed = true; } });
+  const run = join(dir, "run");
+  // The fake page logs the first persona's last name: read it from the values simulate.mjs generates.
+  const code = await simulateMain([join(dir, "sim.yaml"), run], {
+    env: { GDPR_SIMULATION: "test-stack", ADMIN_JWT: "jwt" }, fetchImpl, log: () => {},
+    launchBrowser, recordPage: async (browser, url, options) => recordPage(String(browser), url, options),
+  });
+  assert.equal(code, 0);
+  assert.ok(closed, "the browser is closed");
+  assert.deepEqual(calls, ["POST /api/projects", "PAGE /projects/1", "POST /api/projects", "PAGE /projects/3", "DELETE /api/projects/3"]);
+  const consoleEntries = JSON.parse(readFileSync(join(run, "browser", "console.json"), "utf8"));
+  assert.deepEqual(consoleEntries.map((c) => c.state), ["p1 project", "p2 project"]);
+  assert.equal(JSON.parse(readFileSync(join(run, "browser", "storage.json"), "utf8")).length, 2);
+  const privacy = JSON.parse(readFileSync(join(run, "browser", "privacy.json"), "utf8"));
+  assert.deepEqual(privacy.third_party.map((t) => t.origin), ["https://cdn.example.com"]);
+  assert.equal(privacy.legal_missing.length, 2);
+  const journeys = JSON.parse(readFileSync(join(run, "journeys.json"), "utf8"));
+  assert.deepEqual(journeys[1].results.map((r) => r.name), ["create", "page project", "erase"]);
+
+  // A persona value printed in the browser console blocks; the privacy findings are report-only.
+  personas = JSON.parse(readFileSync(join(run, "personas.json"), "utf8")).personas;
+  writeFileSync(join(run, "containers.log"), "front-1  | GET /projects/1 200\n");
+  writeFileSync(join(run, "browser", "console.json"), JSON.stringify([{ state: "p1 project", type: "log", text: `title of ${personas[0].values.last_name}` }]));
+  const report = join(dir, "report");
+  assert.equal(await analyzeMain([run, report], { env: {}, log: () => {} }), 1);
+  const text = readFileSync(join(report, "summary.md"), "utf8");
+  assert.match(text, /\| console \| `p1 project`/);
+  assert.match(text, /## GDPR in the browser \(report-only\)/);
+  assert.match(text, /cdn\.example\.com/);
+  writeFileSync(join(run, "browser", "console.json"), "[]");
+  assert.equal(await analyzeMain([run, report], { env: {}, log: () => {} }), 0, "privacy findings alone do not block");
+});
+
+test("a page redirected elsewhere fails, and a browser failure still erases the persona", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-redirect-"));
+  writeFileSync(join(dir, "journey.yaml"), `version: 1
+target: http://front:5001
+env: [ADMIN_JWT]
+steps:
+  - name: create
+    request: {method: POST, path: /api/projects, json: {title: "{{marker.last_name}}"}}
+    capture: {project_id: body.id}
+`);
+  const sim = (cookie) => `version: 1
+journey: journey.yaml
+personas: 1
+erased: 1
+erase:
+  - name: erase
+    request: {method: DELETE, path: "/api/projects/{{project_id}}"}
+browser:
+  target: http://front:5001
+  cookies: {accessToken: "${cookie}"}
+  pages:
+    - {name: project, path: "/projects/{{project_id}}"}
+`;
+  const run = async (cookie, recordPage) => {
+    writeFileSync(join(dir, "sim.yaml"), sim(cookie));
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push(`${init.method} ${new URL(url).pathname}`);
+      return new Response(JSON.stringify({ id: 7 }), { status: 200 });
+    };
+    const code = await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], {
+      env: { GDPR_SIMULATION: "test-stack", ADMIN_JWT: "jwt" }, fetchImpl, log: () => {},
+      launchBrowser: async () => ({ close: async () => {} }), recordPage,
+    });
+    return { code, calls, journeys: JSON.parse(readFileSync(join(dir, "run", "journeys.json"), "utf8")) };
+  };
+  const page = (url) => ({ status: 200, url, requests: [], set_cookies: [], js_cookies: [], legal: null, console: [], storage: [] });
+
+  // The front sent the browser to the login page, which answers 200: the persona's page was never seen.
+  const redirected = await run("{{env.ADMIN_JWT}}", async () => page("http://login-front:5000/?redirect=%2Fprojects%2F7"));
+  assert.equal(redirected.code, 1);
+  assert.match(redirected.journeys[0].results[1].error, /ended on http:\/\/login-front:5000\/ instead of http:\/\/front:5001\/projects\/7/);
+  // A query normalized by the front is the same page.
+  assert.equal((await run("{{env.ADMIN_JWT}}", async (b, url) => page(`${url}?view=kanban`))).code, 0);
+
+  // The browser cannot even start the page: the run fails, the erase step still runs.
+  const broken = await run("{{env.ADMIN_JWT}}", async () => { throw new Error("browser crashed"); });
+  assert.equal(broken.code, 1);
+  assert.deepEqual(broken.calls, ["POST /api/projects", "DELETE /api/projects/7"]);
+  assert.deepEqual(broken.journeys[0].results.map((r) => [r.name, r.ok]), [["create", true], ["page project", false], ["erase", true]]);
+});
+
+test("persona values in the third-party request examples and cookie names are masked in the report", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-mask-"));
+  const values = { email: "gdpr.maskme@example.com", first_name: "Markermaskme", last_name: "Tracermaskme", phone: "0612345678", password: "Mkabcdef!1234ABCD" };
+  writeFileSync(join(dir, "personas.json"), JSON.stringify({ personas: [{ id: "p1", erase: false, values }], ignore: [] }));
+  writeFileSync(join(dir, "containers.log"), "front-1  | GET / 200\n");
+  mkdirSync(join(dir, "browser"));
+  writeFileSync(join(dir, "browser", "privacy.json"), JSON.stringify({
+    third_party: [{ origin: "https://tracker.example.com", types: ["image"], states: ["p1 board"], example: `https://tracker.example.com/pixel?u=${values.email}` }],
+    cookies: [{ name: `pref_${values.email}`, via: "document.cookie", problems: ["not a session cookie"], states: ["p1 board"] }], legal_missing: [], checked: 1,
+  }));
+  const report = join(dir, "report");
+  await analyzeMain([dir, report], { env: {}, log: () => {} });
+  for (const file of ["summary.md", "report.json"]) {
+    const text = readFileSync(join(report, file), "utf8");
+    assert.match(text, /tracker\.example\.com/);
+    assert.ok(!text.includes(values.email), `${file} holds the persona's e-mail`);
+  }
+});
+
 // One OTLP JSON export request, as the collector's `file` exporter writes it (MAIR-501).
 function otlpLine(service, name, attributes) {
   return JSON.stringify({

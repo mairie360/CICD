@@ -1,6 +1,6 @@
 name: "GDPR simulation"
 description: >
-  GDPR usage simulation of an API or a BFF (MAIR-497, epic MAIR-284), on the image promoted to
+  GDPR usage simulation of an API, a BFF or a front (MAIR-497, epic MAIR-284), on the image promoted to
   staging, before the Prod approval. Runs the repo's `gdpr_simulation_test.sh` (test stack only:
   GDPR_SIMULATION=test-stack is exported, the engine refuses anything else), which leaves the run
   in `gdpr-simulation/` (personas, logs of every container, browser console and storage for the

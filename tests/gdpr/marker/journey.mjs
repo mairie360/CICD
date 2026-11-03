@@ -154,9 +154,12 @@ export async function waitFor(url, { fetchImpl = fetch, timeoutMs = 180000, inte
 }
 
 // Plays the steps in order and stops at the first one that fails: the next ones would depend on
-// its captures. Returns { results, sensitive }: no value is logged or returned in the results.
-export async function play(journey, { marker, env = {}, fetchImpl = fetch, log = () => {} }) {
-  const context = { marker, env: Object.fromEntries(journey.env.map((name) => [name, env[name]])) };
+// its captures. Returns { results, sensitive, captures }: no value is logged or returned in the
+// results. `captures` (MAIR-497) seeds the context with an earlier journey's captures, so that the
+// erase steps of the simulation can run after the persona's pages were opened.
+export async function play(journey, { marker, env = {}, captures = {}, fetchImpl = fetch, log = () => {} }) {
+  const context = { ...captures, marker, env: Object.fromEntries(journey.env.map((name) => [name, env[name]])) };
+  const captured = { ...captures };
   const sensitive = {};
   const results = [];
   for (const step of journey.steps) {
@@ -189,6 +192,7 @@ export async function play(journey, { marker, env = {}, fetchImpl = fetch, log =
             break;
           }
           context[name] = value;
+          captured[name] = value;
           if (isSensitive) sensitive[name] = String(value);
         }
       }
@@ -199,5 +203,5 @@ export async function play(journey, { marker, env = {}, fetchImpl = fetch, log =
     log(`${result.ok ? "ok  " : "FAIL"} ${step.name}: ${result.status ?? "-"}${result.error ? ` (${result.error})` : ""}`);
     if (!result.ok) break;
   }
-  return { results, sensitive };
+  return { results, sensitive, captures: captured };
 }

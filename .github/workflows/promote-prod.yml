@@ -9,7 +9,7 @@ name: Promote to Prod
 #   release_folder  database only: the Liquibase release folder matches that version (MAIR-491)
 #   gdpr_inventory  database only: every column of the staging schema is in gdpr/inventory.yaml (MAIR-285)
 #   gdpr_marker   APIs and BFFs: no value of a marker user reaches the logs of the staging image (MAIR-290)
-#   gdpr_simulation  APIs and BFFs: GDPR usage simulation on the staging image + AI review (MAIR-497)
+#   gdpr_simulation  APIs, BFFs and fronts: GDPR usage simulation on the staging image + AI review (MAIR-497)
 #   rgaa          fronts only: RGAA check of the staging image on the states of rgaa.yaml (MAIR-317)
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package, release journal
@@ -310,12 +310,15 @@ jobs:
   # the promoted commit (test stack only), then deterministic checks and an AI review of the log
   # templates and free-text columns. Read before the Prod approval; a persona value found or an
   # unaccepted high risk skips the prod release. Skipped with a warning without gdpr-simulation.yaml.
+  # [CHANGEMENT] MAIR-497: the fronts too; their stack opens the personas' pages in a browser
+  # (`browser` section of gdpr-simulation.yaml) and adds the browser console, storage and privacy
+  # findings (MAIR-292, report-only) to the run.
   gdpr_simulation:
     name: GDPR simulation
-    if: inputs.stack == 'apis' || inputs.stack == 'bffs'
+    if: inputs.stack == 'apis' || inputs.stack == 'bffs' || inputs.stack == 'fronts'
     needs: [resolve, version]
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.stack == 'bffs' && 60 || 30 }}
+    timeout-minutes: ${{ inputs.stack == 'bffs' && 60 || inputs.stack == 'fronts' && 40 || 30 }}
     permissions:
       contents: read
       packages: read
@@ -342,6 +345,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           npm_scope: ${{ inputs.stack == 'bffs' && inputs.npm_scope || '' }}
           node_auth_token: ${{ inputs.stack == 'bffs' && secrets.GITHUB_TOKEN || '' }}
+          timeout_minutes: ${{ inputs.stack == 'fronts' && '30' || '20' }}
 
   # [NOUVEAU] MAIR-317 (epic MAIR-492), fronts only: RGAA check of the staging image of the promoted
   # commit. The front's accessibility stack (at that commit) runs `<image>@<staging digest>` and the
