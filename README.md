@@ -563,16 +563,18 @@ ignore:                          # services allowed to hold the values, with the
 `gdpr-simulation/`, passes `GDPR_SIMULATION`, runs `simulate.mjs`), wait for it, run k6 once, apply
 the repo's back-dating SQL and `SELECT fn_apply_retention_policies();` on the stack's database, then
 
+Every step below stops the run on failure (a skipped check must not pass as clean):
+
 ```bash
-docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U postgres -d "$DB" -At -f - < cicd-repo/tests/gdpr/schema.sql > gdpr-simulation/schema.json
-node cicd-repo/tests/gdpr/simulation/sql.mjs "$INVENTORY" gdpr-simulation/schema.json gdpr-simulation
+docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U postgres -d "$DB" -At -f - < cicd-repo/tests/gdpr/schema.sql > gdpr-simulation/schema.json || exit 1
+node cicd-repo/tests/gdpr/simulation/sql.mjs "$INVENTORY" gdpr-simulation/schema.json gdpr-simulation || exit 1
 for q in erasure retention content; do
-  docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U postgres -d "$DB" -At -f - < "gdpr-simulation/db/$q.sql" > "gdpr-simulation/db/$q.sql.json"
+  docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U postgres -d "$DB" -At -f - < "gdpr-simulation/db/$q.sql" > "gdpr-simulation/db/$q.sql.json" || exit 1
 done
 mkdir -p gdpr-simulation/redis
-docker compose -f "$COMPOSE_FILE" exec -T redis sh -c 'redis-cli --scan | while read -r k; do printf "%s\t%s\n" "$k" "$(redis-cli TTL "$k")"; done' > gdpr-simulation/redis/keys.tsv
-docker compose -f "$COMPOSE_FILE" logs --no-color > gdpr-simulation/containers.log
-docker compose -f "$COMPOSE_FILE" down -v
+docker compose -f "$COMPOSE_FILE" exec -T redis sh -c 'set -e; keys="$(redis-cli --scan)"; printf "%s\n" "$keys" | while IFS= read -r k; do [ -n "$k" ] || continue; ttl="$(redis-cli TTL "$k")"; [ -n "$ttl" ] || exit 1; printf "%s\t%s\n" "$k" "$ttl"; done' > gdpr-simulation/redis/keys.tsv || exit 1
+docker compose -f "$COMPOSE_FILE" logs --no-color > gdpr-simulation/containers.log || exit 1
+docker compose -f "$COMPOSE_FILE" down -v --remove-orphans || exit 1
 ```
 
 The action then runs `analyze.mjs`. Only the masked report (`summary.md`, `report.json`) is
