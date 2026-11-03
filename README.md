@@ -583,7 +583,10 @@ Its `gdpr-simulation.yaml` adds a `browser` section: after each persona's journe
 cookies, through `tests/gdpr/privacy` (MAIR-292), and writes `browser/console.json`,
 `browser/storage.json` (a persona value there blocks, like in a log) and `browser/privacy.json`
 (requests outside the front's origin, cookies, legal links: added to the summary, report-only).
-A page answering 400 or more (or a status outside its `expect`) fails the run.
+A page answering 400 or more (or a status outside its `expect`) fails the run. A page waits for
+`networkidle` by default; a front that keeps a stream open (Server-Sent Events) sets
+`wait_until: load` (or `domcontentloaded`), and each page is then left 2 s for its client-side
+requests.
 
 ```yaml
 browser:
@@ -591,6 +594,7 @@ browser:
   cookies: {accessToken: "{{env.ADMIN_JWT}}"}  # session, set before each page
   allowed_origins:                              # optional, with the reason
     - {origin: "http://login-front.test", reason: login redirect of the stack}
+  wait_until: networkidle                       # optional: load / domcontentloaded for a stream
   pages:                                        # journey captures, marker.<field>, env.<NAME>
     - {name: project, path: "/projects/{{project_id}}"}
     - {name: search, path: "/?q={{marker.last_name}}", expect: [200]}

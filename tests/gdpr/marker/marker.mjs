@@ -10,11 +10,15 @@ export function generateMarker(random = randomInt) {
   const word = (n) => Array.from({ length: n }, () => LETTERS[random(LETTERS.length)]).join("");
   const digits = (n) => Array.from({ length: n }, () => String(random(10))).join("");
   const capitalized = (text) => text[0].toUpperCase() + text.slice(1);
+  // Metropolitan mobile prefixes only (MAIR-497): 0639 is Mayotte and 069x the West Indies, Guiana
+  // and Réunion, which a phone validation set to FR refuses (+262, +590…), so a run used to fail at
+  // random on the persona that drew one. 060-062, 064-068 are metropolitan as a whole.
+  const MOBILE_PREFIXES = ["0", "1", "2", "4", "5", "6", "7", "8"];
   return {
     email: `gdpr.${word(10)}@example.com`,
     first_name: capitalized(`marker${word(8)}`),
     last_name: capitalized(`tracer${word(8)}`),
-    phone: `06${digits(8)}`,
+    phone: `06${MOBILE_PREFIXES[random(MOBILE_PREFIXES.length)]}${digits(7)}`,
     password: `Mk${word(6)}!${digits(4)}${word(4).toUpperCase()}`,
   };
 }

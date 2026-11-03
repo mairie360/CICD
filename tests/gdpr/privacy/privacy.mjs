@@ -184,14 +184,17 @@ export function summarizePrivacy(result) {
 }
 
 // Records one page on a fresh context of `browser` (a Playwright Browser): `cookies` are added
-// first and are not counted as the front's (the session a driver injects).
-export async function recordPage(browser, url, { cookies = [], waitUntil = "networkidle" } = {}) {
+// first and are not counted as the front's (the session a driver injects). `settleMs` leaves the
+// page that long after `waitUntil` (a page with a stream never reaches "networkidle": it waits for
+// "load", then gives its client-side requests time to answer).
+export async function recordPage(browser, url, { cookies = [], waitUntil = "networkidle", settleMs = 0 } = {}) {
   const context = await browser.newContext();
   try {
     if (cookies.length > 0) await context.addCookies(cookies);
     const recorder = watchPrivacy(context);
     const page = await context.newPage();
     const response = await page.goto(url, { waitUntil });
+    if (settleMs > 0) await page.waitForTimeout(settleMs);
     const result = await finishPrivacy(recorder, context, { page, injected: cookies.map((c) => c.name) });
     return { status: response?.status() ?? null, ...result };
   } finally {

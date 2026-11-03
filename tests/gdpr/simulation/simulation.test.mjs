@@ -212,6 +212,7 @@ steps:
   assert.match(await errorsOf("  target: http://front:5001\n  cookies: {accessToken: '{{env.OTHER}}'}\n  pages: [{name: p, path: /}]\n"), /cookie accessToken: unknown placeholder \{\{env.OTHER\}\}/);
   assert.match(await errorsOf("  target: http://front:5001/app\n  pages: [{name: p, path: /}]\n"), /`target` must be the front's origin/);
   assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, wait: 3}]\n"), /unknown key `wait`/);
+  assert.match(await errorsOf("  target: http://front:5001\n  wait_until: idle\n  pages: [{name: p, path: /}]\n"), /`wait_until` must be one of networkidle, load, domcontentloaded/);
   writeFileSync(join(dir, "sim.yaml"), sim("  target: https://www.example.com\n  pages: [{name: p, path: /}]\n"));
   assert.equal(await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], { env: { GDPR_SIMULATION: "test-stack" }, log: () => {} }), 3, "a browser target outside the stack is refused");
 });
@@ -236,6 +237,7 @@ erase:
 browser:
   target: http://front:5001
   cookies: {accessToken: "{{env.ADMIN_JWT}}"}
+  wait_until: load
   pages:
     - {name: project, path: "/projects/{{project_id}}"}
 `);
@@ -245,8 +247,9 @@ browser:
     return new Response(JSON.stringify({ id: calls.length }), { status: 200 });
   };
   let personas = null;
-  const recordPage = async (browser, url, { cookies }) => {
+  const recordPage = async (browser, url, { cookies, waitUntil, settleMs }) => {
     calls.push(`PAGE ${new URL(url).pathname}`);
+    assert.deepEqual([waitUntil, settleMs], ["load", 2000], "a page with a stream waits for load, then settles");
     assert.equal(browser, "fake-browser");
     assert.deepEqual(cookies.map((c) => [c.name, c.value, c.url]), [["accessToken", "jwt", "http://front:5001"]]);
     const leak = calls.length === 2 ? `title of ${personas ?? "?"}` : "page ready";

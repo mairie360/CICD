@@ -8,13 +8,17 @@
 //     target: http://projects-front:5001        # the front's origin on the stack
 //     cookies: {accessToken: "{{env.ADMIN_JWT}}"}
 //     allowed_origins: [{origin: http://login-front.test, reason: login redirect}]   # optional
+//     wait_until: load                         # optional: networkidle (default), load or
+//                                              # domcontentloaded, then 2 s for a page with a stream
 //     pages:
 //       - name: project page
 //         path: "/projects/{{project_id}}"       # captures of the journey, marker.<field>, env.<NAME>
 //         expect: [200]                          # optional, default: any status below 400
 import { MARKER_FIELDS, render } from "../marker/journey.mjs";
 
-const BROWSER_KEYS = new Set(["target", "cookies", "allowed_origins", "pages"]);
+const BROWSER_KEYS = new Set(["target", "cookies", "allowed_origins", "wait_until", "pages"]);
+const WAIT_UNTIL = ["networkidle", "load", "domcontentloaded"];
+export const SETTLE_MS = 2000;
 const PAGE_KEYS = new Set(["name", "path", "expect"]);
 const PLACEHOLDER = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g;
 const isMapping = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -50,6 +54,8 @@ export function loadBrowser(doc, journey) {
   if (!Array.isArray(allowed) || allowed.some((o) => !isMapping(o) || typeof o.origin !== "string" || typeof o.reason !== "string" || !o.reason.trim())) {
     errors.push("browser: `allowed_origins` must list {origin, reason}");
   }
+  const waitUntil = doc.wait_until ?? "networkidle";
+  if (!WAIT_UNTIL.includes(waitUntil)) errors.push(`browser: \`wait_until\` must be one of ${WAIT_UNTIL.join(", ")}`);
   if (!Array.isArray(doc.pages) || doc.pages.length === 0) errors.push("browser: `pages` must list at least one page");
   const pages = [];
   for (const [i, page] of (Array.isArray(doc.pages) ? doc.pages : []).entries()) {
@@ -66,7 +72,7 @@ export function loadBrowser(doc, journey) {
     pages.push({ name: page.name, path: page.path, expect: page.expect ?? null });
   }
   if (errors.length > 0) return { errors, browser: null };
-  return { errors, browser: { target: doc.target, cookies, allowedOrigins: allowed, pages } };
+  return { errors, browser: { target: doc.target, cookies, allowedOrigins: allowed, waitUntil, pages } };
 }
 
 // Opens every page of the section for one persona. `context` holds marker, env and the journey's
@@ -85,7 +91,9 @@ export async function browsePersona(section, { browser, persona, context, record
     const result = { name: `page ${page.name}`, method: "BROWSER", path: page.path, expected: page.expect, status: null, ok: false, error: null };
     results.push(result);
     try {
-      const recorded = await recordPage(browser, `${section.target}${render(page.path, context)}`, { cookies });
+      const recorded = await recordPage(browser, `${section.target}${render(page.path, context)}`, {
+        cookies, waitUntil: section.waitUntil, settleMs: section.waitUntil === "networkidle" ? 0 : SETTLE_MS,
+      });
       result.status = recorded.status;
       if (page.expect ? !page.expect.includes(recorded.status) : recorded.status === null || recorded.status >= 400) {
         result.error = `answered ${recorded.status ?? "nothing"}, expected ${page.expect ? page.expect.join(" or ") : "a status below 400"}`;

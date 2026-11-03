@@ -49,6 +49,21 @@ test("the marker values are unique and pass the usual validations", () => {
   assert.match(a.password, /[^a-zA-Z\d]/);
 });
 
+test("the marker phone is a metropolitan mobile number, never an overseas one (MAIR-497)", () => {
+  // Every draw of the second digit: 3 (0639 Mayotte) and 9 (069x overseas) never come out.
+  const seconds = new Set();
+  for (let n = 0; n < 8; n += 1) {
+    let calls = 0;
+    const phone = generateMarker((max) => (calls++ === 0 || max !== 8 ? 0 : n)).phone;
+    seconds.add(phone[2]);
+  }
+  for (let i = 0; i < 2000; i += 1) {
+    const { phone } = generateMarker();
+    assert.match(phone, /^06[0-24-8]\d{7}$/);
+  }
+  assert.deepEqual([...seconds].sort(), ["0", "1", "2", "4", "5", "6", "7", "8"]);
+});
+
 test("needles cover the encodings of a value and the stored phone number", () => {
   const marker = { email: "gdpr.abcdefghij@example.com", phone: "0612345678" };
   const list = needles(marker, { token: "tok.en+/=", authorization: "Bearer eyJhbGciOi.payload.sig" });
