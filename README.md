@@ -504,7 +504,7 @@ jobs:
 
 ## GDPR simulation (`actions/promote/gdpr-simulation`, MAIR-497)
 
-`promote-prod.yml` runs a `gdpr_simulation` job for the APIs and the BFFs, between `version` and
+`promote-prod.yml` runs a `gdpr_simulation` job for the APIs, the BFFs and the fronts, between `version` and
 `promote`, on the staging image of the promoted commit (by digest), so its summary is read before
 the Prod approval. It is skipped with a warning while the repo has
 no `gdpr-simulation.yaml`. **Test stacks only**: the action exports `GDPR_SIMULATION=test-stack`,
@@ -573,9 +573,32 @@ docker compose -f "$COMPOSE_FILE" logs --no-color > gdpr-simulation/containers.l
 docker compose -f "$COMPOSE_FILE" down -v
 ```
 
-The action then runs `analyze.mjs`. The fronts add `gdpr-simulation/browser/console.json` and
-`storage.json`, collected by `tests/gdpr/privacy` on their pages (MAIR-292). Only the masked
-report (`summary.md`, `report.json`) is uploaded.
+The action then runs `analyze.mjs`. Only the masked report (`summary.md`, `report.json`) is
+uploaded.
+
+**Fronts.** A front's journey goes through its own origin (the same-origin proxy the browser uses,
+`Cookie: accessToken=…` and `Origin` headers), so the front's server logs see the persona values.
+Its `gdpr-simulation.yaml` adds a `browser` section: after each persona's journey, and before its
+`erase` steps, `simulate.mjs` opens these pages in a fresh Chromium context with the session
+cookies, through `tests/gdpr/privacy` (MAIR-292), and writes `browser/console.json`,
+`browser/storage.json` (a persona value there blocks, like in a log) and `browser/privacy.json`
+(requests outside the front's origin, cookies, legal links: added to the summary, report-only).
+A page answering 400 or more (or a status outside its `expect`) fails the run.
+
+```yaml
+browser:
+  target: http://projects-front:5001            # the front's origin on the stack
+  cookies: {accessToken: "{{env.ADMIN_JWT}}"}  # session, set before each page
+  allowed_origins:                              # optional, with the reason
+    - {origin: "http://login-front.test", reason: login redirect of the stack}
+  pages:                                        # journey captures, marker.<field>, env.<NAME>
+    - {name: project, path: "/projects/{{project_id}}"}
+    - {name: search, path: "/?q={{marker.last_name}}", expect: [200]}
+```
+
+The front's runner uses the Playwright image of `tests/gdpr/privacy/runner-image` instead of
+`node:24` and installs the engine with its dev dependencies (`npm ci`, with
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`: the image holds the browsers of the pinned version).
 
 **Telemetry (MAIR-501).** A stack that runs an OpenTelemetry collector adds a `file` exporter
 writing OTLP JSON to `gdpr-simulation/traces.jsonl`, and the job that builds the usage ledger
