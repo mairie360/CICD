@@ -15,6 +15,11 @@
 // reason (`allowedOrigins`).
 
 export const SESSION_COOKIES = ["accessToken", "passwordChangeToken"];
+// Longest console message or storage value kept (256 KiB): far above any message a persona value
+// sits in, so the simulation's search sees it whole (MAIR-497), while a front logging huge
+// payloads in a loop cannot grow the recording without bound.
+export const MAX_TEXT = 256 * 1024;
+const bounded = (text) => (text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text);
 const IGNORED_SCHEMES = new Set(["data:", "blob:", "about:", "chrome-extension:"]);
 const LEGAL_NOTICE = /mentions\s+l[ée]gales|legal\s+notice/i;
 const PRIVACY_POLICY = /confidentialit[ée]|donn[ée]es\s+personnelles|privacy/i;
@@ -43,7 +48,7 @@ export function watchPrivacy(context) {
   // Browser console of the state, for the GDPR simulation (MAIR-497): a value logged there is a leak.
   // Full text: the simulation searches it for persona values (a value past any cut would be missed);
   // the report only shows short masked excerpts.
-  context.on("console", (message) => recorder.console.push({ type: message.type(), text: message.text() }));
+  context.on("console", (message) => recorder.console.push({ type: message.type(), text: bounded(message.text()) }));
   context.on("request", (request) => {
     let url;
     try {
@@ -101,7 +106,7 @@ export async function finishPrivacy(recorder, context, { page = null, injected =
   // localStorage and sessionStorage of the page's origin, for the GDPR simulation (MAIR-497).
   const storage = page
     ? await page.evaluate(() => {
-      const dump = (area, store) => Array.from({ length: store.length }, (_, i) => store.key(i)).map((key) => ({ area, key, value: String(store.getItem(key)) }));
+      const dump = (area, store) => Array.from({ length: store.length }, (_, i) => store.key(i)).map((key) => ({ area, key, value: String(store.getItem(key)).slice(0, 256 * 1024) }));
       try {
         return [...dump("local", window.localStorage), ...dump("session", window.sessionStorage)];
       } catch {

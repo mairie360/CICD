@@ -46,7 +46,12 @@ function allNeedles(personas, sensitive) {
 
 export function maskPrivacy(privacy, list) {
   if (!privacy) return privacy;
-  return { ...privacy, third_party: (privacy.third_party ?? []).map((t) => ({ ...t, origin: mask(t.origin, list), example: mask(t.example, list) })) };
+  return {
+    ...privacy,
+    third_party: (privacy.third_party ?? []).map((t) => ({ ...t, origin: mask(t.origin, list), example: mask(t.example, list) })),
+    // A cookie the front names after a persona value (an e-mail in the name) is masked too.
+    cookies: (privacy.cookies ?? []).map((c) => ({ ...c, name: mask(c.name, list) })),
+  };
 }
 
 function find(text, list) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluatePrivacy, finishPrivacy, parseSetCookie, summarizePrivacy, watchPrivacy } from "./privacy.mjs";
+import { MAX_TEXT, evaluatePrivacy, finishPrivacy, parseSetCookie, summarizePrivacy, watchPrivacy } from "./privacy.mjs";
 
 test("Set-Cookie lines are parsed with their flags", () => {
   assert.deepEqual(parseSetCookie("accessToken=abc; Path=/; HttpOnly; Secure; SameSite=Strict"), {
@@ -78,4 +78,7 @@ test("console messages are kept whole for the persona search (MAIR-497)", async 
   const text = `${"x".repeat(5000)} gdpr.late@example.com`;
   context.emit("console", { type: () => "log", text: () => text });
   assert.equal((await finishPrivacy(recorder, context)).console[0].text, text);
+  // A huge message is bounded, far past where a persona value would sit.
+  context.emit("console", { type: () => "log", text: () => "y".repeat(MAX_TEXT * 3) });
+  assert.equal((await finishPrivacy(recorder, context)).console[1].text.length, MAX_TEXT);
 });

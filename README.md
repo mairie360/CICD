@@ -583,8 +583,9 @@ Its `gdpr-simulation.yaml` adds a `browser` section: after each persona's journe
 cookies, through `tests/gdpr/privacy` (MAIR-292), and writes `browser/console.json`,
 `browser/storage.json` (a persona value there blocks, like in a log) and `browser/privacy.json`
 (requests outside the front's origin, cookies, legal links: added to the summary, report-only).
-A page answering 400 or more (or a status outside its `expect`), or ending on another origin or
-path after its redirects (a login page answers 200 too), fails the run; a browser failure still lets
+A page whose status breaks its rule (by default a status of 400 or more; with `expect`, a status
+outside that list, so `expect: [404]` passes on a 404), or ending on another origin or path after
+its redirects (a login page answers 200 too), fails the run; a browser failure still lets
 the persona's `erase` steps run. Console messages and storage values are searched whole; the
 third-party request examples of the privacy findings are masked like the logs. A page waits for
 `networkidle` by default; a front that keeps a stream open (Server-Sent Events) sets

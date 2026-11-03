@@ -352,7 +352,7 @@ browser:
   assert.deepEqual(broken.journeys[0].results.map((r) => [r.name, r.ok]), [["create", true], ["page project", false], ["erase", true]]);
 });
 
-test("persona values in the third-party request examples are masked in the report", async () => {
+test("persona values in the third-party request examples and cookie names are masked in the report", async () => {
   const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-mask-"));
   const values = { email: "gdpr.maskme@example.com", first_name: "Markermaskme", last_name: "Tracermaskme", phone: "0612345678", password: "Mkabcdef!1234ABCD" };
   writeFileSync(join(dir, "personas.json"), JSON.stringify({ personas: [{ id: "p1", erase: false, values }], ignore: [] }));
@@ -360,7 +360,7 @@ test("persona values in the third-party request examples are masked in the repor
   mkdirSync(join(dir, "browser"));
   writeFileSync(join(dir, "browser", "privacy.json"), JSON.stringify({
     third_party: [{ origin: "https://tracker.example.com", types: ["image"], states: ["p1 board"], example: `https://tracker.example.com/pixel?u=${values.email}` }],
-    cookies: [], legal_missing: [], checked: 1,
+    cookies: [{ name: `pref_${values.email}`, via: "document.cookie", problems: ["not a session cookie"], states: ["p1 board"] }], legal_missing: [], checked: 1,
   }));
   const report = join(dir, "report");
   await analyzeMain([dir, report], { env: {}, log: () => {} });
