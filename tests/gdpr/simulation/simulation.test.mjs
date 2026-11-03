@@ -11,6 +11,7 @@ import { contentSampleSql, erasureSql, retentionSql } from "./db.mjs";
 import { assertTestStack, isStackHost } from "./guard.mjs";
 import { generatePersonas } from "./personas.mjs";
 import { main as simulateMain } from "./simulate.mjs";
+import { main as sqlMain } from "./sql.mjs";
 import { groupTemplates, templateOf } from "./templates.mjs";
 
 let seed = 0;
@@ -413,5 +414,35 @@ test("traces and the usage ledger carry actions only (MAIR-501)", async () => {
     const report = JSON.parse(readFileSync(join(dir, "report", "report.json"), "utf8"));
     assert.ok(report.deterministic.some((d) => d.check === check), `${label}: ${JSON.stringify(report.deterministic)}`);
     assert.doesNotMatch(JSON.stringify(report), new RegExp(email.replace(/[.+]/g, "\\$&")), `${label}: the value is masked in the report`);
+  }
+});
+
+test("MAIR-497: the database checks stop on a stack column the inventory does not classify", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-sql-"));
+  writeFileSync(join(dir, "personas.json"), JSON.stringify({ personas: [] }));
+  writeFileSync(join(dir, "inventory.yaml"), `version: 1
+tables:
+  users:
+    personal:
+      email: {category: contact, erasure: anonymize, visibility: directory}
+    not_personal: [id]
+  legacy:
+    not_personal: [id]
+`);
+  const column = (table_name, column_name) => ({ table_name, column_name, type: "text", nullable: true, comment: null, refers_to: null });
+  const errors = [];
+  const error = console.error;
+  console.error = (line) => errors.push(line);
+  try {
+    // users.nickname is new in the stack: it would be left out of the erasure and content checks.
+    writeFileSync(join(dir, "schema.json"), JSON.stringify([column("users", "id"), column("users", "email"), column("users", "nickname")]));
+    assert.equal(sqlMain([join(dir, "inventory.yaml"), join(dir, "schema.json"), dir]), 1);
+    assert.match(errors.join("\n"), /users\.nickname/);
+    // An entry the stack does not have yet (legacy.id: inventory newer than the image) is fine.
+    writeFileSync(join(dir, "schema.json"), JSON.stringify([column("users", "id"), column("users", "email")]));
+    assert.equal(sqlMain([join(dir, "inventory.yaml"), join(dir, "schema.json"), dir]), 0);
+    assert.ok(readFileSync(join(dir, "db", "erasure.sql"), "utf8").length > 0, "the checks are written");
+  } finally {
+    console.error = error;
   }
 });

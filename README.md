@@ -519,7 +519,9 @@ The run (`tests/gdpr/simulation/`):
    back-dates rows (`back_date`), runs the purge, saves the logs of every container, dumps the
    schema (`tests/gdpr/schema.sql`) and runs the database checks `sql.mjs` writes (values of the
    erased personas outside the `keep` columns of the inventory, rows past their retention, a sample
-   of the free-text and JSON columns);
+   of the free-text and JSON columns). `sql.mjs` stops the run when a column of the stack is not in
+   the inventory, since the checks would skip it; inventory entries the stack does not have yet are
+   fine;
 3. `analyze.mjs` is the gate. **Deterministic**: a persona value (or a captured token) in any log,
    browser console message or browser storage entry fails, and so does a Redis key without TTL,
    above the maximum TTL or outside the prefixes of the inventory's `redis` section (MAIR-499). The erasure and retention checks are
