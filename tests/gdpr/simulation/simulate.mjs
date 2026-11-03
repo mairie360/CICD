@@ -106,11 +106,18 @@ export async function main(argv, { env = process.env, fetchImpl = fetch, log = c
       const journeyOk = played.results.every((r) => r.ok);
       if (journeyOk && simulation.browser) {
         const context = { ...played.captures, marker: persona.values, env: Object.fromEntries(simulation.journey.env.map((n) => [n, env[n]])) };
-        const seen = await browsePersona(simulation.browser, { browser, persona: persona.id, context, recordPage: recordPage ?? privacy.recordPage, log: personaLog });
-        results.push(...seen.results);
-        states.push(...seen.states);
-        consoleEntries.push(...seen.console);
-        storage.push(...seen.storage);
+        // A browser failure (a cookie without its value, a crashed page) fails the run but must not
+        // skip the erase steps below: the persona's records would stay behind.
+        try {
+          const seen = await browsePersona(simulation.browser, { browser, persona: persona.id, context, recordPage: recordPage ?? privacy.recordPage, log: personaLog });
+          results.push(...seen.results);
+          states.push(...seen.states);
+          consoleEntries.push(...seen.console);
+          storage.push(...seen.storage);
+        } catch (error) {
+          results.push({ name: "browser", method: "BROWSER", path: null, expected: null, status: null, ok: false, error: error.message });
+          personaLog(`FAIL browser: ${error.message}`);
+        }
       }
       if (journeyOk && persona.erase) {
         const erased = await play(simulation.erase, { marker: persona.values, env, captures: played.captures, fetchImpl, log: personaLog });

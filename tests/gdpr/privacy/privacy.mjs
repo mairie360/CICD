@@ -41,7 +41,9 @@ export function parseSetCookie(line) {
 export function watchPrivacy(context) {
   const recorder = { requests: new Map(), setCookies: [], pending: [], console: [] };
   // Browser console of the state, for the GDPR simulation (MAIR-497): a value logged there is a leak.
-  context.on("console", (message) => recorder.console.push({ type: message.type(), text: message.text().slice(0, 2000) }));
+  // Full text: the simulation searches it for persona values (a value past any cut would be missed);
+  // the report only shows short masked excerpts.
+  context.on("console", (message) => recorder.console.push({ type: message.type(), text: message.text() }));
   context.on("request", (request) => {
     let url;
     try {
@@ -88,17 +90,18 @@ export async function legalLinks(page) {
 }
 
 // Result of one state: { requests, set_cookies, js_cookies, legal }. `injected` are the cookies
+// (names, or { name, path } to tell them from a same-name cookie the page sets on another path)
 // the engine added itself (the session of `as`): they are not the front's.
 export async function finishPrivacy(recorder, context, { page = null, injected = [] } = {}) {
   await Promise.all(recorder.pending);
   const fromHeaders = new Set(recorder.setCookies.map((c) => c.name));
   const jsCookies = (await context.cookies())
-    .filter((c) => !injected.includes(c.name) && !fromHeaders.has(c.name))
+    .filter((c) => !injected.some((i) => (typeof i === "string" ? i === c.name : i.name === c.name && (i.path ?? "/") === c.path)) && !fromHeaders.has(c.name))
     .map((c) => ({ name: c.name, httpOnly: c.httpOnly, secure: c.secure, sameSite: c.sameSite }));
   // localStorage and sessionStorage of the page's origin, for the GDPR simulation (MAIR-497).
   const storage = page
     ? await page.evaluate(() => {
-      const dump = (area, store) => Array.from({ length: store.length }, (_, i) => store.key(i)).map((key) => ({ area, key, value: String(store.getItem(key)).slice(0, 2000) }));
+      const dump = (area, store) => Array.from({ length: store.length }, (_, i) => store.key(i)).map((key) => ({ area, key, value: String(store.getItem(key)) }));
       try {
         return [...dump("local", window.localStorage), ...dump("session", window.sessionStorage)];
       } catch {
@@ -195,8 +198,9 @@ export async function recordPage(browser, url, { cookies = [], waitUntil = "netw
     const page = await context.newPage();
     const response = await page.goto(url, { waitUntil });
     if (settleMs > 0) await page.waitForTimeout(settleMs);
-    const result = await finishPrivacy(recorder, context, { page, injected: cookies.map((c) => c.name) });
-    return { status: response?.status() ?? null, ...result };
+    const result = await finishPrivacy(recorder, context, { page, injected: cookies.map((c) => ({ name: c.name, path: c.path ?? "/" })) });
+    // `url`: where the page ended, after its redirects (a login redirect is not the page asked for).
+    return { status: response?.status() ?? null, url: page.url(), ...result };
   } finally {
     await context.close();
   }

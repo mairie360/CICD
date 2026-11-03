@@ -34,8 +34,8 @@ export function loadBrowser(doc, journey) {
   const errors = [];
   if (!isMapping(doc)) return { errors: ["`browser` must be a mapping (target, cookies, pages)"], browser: null };
   for (const key of Object.keys(doc).filter((k) => !BROWSER_KEYS.has(k))) errors.push(`browser: unknown key \`${key}\``);
-  if (typeof doc.target !== "string" || !/^https?:\/\/[^/]+$/.test(doc.target)) {
-    errors.push("browser: `target` must be the front's origin on the stack, without path (e.g. http://projects-front:5001)");
+  if (typeof doc.target !== "string" || !/^https?:\/\/[^/?#]+$/.test(doc.target)) {
+    errors.push("browser: `target` must be the front's origin on the stack, without path, query or fragment (e.g. http://projects-front:5001)");
   }
   const known = new Set([
     ...MARKER_FIELDS.map((f) => `marker.${f}`),
@@ -68,11 +68,27 @@ export function loadBrowser(doc, journey) {
     if (typeof page.name !== "string" || !page.name.trim()) errors.push(`${label}: \`name\` is required`);
     if (typeof page.path !== "string" || !page.path.startsWith("/")) errors.push(`${label}: \`path\` must start with /`);
     else checkPlaceholders(page.path, `${label} (${page.name})`);
-    if (page.expect !== undefined && (!Array.isArray(page.expect) || page.expect.some((c) => !Number.isInteger(c)))) errors.push(`${label}: \`expect\` must list status codes`);
+    if (page.expect !== undefined && (!Array.isArray(page.expect) || page.expect.length === 0 || page.expect.some((c) => !Number.isInteger(c) || c < 100 || c > 599))) {
+      errors.push(`${label}: \`expect\` must list HTTP status codes (100-599)`);
+    }
     pages.push({ name: page.name, path: page.path, expect: page.expect ?? null });
   }
   if (errors.length > 0) return { errors, browser: null };
   return { errors, browser: { target: doc.target, cookies, allowedOrigins: allowed, waitUntil, pages } };
+}
+
+const destination = (url) => {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return "nothing";
+  }
+};
+
+// The page ended where it was asked (same origin and path; the query may be normalized).
+export function sameDestination(asked, ended) {
+  return typeof ended === "string" && destination(asked) === destination(ended);
 }
 
 // Opens every page of the section for one persona. `context` holds marker, env and the journey's
@@ -91,12 +107,17 @@ export async function browsePersona(section, { browser, persona, context, record
     const result = { name: `page ${page.name}`, method: "BROWSER", path: page.path, expected: page.expect, status: null, ok: false, error: null };
     results.push(result);
     try {
-      const recorded = await recordPage(browser, `${section.target}${render(page.path, context)}`, {
+      const url = `${section.target}${render(page.path, context)}`;
+      const recorded = await recordPage(browser, url, {
         cookies, waitUntil: section.waitUntil, settleMs: section.waitUntil === "networkidle" ? 0 : SETTLE_MS,
       });
       result.status = recorded.status;
       if (page.expect ? !page.expect.includes(recorded.status) : recorded.status === null || recorded.status >= 400) {
         result.error = `answered ${recorded.status ?? "nothing"}, expected ${page.expect ? page.expect.join(" or ") : "a status below 400"}`;
+      } else if (!sameDestination(url, recorded.url)) {
+        // A redirect to the login page (or anywhere else) answers 200 too: the persona's page was
+        // never shown, so its console and storage say nothing.
+        result.error = `ended on ${destination(recorded.url)} instead of ${destination(url)} (redirected)`;
       }
       states.push({ id: state, story: false, privacy: recorded });
       for (const m of recorded.console) consoleEntries.push({ state, type: m.type, text: m.text });

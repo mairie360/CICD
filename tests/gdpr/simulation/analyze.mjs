@@ -44,6 +44,11 @@ function allNeedles(personas, sensitive) {
   return list;
 }
 
+export function maskPrivacy(privacy, list) {
+  if (!privacy) return privacy;
+  return { ...privacy, third_party: (privacy.third_party ?? []).map((t) => ({ ...t, origin: mask(t.origin, list), example: mask(t.example, list) })) };
+}
+
 function find(text, list) {
   const lower = text.toLowerCase();
   return list.find((n) => lower.includes(n.text.toLowerCase())) ?? null;
@@ -216,7 +221,8 @@ export async function main(argv, { env = process.env, client = null, log = conso
   mkdirSync(reportDir, { recursive: true });
   // Fronts (MAIR-497): requests, cookies and legal links of the pages the personas opened.
   // Report-only (MAIR-292): they never change the exit code.
-  const privacy = readJson(join(runDir, "browser", "privacy.json"));
+  // The third-party examples are request URLs: a persona value in one is masked like in a log.
+  const privacy = maskPrivacy(readJson(join(runDir, "browser", "privacy.json")), allNeedles(run.personas, run.sensitive));
   const text = summary(result, { ai, notChecked }) + (privacy ? `\n${summarizePrivacy(privacy)}` : "");
   writeFileSync(join(reportDir, "summary.md"), text);
   writeFileSync(join(reportDir, "report.json"), `${JSON.stringify({ blocked: result.blocked, not_checked: notChecked, privacy, deterministic: result.deterministic, expected_failures: result.expected, findings: result.findings, ai: { model: ai.model, enabled: ai.enabled, asked: ai.asked, cached: ai.cached, error: ai.error } }, null, 2)}\n`);

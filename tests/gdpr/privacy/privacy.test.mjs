@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluatePrivacy, parseSetCookie, summarizePrivacy } from "./privacy.mjs";
+import { evaluatePrivacy, finishPrivacy, parseSetCookie, summarizePrivacy, watchPrivacy } from "./privacy.mjs";
 
 test("Set-Cookie lines are parsed with their flags", () => {
   assert.deepEqual(parseSetCookie("accessToken=abc; Path=/; HttpOnly; Secure; SameSite=Strict"), {
@@ -48,4 +48,34 @@ test("third parties, cookies and missing legal links are reported, the session c
   assert.match(summary, /⚠️ 4 finding\(s\) over 3 state\(s\)/);
   assert.match(summary, /`https:\/\/fonts.googleapis.com` \| stylesheet/);
   assert.match(summarizePrivacy(evaluatePrivacy([states[2]], { target: "http://front:5000" })), /✅ 1 state\(s\)/);
+});
+
+// A fake Playwright context: `on` registers the listeners, `emit` plays an event.
+function fakeContext(cookies) {
+  const listeners = {};
+  return {
+    on: (name, fn) => { listeners[name] = fn; },
+    emit: (name, value) => listeners[name](value),
+    cookies: async () => cookies,
+  };
+}
+
+test("a cookie the page sets on another path is kept apart from the injected session (MAIR-497)", async () => {
+  const context = fakeContext([
+    { name: "accessToken", path: "/", httpOnly: true, secure: true, sameSite: "Strict" },
+    { name: "accessToken", path: "/projects", httpOnly: false, secure: false, sameSite: "Lax" },
+  ]);
+  const recorder = watchPrivacy(context);
+  const result = await finishPrivacy(recorder, context, { injected: [{ name: "accessToken", path: "/" }] });
+  assert.deepEqual(result.js_cookies, [{ name: "accessToken", httpOnly: false, secure: false, sameSite: "Lax" }]);
+  // Names only (the RGAA driver's form): every cookie of that name is the injected one.
+  assert.deepEqual((await finishPrivacy(recorder, context, { injected: ["accessToken"] })).js_cookies, []);
+});
+
+test("console messages are kept whole for the persona search (MAIR-497)", async () => {
+  const context = fakeContext([]);
+  const recorder = watchPrivacy(context);
+  const text = `${"x".repeat(5000)} gdpr.late@example.com`;
+  context.emit("console", { type: () => "log", text: () => text });
+  assert.equal((await finishPrivacy(recorder, context)).console[0].text, text);
 });

@@ -213,6 +213,10 @@ steps:
   assert.match(await errorsOf("  target: http://front:5001/app\n  pages: [{name: p, path: /}]\n"), /`target` must be the front's origin/);
   assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, wait: 3}]\n"), /unknown key `wait`/);
   assert.match(await errorsOf("  target: http://front:5001\n  wait_until: idle\n  pages: [{name: p, path: /}]\n"), /`wait_until` must be one of networkidle, load, domcontentloaded/);
+  assert.match(await errorsOf("  target: http://front:5001?preview=1\n  pages: [{name: p, path: /}]\n"), /without path, query or fragment/);
+  assert.match(await errorsOf("  target: http://front:5001#top\n  pages: [{name: p, path: /}]\n"), /without path, query or fragment/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, expect: []}]\n"), /`expect` must list HTTP status codes \(100-599\)/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, expect: [999]}]\n"), /`expect` must list HTTP status codes \(100-599\)/);
   writeFileSync(join(dir, "sim.yaml"), sim("  target: https://www.example.com\n  pages: [{name: p, path: /}]\n"));
   assert.equal(await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], { env: { GDPR_SIMULATION: "test-stack" }, log: () => {} }), 3, "a browser target outside the stack is refused");
 });
@@ -255,6 +259,7 @@ browser:
     const leak = calls.length === 2 ? `title of ${personas ?? "?"}` : "page ready";
     return {
       status: 200,
+      url,
       requests: [{ origin: "http://front:5001", type: "document", example: url }, { origin: "https://cdn.example.com", type: "font", example: "https://cdn.example.com/f.woff2" }],
       set_cookies: [], js_cookies: [], legal: { legal_notice: false, privacy_policy: true },
       console: [{ type: "log", text: leak }],
@@ -293,6 +298,77 @@ browser:
   assert.match(text, /cdn\.example\.com/);
   writeFileSync(join(run, "browser", "console.json"), "[]");
   assert.equal(await analyzeMain([run, report], { env: {}, log: () => {} }), 0, "privacy findings alone do not block");
+});
+
+test("a page redirected elsewhere fails, and a browser failure still erases the persona", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-redirect-"));
+  writeFileSync(join(dir, "journey.yaml"), `version: 1
+target: http://front:5001
+env: [ADMIN_JWT]
+steps:
+  - name: create
+    request: {method: POST, path: /api/projects, json: {title: "{{marker.last_name}}"}}
+    capture: {project_id: body.id}
+`);
+  const sim = (cookie) => `version: 1
+journey: journey.yaml
+personas: 1
+erased: 1
+erase:
+  - name: erase
+    request: {method: DELETE, path: "/api/projects/{{project_id}}"}
+browser:
+  target: http://front:5001
+  cookies: {accessToken: "${cookie}"}
+  pages:
+    - {name: project, path: "/projects/{{project_id}}"}
+`;
+  const run = async (cookie, recordPage) => {
+    writeFileSync(join(dir, "sim.yaml"), sim(cookie));
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push(`${init.method} ${new URL(url).pathname}`);
+      return new Response(JSON.stringify({ id: 7 }), { status: 200 });
+    };
+    const code = await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], {
+      env: { GDPR_SIMULATION: "test-stack", ADMIN_JWT: "jwt" }, fetchImpl, log: () => {},
+      launchBrowser: async () => ({ close: async () => {} }), recordPage,
+    });
+    return { code, calls, journeys: JSON.parse(readFileSync(join(dir, "run", "journeys.json"), "utf8")) };
+  };
+  const page = (url) => ({ status: 200, url, requests: [], set_cookies: [], js_cookies: [], legal: null, console: [], storage: [] });
+
+  // The front sent the browser to the login page, which answers 200: the persona's page was never seen.
+  const redirected = await run("{{env.ADMIN_JWT}}", async () => page("http://login-front:5000/?redirect=%2Fprojects%2F7"));
+  assert.equal(redirected.code, 1);
+  assert.match(redirected.journeys[0].results[1].error, /ended on http:\/\/login-front:5000\/ instead of http:\/\/front:5001\/projects\/7/);
+  // A query normalized by the front is the same page.
+  assert.equal((await run("{{env.ADMIN_JWT}}", async (b, url) => page(`${url}?view=kanban`))).code, 0);
+
+  // The browser cannot even start the page: the run fails, the erase step still runs.
+  const broken = await run("{{env.ADMIN_JWT}}", async () => { throw new Error("browser crashed"); });
+  assert.equal(broken.code, 1);
+  assert.deepEqual(broken.calls, ["POST /api/projects", "DELETE /api/projects/7"]);
+  assert.deepEqual(broken.journeys[0].results.map((r) => [r.name, r.ok]), [["create", true], ["page project", false], ["erase", true]]);
+});
+
+test("persona values in the third-party request examples are masked in the report", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-mask-"));
+  const values = { email: "gdpr.maskme@example.com", first_name: "Markermaskme", last_name: "Tracermaskme", phone: "0612345678", password: "Mkabcdef!1234ABCD" };
+  writeFileSync(join(dir, "personas.json"), JSON.stringify({ personas: [{ id: "p1", erase: false, values }], ignore: [] }));
+  writeFileSync(join(dir, "containers.log"), "front-1  | GET / 200\n");
+  mkdirSync(join(dir, "browser"));
+  writeFileSync(join(dir, "browser", "privacy.json"), JSON.stringify({
+    third_party: [{ origin: "https://tracker.example.com", types: ["image"], states: ["p1 board"], example: `https://tracker.example.com/pixel?u=${values.email}` }],
+    cookies: [], legal_missing: [], checked: 1,
+  }));
+  const report = join(dir, "report");
+  await analyzeMain([dir, report], { env: {}, log: () => {} });
+  for (const file of ["summary.md", "report.json"]) {
+    const text = readFileSync(join(report, file), "utf8");
+    assert.match(text, /tracker\.example\.com/);
+    assert.ok(!text.includes(values.email), `${file} holds the persona's e-mail`);
+  }
 });
 
 // One OTLP JSON export request, as the collector's `file` exporter writes it (MAIR-501).
