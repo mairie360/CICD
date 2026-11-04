@@ -34,6 +34,7 @@ The steps of every job live in composite actions sorted by check type, then by s
 | `actions/security/semgrep`, `actions/security/gitleaks` | cross-stack SAST and secret scan (pinned Docker images), `security_sast` job of every workflow but the fronts' | all but `fronts` |
 | `actions/security/semgrep-pypi`, `actions/security/gitleaks-binary` | the same scans from the hash-checked Semgrep wheel and Gitleaks release binary (no Docker Hub pull); `frontend-cicd.yml`, `frontend-dev-exception.yml` and this repo's `lint.yml` | `fronts` |
 | `actions/performance/<stack>` | k6 load test (`apis`, `bffs`, `fronts`), schema bench (`db`) | `apis`, `bffs`, `fronts`, `db` |
+| `actions/e2e/<stack>` | Playwright user journeys of a front on its `docker-compose-e2e.yml` stack, prod gate of `promote-prod.yml` (MAIR-602) | `fronts` |
 | `actions/release/` | `docker-release`, `semantic-tag`, `publish-openapi-rust`, `publish-openapi-typescript`, `release-folder` (database), `docker-manual-build`, `frontend-dev-exception` (`check_policy.py` of `frontend-dev-exception.yml`) | — |
 | `actions/promote/` | `resolve` (commit promoted and its checks), `next-version` (semantic-release dry run on a commit behind main's tip), used by `promote-staging.yml` / `promote-prod.yml` (MAIR-494) | — |
 | `actions/notify/cicd-failure` | n8n notification of a failed run | all |
@@ -197,7 +198,7 @@ workflow per environment, each calling a reusable workflow of this repo. No imag
 | --- | --- | --- |
 | Commit | `sha` input, else main's newest commit (release journal / `[skip ci]` commits left out) | `sha` input, else main's newest commit released on staging |
 | Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists |
-| Gates | integration tests (APIs; BFFs since MAIR-262, newman collection), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder and GDPR inventory (database, MAIR-491, MAIR-285); RGPD / RGAA / E2E plug in here (MAIR-604, MAIR-317/319, MAIR-602) |
+| Gates | integration tests (APIs; BFFs since MAIR-262, newman collection), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder and GDPR inventory (database, MAIR-491, MAIR-285); end-to-end journeys (fronts, MAIR-602) on `<image>@<staging digest>`; RGPD / RGAA plug in here (MAIR-604, MAIR-317/319) |
 | Environment | `Staging` | `Prod` |
 | Publishes | `staging-<sha>` / `staging`, `@mairie360/<name>-openapi@0.0.0-staging.<sha>` (APIs: 7 chars, BFFs: 40) | git tag `v<version>` + GitHub release on the commit, `<version>` / `latest`, OpenAPI `<version>` |
 
@@ -458,6 +459,30 @@ allow:                      # credentials a response may carry, and why
 
 Locally: `cd tests/gdpr && npm ci && node contract/check.mjs <openapi.json> <inventory.yaml> <report dir> [gdpr-contract.yaml]`
 (`GDPR_AI=off` to skip the proposals, `GDPR_AI_CACHE=<file>` to keep them).
+
+### End-to-end journeys of the fronts (`actions/e2e/fronts`, MAIR-602)
+
+The prod promotion of a front (`stack: fronts`) runs its Playwright user journeys before the
+release, in the `e2e_tests` job, next to the database's `release_folder`. The job logs in to GHCR,
+checks out the promoted commit and runs the front's `./e2e_test.sh` with
+`TARGET_IMAGE=<image>@<digest>`: the digest `resolve` checked on staging, never a rebuild nor the
+mobile `staging-<sha>` tag. The job only runs when a version will be released. The
+script starts the front's `docker-compose-e2e.yml` (database, APIs, BFFs at the tags pinned in
+the file, the front image under test, and a `playwright` service that runs the specs of `e2e/`),
+then tears it down. RGPD, RGAA and E2E are three independent gates: each has its own stack and
+its own sessions (the journeys sign their seeded users in with the stack's shared `JWT_SECRET`).
+
+The action refuses a front without `./e2e_test.sh` or without `e2e/*.spec.ts` (`check_journeys.sh`),
+so a front cannot reach prod without journeys, and a failed journey blocks `promote`. A run that
+exits 0 must also leave `e2e-report/results.json` with at least one passed journey and no failed
+one (`summarize.py --check`): no report, or every journey skipped, fails the gate. It writes a
+job summary from the `json` reporter (`summarize.py`: one line per journey) and uploads
+`e2e-report/` (HTML report, traces and videos of the failed journeys, `e2e-report` artifact, 30
+days). Tests: `python3 -m unittest discover -s actions/e2e/fronts/tests` (in `lint.yml`). What a
+front must ship is described in the fronts' `CLAUDE.md` (MAIR-603): `e2e/` with its own
+`package.json` pinning `@playwright/test` at the version of the `mcr.microsoft.com/playwright`
+image of the compose file, `playwright.config.ts` reading `E2E_BASE_URL` / `E2E_REPORT_DIR`,
+at least one nominal and one refusal journey, and `npm run e2e` for local iterations.
 
 ### Migrating a consumer to the promotion workflows (v4.4.0, MAIR-494)
 

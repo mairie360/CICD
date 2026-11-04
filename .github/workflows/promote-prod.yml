@@ -11,11 +11,13 @@ name: Promote to Prod
 #   gdpr_marker   APIs and BFFs: no value of a marker user reaches the logs of the staging image (MAIR-290)
 #   gdpr_simulation  APIs, BFFs and fronts: GDPR usage simulation on the staging image + AI review (MAIR-497)
 #   rgaa          fronts only: RGAA check of the staging image on the states of rgaa.yaml (MAIR-317)
+#   e2e_tests     fronts only: Playwright user journeys of the front's `e2e/` on the stack of its
+#                 `docker-compose-e2e.yml`, with the staging digest under promotion (MAIR-602)
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package, release journal
 #
 # The prod gates of epic MAIR-492 (RGPD MAIR-604, RGAA MAIR-317/319, E2E MAIR-602) plug in as jobs
-# between `version` and `promote`, like `release_folder`.
+# between `version` and `promote`, like `release_folder` and `e2e_tests`.
 
 on:
   workflow_call:
@@ -393,11 +395,54 @@ jobs:
         if: failure()
         uses: ./cicd-repo/actions/integration/container-logs
 
+  e2e_tests:
+    name: End-to-end journeys (Playwright)
+    # No stack when there is nothing to release: promote would be skipped anyway.
+    if: inputs.stack == 'fronts' && needs.version.outputs.published == 'true'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+
+      # By digest, the one resolve checked on staging: the journeys run on what prod will get,
+      # even if the mobile staging-<sha> tag moves during the run.
+      - name: Run the end-to-end journeys via Docker Compose
+        timeout-minutes: 25
+        uses: ./cicd-repo/actions/e2e/fronts
+        with:
+          node_auth_token: ${{ secrets.GITHUB_TOKEN }}
+          target_image: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+
+      - name: Dump container logs
+        if: failure()
+        uses: ./cicd-repo/actions/integration/container-logs
+
   promote:
     name: Release Prod
     # [CHANGEMENT] MAIR-285 / MAIR-290 / MAIR-497: also waits for the GDPR inventory, log marker and simulation gates.
     # [CHANGEMENT] MAIR-317: and for the RGAA check of the fronts.
-    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa]
+    # [CHANGEMENT] MAIR-602: and for the end-to-end journeys of the fronts.
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa, e2e_tests]
     if: >-
       always()
       && needs.resolve.result == 'success'
@@ -408,6 +453,7 @@ jobs:
       && (needs.gdpr_marker.result == 'success' || needs.gdpr_marker.result == 'skipped')
       && (needs.gdpr_simulation.result == 'success' || needs.gdpr_simulation.result == 'skipped')
       && (needs.rgaa.result == 'success' || needs.rgaa.result == 'skipped')
+      && (needs.e2e_tests.result == 'success' || needs.e2e_tests.result == 'skipped')
     runs-on: ubuntu-latest
     environment: Prod
     timeout-minutes: 30
@@ -502,7 +548,7 @@ jobs:
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
-    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa, promote]
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa, e2e_tests, promote]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
