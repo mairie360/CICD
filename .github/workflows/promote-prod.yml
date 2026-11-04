@@ -12,7 +12,7 @@ name: Promote to Prod
 #   gdpr_simulation  APIs, BFFs and fronts: GDPR usage simulation on the staging image + AI review (MAIR-497)
 #   rgaa          fronts only: RGAA check of the staging image on the states of rgaa.yaml (MAIR-317)
 #   e2e_tests     fronts only: Playwright user journeys of the front's `e2e/` on the stack of its
-#                 `docker-compose-e2e.yml`, with the `staging-<sha>` image under promotion (MAIR-602)
+#                 `docker-compose-e2e.yml`, with the staging digest under promotion (MAIR-602)
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package, release journal
 #
@@ -397,7 +397,8 @@ jobs:
 
   e2e_tests:
     name: End-to-end journeys (Playwright)
-    if: inputs.stack == 'fronts'
+    # No stack when there is nothing to release: promote would be skipped anyway.
+    if: inputs.stack == 'fronts' && needs.version.outputs.published == 'true'
     needs: [resolve, version]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -423,13 +424,14 @@ jobs:
           path: cicd-repo
           sparse-checkout: actions
 
-      # The image is the one resolve checked on staging: the journeys run on what prod will get.
+      # By digest, the one resolve checked on staging: the journeys run on what prod will get,
+      # even if the mobile staging-<sha> tag moves during the run.
       - name: Run the end-to-end journeys via Docker Compose
         timeout-minutes: 25
         uses: ./cicd-repo/actions/e2e/fronts
         with:
           node_auth_token: ${{ secrets.GITHUB_TOKEN }}
-          target_image: ${{ needs.resolve.outputs.image }}:staging-${{ needs.resolve.outputs.sha_tag }}
+          target_image: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
 
       - name: Dump container logs
         if: failure()

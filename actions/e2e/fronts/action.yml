@@ -14,7 +14,7 @@ inputs:
     required: true
   target_image:
     description: >-
-      Published front image under test (`<image>:staging-<sha_tag>` in the prod promotion); empty
+      Published front image under test (`<image>@<staging digest>` in the prod promotion); empty
       lets the consumer's script build the image locally (local runs only)
     required: false
     default: ""
@@ -36,6 +36,12 @@ runs:
       env:
         NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
         TARGET_IMAGE: ${{ inputs.target_image }}
+
+    # An exit code of 0 is not enough: the gate needs a report with at least one journey that
+    # passed (no report, or every journey skipped, used to let the promotion through).
+    - name: Check the report proves the journeys ran
+      shell: bash
+      run: python3 "${GITHUB_ACTION_PATH}/summarize.py" --check e2e-report/results.json
 
     - name: Summarize the journeys
       if: always()

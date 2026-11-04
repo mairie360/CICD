@@ -72,6 +72,55 @@ class Summary(unittest.TestCase):
         self.assertIn('not a Playwright JSON report', summarize.render(self.write('{not json')))
 
 
+class EvidenceGate(unittest.TestCase):
+    """MAIR-602 review: an exit code of 0 is not enough, the report must show a passed journey."""
+
+    def check(self, payload=None, missing=False):
+        if missing:
+            return summarize.check('/nonexistent/results.json')
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            f.write(payload if isinstance(payload, str) else json.dumps(payload))
+        self.addCleanup(os.unlink, f.name)
+        return summarize.check(f.name)
+
+    def test_refuses_a_run_without_report(self):
+        ok, message = self.check(missing=True)
+        self.assertFalse(ok)
+        self.assertIn('without a Playwright report', message)
+
+    def test_refuses_an_unreadable_report(self):
+        self.assertFalse(self.check('{not json')[0])
+
+    def test_refuses_a_run_where_every_journey_was_skipped(self):
+        ok, message = self.check(report(('creates a project', 'skipped'), ('deletes it', 'skipped')))
+        self.assertFalse(ok)
+        self.assertIn('no journey passed', message)
+
+    def test_refuses_an_empty_report(self):
+        self.assertFalse(self.check({'suites': []})[0])
+
+    def test_refuses_a_failed_journey_even_with_exit_code_0(self):
+        self.assertFalse(self.check(report(('creates a project', 'expected'), ('deletes it', 'unexpected')))[0])
+
+    def test_accepts_passed_and_flaky_journeys(self):
+        ok, message = self.check(report(('creates a project', 'expected'), ('renames it', 'flaky'), ('x', 'skipped')))
+        self.assertTrue(ok, message)
+        self.assertIn('2 journey(s) passed, 1 skipped', message)
+
+    def test_cli_exit_codes(self):
+        missing = subprocess.run(['python3', str(HERE / 'summarize.py'), '--check', '/nonexistent/results.json'],
+                                 capture_output=True, text=True)
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn('::error title=e2e::', missing.stdout)
+
+    def test_the_action_runs_the_check_after_the_journeys(self):
+        action = (HERE / 'action.yml').read_text(encoding='utf-8')
+        run = action.index('run: ./e2e_test.sh')
+        gate = action.index('summarize.py" --check e2e-report/results.json')
+        self.assertLess(run, gate)
+        self.assertLess(gate, action.index('- name: Summarize the journeys'))
+
+
 class PromoteProdWiring(unittest.TestCase):
     """The journeys gate the prod promotion of the fronts."""
 
@@ -80,9 +129,12 @@ class PromoteProdWiring(unittest.TestCase):
 
     def test_job_runs_the_action_on_the_staging_image_of_fronts(self):
         job = self.text[self.text.index('  e2e_tests:'):self.text.index('  promote:')]
-        self.assertIn("if: inputs.stack == 'fronts'", job)
+        # MAIR-602 review: no stack when the promotion has nothing to release.
+        self.assertIn("if: inputs.stack == 'fronts' && needs.version.outputs.published == 'true'", job)
         self.assertIn('uses: ./cicd-repo/actions/e2e/fronts', job)
-        self.assertIn('target_image: ${{ needs.resolve.outputs.image }}:staging-${{ needs.resolve.outputs.sha_tag }}', job)
+        # MAIR-602 review: by the digest resolve checked, never the mobile staging-<sha> tag.
+        self.assertIn('target_image: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}', job)
+        self.assertNotIn(':staging-', job.split('target_image:', 1)[1].splitlines()[0])
         self.assertIn('uses: ./cicd-repo/actions/integration/container-logs', job)
 
     def test_release_waits_for_the_journeys(self):
