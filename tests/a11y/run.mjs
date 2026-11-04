@@ -18,6 +18,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { aiSettings, createClient, elements, estimatedRate, judge, loadCache, proposals, saveCache } from "./ai.mjs";
+import { mergeSiteItems } from "./extract.mjs";
 import { captureState } from "./capture.mjs";
 import { aggregate, loadCriteria } from "./criteria.mjs";
 import { computeRate, criterionStatus, minRate } from "./rate.mjs";
@@ -236,7 +237,8 @@ async function main([scopeFile, reportDir]) {
   // States finish in any order (parallel runs): the report follows the scope order.
   const criterionOrder = new Map(scope.criteria.map((id, i) => [id, i]));
   aiItems.sort((a, b) => a.order - b.order || criterionOrder.get(a.criterion) - criterionOrder.get(b.criterion) || a.index - b.index);
-  const aiReport = await preAudit(ai, aiItems.map(({ order, ...item }) => item), results);
+  // 11.3 is judged on the labels of every state together (MAIR-320).
+  const aiReport = await preAudit(ai, mergeSiteItems(aiItems.map(({ order, ...item }) => item)), results);
   const report = {
     version: REPORT_VERSION,
     target: scope.target,

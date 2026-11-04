@@ -1100,15 +1100,23 @@ of the n8n chain (MAIR-298) a pre-filled answer and the report an **estimated ra
 | 11.2 | fields: label, type, placeholder, required |
 | 11.9 | buttons: accessible name, visible text |
 | 13.5 / 13.6 | emoji, symbols or ASCII art used as content, with their alternative |
+| 3.1 | the whole page: title, ARIA snapshot and a JPEG screenshot (its top 4000 px); one page per request |
+| 7.4 | the page's selectable controls (lists, choices, switches): name, type, form with a submit button, description |
+| 9.1 | the page's visible headings in order, with their level |
+| 11.3 | every distinct field (label, type, `autocomplete`) of **all** the states together: one item for the set of pages |
 
-Only the criteria declared in `rgaa.yaml` are extracted.
+Only the criteria declared in `rgaa.yaml` are extracted. 3.1, 7.4, 9.1 and 11.3 depend on the whole
+page: they get one item per state (11.3 one for the run), judged with its page. The fingerprint of a
+3.1 page is its ARIA snapshot plus a digest of its markup with classes and styles (stylesheet URLs
+carry the CSS content hash), never the screenshot pixels, so an unchanged page keeps its verdict;
+a CSS change that renames no stylesheet is not seen until the markup changes.
 
 **How each element is judged.** Each element has a fingerprint: SHA-256 of the criterion, the
 extracted fields and `EXTRACTION_VERSION` (bump it when a prompt changes). An element already in
 the verdict cache is never sent again: a run without change makes no API call.
 
 The other elements go to Claude (`@anthropic-ai/sdk`), with these settings:
-- 15 elements per request, 3 requests in parallel;
+- 15 elements per request (3.1 and 11.3: 1, 7.4 and 9.1: 4), 3 requests in parallel;
 - one system prompt per criterion, prompt-cached;
 - structured output (`valid` / `invalid` / `uncertain`, plus a reason in French);
 - effort `low`;
@@ -1121,6 +1129,10 @@ API errors and refusals give `uncertain` and are not cached, so they are retried
 proposes `validated`. Anything else is `uncertain`. The estimated rate counts these proposals for
 the criteria left `to_review`. Both appear in `report.json` (`ai`, with `ai.elements`: every judged element and its verdict, the input of the reviewer form, MAIR-298) and in the job summary, with the
 invalid elements, the model, the number of judged and cached elements, and the cost.
+
+**Not done yet** (MAIR-320, waits for the n8n reviewer chain MAIR-298 / store MAIR-275): the
+agreement rate between the AI and the RGAA reviewer per criterion, and the versioned list of the
+criteria whose AI verdicts count in the gating rate. Until then no AI verdict reaches `report.rate`.
 
 **Settings.**
 

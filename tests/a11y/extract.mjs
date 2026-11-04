@@ -14,7 +14,17 @@ export const AI_CRITERIA = {
   "11.9": "button",
   "13.5": "cryptic",
   "13.6": "cryptic",
+  // Criteria that depend on the whole page: one item per state (11.3: one for all the states).
+  "3.1": "page",
+  "7.4": "controls",
+  "9.1": "headings",
+  "11.3": "labels",
 };
+
+// The kinds that describe a whole page rather than one element.
+export const PAGE_KINDS = new Set(["page", "controls", "headings", "labels"]);
+const MAX_PAGE_SHOT_HEIGHT = 4000;
+const MAX_ARIA_CHARS = 30000;
 
 const MAX_ITEMS_PER_KIND = 60;
 const MAX_IMAGE_SIDE = 800;
@@ -85,13 +95,15 @@ function inPageExtract({ kinds, max }) {
       if (visible(el)) push("link", el, { name: name(el), href: (el.getAttribute("href") ?? "").slice(0, 200) });
     }
   }
+  const FIELDS = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), select, textarea, [role="textbox"], [role="combobox"], [role="searchbox"], [role="listbox"], [role="checkbox"], [role="radio"], [role="switch"]';
+  const fieldType = (el) => el.getAttribute("type") ?? el.getAttribute("role") ?? el.localName;
   if (kinds.includes("field")) {
-    const fields = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), select, textarea, [role="textbox"], [role="combobox"], [role="searchbox"], [role="listbox"], [role="checkbox"], [role="radio"], [role="switch"]';
+    const fields = FIELDS;
     for (const el of document.querySelectorAll(fields)) {
       if (!visible(el)) continue;
       push("field", el, {
         name: name(el),
-        type: el.getAttribute("type") ?? el.getAttribute("role") ?? el.localName,
+        type: fieldType(el),
         placeholder: text(el.getAttribute("placeholder")),
         required: el.required || el.getAttribute("aria-required") === "true",
       });
@@ -124,16 +136,75 @@ function inPageExtract({ kinds, max }) {
       });
     }
   }
+  // Page-level items (MAIR-320): what the criterion is judged on, for the whole state.
+  const page = (kind, fields) => items.push({ kind, index: items.length, target: "document", html: "", context: "", name: text(document.title), ...fields });
+  if (kinds.includes("headings")) {
+    const headings = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]')]
+      .filter((el) => visible(el) && !el.closest('[aria-hidden="true"]'))
+      .slice(0, 150)
+      .map((el) => ({ level: Number(el.getAttribute("aria-level") ?? (/^h\d$/.test(el.localName) ? el.localName.slice(1) : 2)), text: rendered(el).slice(0, 120) }));
+    page("headings", { headings });
+  }
+  if (kinds.includes("labels")) {
+    const seen = new Set();
+    const fields = [];
+    for (const el of document.querySelectorAll(FIELDS)) {
+      if (!visible(el)) continue;
+      const field = { name: name(el), type: fieldType(el), autocomplete: el.getAttribute("autocomplete") ?? "" };
+      const key = JSON.stringify(field);
+      if (!seen.has(key) && fields.length < 150) fields.push(field) && seen.add(key);
+    }
+    if (fields.length > 0) page("labels", { fields });
+  }
+  if (kinds.includes("controls")) {
+    // Controls whose change could start a script that changes the context (7.4): lists, choices,
+    // switches. Whether their form has a submit button and what describes them helps the judge.
+    const controls = [];
+    for (const el of document.querySelectorAll('select, input[type="radio"], input[type="checkbox"], [role="combobox"], [role="listbox"], [role="radio"], [role="checkbox"], [role="switch"]')) {
+      if (!visible(el) || controls.length >= 80) continue;
+      const form = el.closest("form");
+      controls.push({
+        name: name(el),
+        type: fieldType(el),
+        in_form: Boolean(form),
+        form_has_submit: Boolean(form?.querySelector('button[type="submit"], button:not([type]), input[type="submit"]')),
+        description: byIds(el.getAttribute("aria-describedby")).slice(0, 160),
+      });
+    }
+    if (controls.length > 0) page("controls", { controls });
+  }
+  if (kinds.includes("page")) page("page", {});
   return items;
+}
+
+// 11.3 is judged on the whole set of pages: the labels items of every state become one item, with
+// each distinct field once (sorted, so that the order of the states does not matter).
+export function mergeSiteItems(items) {
+  const labels = items.filter((i) => i.criterion === "11.3");
+  if (labels.length === 0) return items;
+  const fields = new Map();
+  for (const item of labels) for (const f of item.fields) fields.set(JSON.stringify(f), f);
+  const base = {
+    kind: "labels",
+    index: 0,
+    target: "document",
+    html: "",
+    context: "",
+    name: "Ensemble des pages",
+    fields: [...fields.keys()].sort().map((k) => fields.get(k)),
+  };
+  const merged = { ...base, criterion: "11.3", state: [...new Set(labels.map((i) => i.state))].join(", "), fingerprint: itemFingerprint("11.3", base) };
+  const first = items.indexOf(labels[0]);
+  return [...items.slice(0, first), merged, ...items.slice(first + 1).filter((i) => i.criterion !== "11.3")];
 }
 
 // Fields that do not change the verdict of a criterion stay out of its fingerprint, so that the same
 // component in several stories or pages is judged once. The context matters for images and links
 // (an alt or a link text is judged against it), much less for button names, labels and symbols.
-export const CONTEXT_FREE = new Set(["11.2", "11.9", "13.5", "13.6"]);
+export const CONTEXT_FREE = new Set(["11.2", "11.9", "13.5", "13.6", "3.1", "7.4", "9.1", "11.3"]);
 
 export function itemFingerprint(criterion, item) {
-  const { target, index, image, state, ...judged } = item;
+  const { target, index, image, image_type, state, ...judged } = item;
   if (CONTEXT_FREE.has(criterion)) delete judged.context;
   return createHash("sha256")
     .update(`${EXTRACTION_VERSION}|${criterion}|${JSON.stringify(judged, Object.keys(judged).sort())}`)
@@ -155,6 +226,21 @@ export async function extractItems(page, scope, stateId) {
     element.image = (await locator.screenshot({ type: "png" }).catch(() => null))?.toString("base64");
   }
   await page.evaluate(() => document.querySelectorAll("[data-rgaa-ai]").forEach((el) => delete el.dataset.rgaaAi));
+
+  // 3.1 (colour): the page as rendered, its ARIA snapshot, and a digest of the markup with its
+  // classes and styles, so that the verdict is reused until the page or its styles change.
+  for (const element of elements.filter((e) => e.kind === "page")) {
+    element.aria = (await page.locator("body").ariaSnapshot()).slice(0, MAX_ARIA_CHARS);
+    element.markup = createHash("sha256").update(await page.evaluate(() => window.__rgaa.normalizedHtml({ keepStyles: true }))).digest("hex");
+    const size = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight }));
+    const clip = { x: 0, y: 0, width: Math.max(1, size.width), height: Math.max(1, Math.min(size.height, MAX_PAGE_SHOT_HEIGHT)) };
+    const shot = await page.screenshot({ type: "jpeg", quality: 70, fullPage: true, clip }).catch(() => null);
+    if (shot) {
+      element.image = shot.toString("base64");
+      element.image_type = "image/jpeg";
+      element.truncated = size.height > MAX_PAGE_SHOT_HEIGHT;
+    }
+  }
 
   return criteria.flatMap((criterion) =>
     elements

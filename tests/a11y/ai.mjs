@@ -10,6 +10,8 @@ import { z } from "zod";
 
 export const DEFAULT_MODEL = "claude-sonnet-5-5";
 const BATCH_SIZE = 15;
+// Page-level criteria send a whole page per item: smaller batches (3.1 carries a screenshot).
+const BATCH_SIZES = { "3.1": 1, "7.4": 4, "9.1": 4, "11.3": 1 };
 const CONCURRENCY = 3;
 
 // Models that accept the server-side refusal fallback in its "default" form.
@@ -31,7 +33,47 @@ names in French are expected. Ignore technical attributes the user never perceiv
 class). Judge identical elements identically. Write each reason in French, in one short sentence of at
 most 20 words, naming what is wrong or what makes it compliant. Return exactly one verdict per element id.`;
 
+// Criteria judged on a whole page (MAIR-320): the item describes the page, not one element.
+const PAGE_COMMON = `You assist the RGAA 4.1.2 accessibility reviewer of Mairie 360, a French municipal web platform.
+You receive, as JSON, one item per page (or per set of pages) of the interface, and judge each item for
+ONE criterion only, on the whole page it describes. Judge only from what is given; do not assume
+anything that is not given. Answer "valid" when the page complies, "invalid" when it clearly does not,
+"uncertain" when the information given is not enough to decide. The interface is in French. Write
+each reason in French, in one short sentence of at most 25 words, naming the element at fault or what
+makes the page compliant. Return exactly one verdict per item id.`;
+
 export const PROMPTS = {
+  "3.1": `${PAGE_COMMON}
+Criterion 3.1: on each page, is information never conveyed by colour alone? Each item gives the page
+title, its ARIA snapshot (the text and roles assistive technologies get) and a screenshot (its top
+part when "truncated" is true), labelled with the item id. Invalid: a status, priority, error,
+required field, selected item, chart series or link shown only by a colour, with nothing in the text,
+an icon shape, a pattern or the accessible name that carries the same information. Colours that
+repeat information given otherwise are valid.`,
+  "7.4": `${PAGE_COMMON}
+Criterion 7.4: for each script that starts a change of context (a new page, a submitted form, a
+moved focus, a substantially changed content) when the user changes a control, is the user warned
+beforehand or in control of it? Each item lists the page's selectable controls (lists, choices,
+switches) with their name, whether they sit in a form with a submit button and their description.
+Invalid only when a name or description clearly states that changing the control navigates or
+submits by itself without a warning (e.g. a list named "Aller à la page" outside any form with no
+button). Filters and settings that update content in place, and controls in a form submitted by a
+button, are valid. Answer "uncertain" when nothing given lets you decide.`,
+  "9.1": `${PAGE_COMMON}
+Criterion 9.1: on each page, is the information structured by an appropriate use of headings? Each
+item gives the page title and its visible headings in document order, with their level. Invalid: no
+heading at all on a page with content, no level-1 heading, a heading text that does not describe the
+section it opens (empty, "Titre", a sentence of body text), headings used for styling, a level that
+skips an intermediate level in a way that breaks the outline. One level-1 heading naming the page,
+then sections, is the expected shape.`,
+  "11.3": `${PAGE_COMMON}
+Criterion 11.3: in each form, is each label of a field that has the same function, and is repeated
+on a page or across a set of pages, consistent? The single item lists every distinct field of the
+set of pages: label, type and autocomplete. Invalid: two fields with the same function (same
+autocomplete, or obviously the same data such as an email or a last name) labelled differently
+across pages ("Courriel" here, "Adresse e-mail" there; "Nom" and "Nom de famille"). Fields of
+different functions may have different labels.`,
+
   "1.3": `${COMMON}
 Criterion 1.3: is the text alternative of each informative image relevant? The "name" is the alt (or
 accessible name). A screenshot of the image is attached when available, labelled with the element id.
@@ -114,7 +156,7 @@ export function saveCache(file, cache) {
 // a cached verdict must not depend on the neighbours of the first occurrence, and nearby controls
 // misled the model ("Effacer" judged against the "Exporter CSV" next to it).
 function describe(item, id) {
-  const { fingerprint, target, index, image, state, kind, criterion, ...fields } = item;
+  const { fingerprint, target, index, image, image_type, markup, state, kind, criterion, ...fields } = item;
   if (CONTEXT_FREE.has(criterion)) delete fields.context;
   return { id, ...fields };
 }
@@ -128,7 +170,7 @@ function requestFor(model, criterion, batch) {
   for (const { id, item } of batch) {
     if (!item.image) continue;
     content.push({ type: "text", text: `Screenshot of element ${id}:` });
-    content.push({ type: "image", source: { type: "base64", media_type: "image/png", data: item.image } });
+    content.push({ type: "image", source: { type: "base64", media_type: item.image_type ?? "image/png", data: item.image } });
   }
   return {
     model,
@@ -193,8 +235,9 @@ export async function judge(items, { client, model, cache }) {
     const list = todo
       .filter((item) => item.criterion === criterion)
       .sort((a, b) => shape(a).localeCompare(shape(b)) || `${a.name}|${a.html}`.localeCompare(`${b.name}|${b.html}`));
-    for (let i = 0; i < list.length; i += BATCH_SIZE) {
-      batches.push({ criterion, batch: list.slice(i, i + BATCH_SIZE).map((item, k) => ({ id: `e${i + k + 1}`, item })) });
+    const size = BATCH_SIZES[criterion] ?? BATCH_SIZE;
+    for (let i = 0; i < list.length; i += size) {
+      batches.push({ criterion, batch: list.slice(i, i + size).map((item, k) => ({ id: `e${i + k + 1}`, item })) });
     }
   }
 

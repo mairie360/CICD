@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_MODEL, aiSettings, createClient, elements, estimatedRate, judge, proposals } from "./ai.mjs";
-import { itemFingerprint } from "./extract.mjs";
+import { itemFingerprint, mergeSiteItems } from "./extract.mjs";
 
 const item = (criterion, name, extra = {}) => {
   const base = { kind: "x", index: 0, target: `#${name}`, html: `<a>${name}</a>`, context: "", name, ...extra };
@@ -151,4 +151,57 @@ test("the context is not sent for the criteria judged without it", async () => {
   const sent = client.requests.flatMap((r) => JSON.parse(r.messages[0].content[0].text));
   assert.equal(sent.find((e) => e.name === "Effacer").context, undefined);
   assert.equal(sent.find((e) => e.name === "Lire").context, "Le rapport … Lire");
+});
+
+test("MAIR-320: page-level criteria have a prompt, small batches, and 3.1 sends its JPEG page screenshot", async () => {
+  const client = fakeClient();
+  const page = (criterion, n, extra = {}) => item(criterion, `Page ${n}`, { kind: "page", target: "document", html: "", ...extra });
+  const items = [
+    page("3.1", 1, { aria: "- heading \"Projets\" [level=1]", markup: "a".repeat(64), image: "/9j/4AAQ", image_type: "image/jpeg" }),
+    page("3.1", 2, { aria: "- heading \"Agenda\" [level=1]", markup: "b".repeat(64), image: "/9j/4AAQ", image_type: "image/jpeg" }),
+    ...Array.from({ length: 5 }, (_, i) => page("9.1", i, { headings: [{ level: 1, text: `Titre ${i}` }] })),
+    page("7.4", 1, { controls: [{ name: "Service", type: "select", in_form: false, form_has_submit: false, description: "" }] }),
+    page("11.3", 1, { fields: [{ name: "Courriel", type: "email", autocomplete: "email" }] }),
+  ];
+  await judge(items, { client, model: "claude-sonnet-5-5", cache: { version: 1, verdicts: {} } });
+  const of = (criterion) => client.requests.filter((r) => r.system[0].text.includes(`Criterion ${criterion}:`));
+  assert.equal(of("3.1").length, 2, "one page per 3.1 request");
+  assert.equal(of("9.1").length, 2, "9.1 in batches of 4");
+  assert.equal(of("7.4").length, 1);
+  assert.equal(of("11.3").length, 1);
+  const image = of("3.1")[0].messages[0].content.find((b) => b.type === "image");
+  assert.equal(image.source.media_type, "image/jpeg");
+  const sent = JSON.parse(of("3.1")[0].messages[0].content[0].text)[0];
+  assert.equal(sent.markup, undefined, "the markup digest is for the fingerprint only");
+  assert.equal(sent.image_type, undefined);
+  assert.match(sent.aria, /Projets/);
+});
+
+test("MAIR-320: 11.3 is judged once on the labels of every state, whatever their order", () => {
+  const labels = (state, fields) => {
+    const base = { kind: "labels", index: 0, target: "document", html: "", context: "", name: state, fields };
+    return { ...base, criterion: "11.3", state, fingerprint: itemFingerprint("11.3", base) };
+  };
+  const email = { name: "Courriel", type: "email", autocomplete: "email" };
+  const mail = { name: "Adresse e-mail", type: "email", autocomplete: "email" };
+  const other = item("6.1", "Accueil");
+  const a = mergeSiteItems([other, labels("profil", [email]), labels("inscription", [mail, email])]);
+  const b = mergeSiteItems([labels("inscription", [mail]), other, labels("profil", [email])]);
+  for (const merged of [a, b]) {
+    assert.equal(merged.filter((i) => i.criterion === "11.3").length, 1);
+    assert.ok(merged.includes(other));
+  }
+  const [ma, mb] = [a, b].map((list) => list.find((i) => i.criterion === "11.3"));
+  assert.deepEqual(ma.fields, mb.fields);
+  assert.equal(ma.fingerprint, mb.fingerprint, "the same set of labels keeps its cached verdict");
+  assert.equal(ma.fields.length, 2);
+  assert.match(ma.state, /profil/);
+  assert.deepEqual(mergeSiteItems([other]), [other]);
+});
+
+test("MAIR-320: the screenshot of a page never changes its fingerprint, its markup digest does", () => {
+  const base = { kind: "page", index: 0, target: "document", html: "", context: "", name: "Projets", aria: "x", markup: "a".repeat(64) };
+  const same = itemFingerprint("3.1", { ...base, image: "AAAA", image_type: "image/jpeg" });
+  assert.equal(itemFingerprint("3.1", { ...base, image: "BBBB", image_type: "image/jpeg" }), same);
+  assert.notEqual(itemFingerprint("3.1", { ...base, markup: "b".repeat(64) }), same);
 });

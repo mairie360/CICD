@@ -350,3 +350,23 @@ test("extracts the elements of the AI criteria, with a screenshot for images", {
   const again = await capture("/ai", declared, [], true);
   assert.deepEqual(again.aiItems.map((i) => i.fingerprint), aiItems.map((i) => i.fingerprint), "stable fingerprints");
 });
+
+test("MAIR-320: page-level criteria get one item per state, 3.1 with the page screenshot", { skip: !e2e }, async () => {
+  const declared = ["1.1", "3.1", "6.2", "7.4", "9.1", "11.1", "11.3"];
+  const { aiItems } = await capture("/ai", declared, [], true);
+  const one = (criterion) => {
+    const items = aiItems.filter((i) => i.criterion === criterion);
+    assert.equal(items.length, 1, `one ${criterion} item`);
+    return items[0];
+  };
+  assert.deepEqual(one("9.1").headings, [{ level: 1, text: "Projets" }]);
+  assert.deepEqual(one("11.3").fields.map((f) => f.name), ["Date", "Service", "Mode maintenance"]);
+  assert.deepEqual(one("7.4").controls.map((c) => [c.name, c.type, c.in_form]), [["Service", "select", false], ["Mode maintenance", "switch", false]]);
+  const page = one("3.1");
+  assert.equal(page.image_type, "image/jpeg");
+  assert.ok(page.image.length > 0, "the page screenshot is attached");
+  assert.match(page.aria, /heading "Projets" \[level=1\]/);
+  assert.match(page.markup, /^[0-9a-f]{64}$/);
+  const again = await capture("/ai", declared, [], true);
+  assert.deepEqual(again.aiItems.map((i) => i.fingerprint), aiItems.map((i) => i.fingerprint), "a page that did not change is never judged again");
+});
