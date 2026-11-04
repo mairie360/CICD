@@ -210,6 +210,7 @@ async function main([scopeFile, reportDir]) {
               Object.entries(capture.files).map(([k, v]) => [k, Array.isArray(v) ? v.map((f) => `states/${state.id}/${f}`) : `states/${state.id}/${v}`]),
             );
             res.checks = capture.checks;
+            res.components = capture.components;
             found.push(...capture.undeclared.map((u) => ({ state: state.id, ...u })));
           },
           onFailure: (page) => page.screenshot({ path: join(reportDir, "failures", `${state.id}.png`), fullPage: true }),
