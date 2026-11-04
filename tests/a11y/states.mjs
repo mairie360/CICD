@@ -1,0 +1,130 @@
+// Plays the states of a rgaa.yaml in a browser (MAIR-317): opens the session of the state's
+// user, loads the route (or the Storybook story) and runs its steps. The capture and the checks
+// of each state are added on top of this (MAIR-318).
+import { readFileSync } from "node:fs";
+import { sessionCookie } from "./session.mjs";
+
+const STATUS_OBSERVER = readFileSync(new URL("./status-observer.js", import.meta.url), "utf8");
+
+const ACTION_TIMEOUT = 10_000;
+const NAVIGATION_TIMEOUT = 30_000;
+// Best-effort wait for the network to go idle (late requests, fonts). A page that keeps a stream
+// open never goes idle, so it costs at most this, not a failure.
+const IDLE_TIMEOUT = 10_000;
+// Date seen by the page (Date.now, new Date), so that relative dates render the same at every run.
+export const FIXED_TIME = new Date("2026-01-15T09:00:00+01:00");
+
+export function locate(page, locator) {
+  const exact = locator.exact ?? false;
+  if (locator.role) return page.getByRole(locator.role, locator.name ? { name: locator.name, exact } : {});
+  if (locator.label) return page.getByLabel(locator.label, { exact });
+  if (locator.text) return page.getByText(locator.text, { exact });
+  if (locator.test_id) return page.getByTestId(locator.test_id);
+  return page.locator(locator.selector);
+}
+
+export function stateUrl(state) {
+  return state.story ? `/iframe.html?id=${encodeURIComponent(state.story)}&viewMode=story` : state.route;
+}
+
+async function select(page, { value, ...locator }) {
+  const element = locate(page, locator);
+  if ((await element.evaluate((node) => node.tagName)) === "SELECT") {
+    await element.selectOption({ label: value });
+    return;
+  }
+  // Custom listbox (lib-components): open it, then pick the option by its accessible name.
+  await element.click();
+  await page.getByRole("option", { name: value, exact: locator.exact ?? false }).click();
+}
+
+const ACTIONS = {
+  click: (page, arg) => locate(page, arg).click(),
+  hover: (page, arg) => locate(page, arg).hover(),
+  fill: (page, { value, ...locator }) => locate(page, locator).fill(value),
+  select,
+  press: (page, key) => page.keyboard.press(key),
+  wait_for: (page, arg) => locate(page, arg).waitFor({ state: "visible" }),
+  wait_for_hidden: (page, arg) => locate(page, arg).waitFor({ state: "hidden" }),
+  goto: (page, route) => open(page, route),
+};
+
+// A story that throws renders Storybook's error page with HTTP 200: checking it would report the
+// error page, not the component. It counts as a state that could not be reached.
+async function assertStoryRendered(page, story) {
+  const error = await page.evaluate(() => {
+    const shown = document.body.classList.contains("sb-show-errordisplay") || document.body.classList.contains("sb-show-nopreview");
+    if (!shown) return null;
+    return (document.querySelector("#error-message")?.textContent ?? document.querySelector(".sb-nopreview")?.textContent ?? "no preview")
+      .replace(/\s+/g, " ")
+      .trim();
+  });
+  if (error !== null) throw new Error(`story ${story} did not render: ${error.slice(0, 200)}`);
+}
+
+// Opens a route once its document is loaded, then gives late requests a bounded chance to end.
+// The network never goes idle on a page that keeps a stream open (Server-Sent Events, long
+// polling): waiting for "networkidle" in page.goto failed every such state with a timeout.
+async function open(page, route) {
+  const response = await page.goto(route, { waitUntil: "load" });
+  await page.waitForLoadState("networkidle", { timeout: IDLE_TIMEOUT }).catch(() => {});
+  return response;
+}
+
+async function settle(page) {
+  // Fonts and late requests (data loaded after hydration) must be in before a capture.
+  await page.waitForLoadState("networkidle", { timeout: IDLE_TIMEOUT }).catch(() => {});
+  // Bounded too: a font that never loads must not hold the state until the run's own timeout.
+  await page.evaluate((ms) => Promise.race([document.fonts?.ready, new Promise((resolve) => setTimeout(resolve, ms))]), IDLE_TIMEOUT);
+}
+
+// Plays one state on a fresh context. `onReached(page)` runs once the steps are done and the page
+// is settled; the context is closed afterwards. Returns { id, reached, error?, failed_step?, url }.
+export async function playState(browser, scope, state, { onReached, onFailure } = {}) {
+  const context = await browser.newContext({
+    baseURL: scope.target,
+    // A state may ask for another window size (a mobile layout); the default is a desktop one.
+    viewport: state.viewport ?? { width: 1280, height: 800 },
+    locale: "fr-FR",
+    timezoneId: "Europe/Paris",
+    // The engine injects its helpers and axe-core: the fronts' CSP would block them.
+    bypassCSP: true,
+    // Same rendering at every run (MAIR-318 fingerprints): no animation, a fixed date.
+    reducedMotion: "reduce",
+  });
+  await context.clock.setFixedTime(FIXED_TIME);
+  // Records the DOM changes caused by the steps, for the status-messages scenario (7.5).
+  await context.addInitScript({ content: STATUS_OBSERVER });
+  context.setDefaultTimeout(ACTION_TIMEOUT);
+  context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+  if (state.as) await context.addCookies([sessionCookie(scope, state.as)]);
+
+  const page = await context.newPage();
+  const result = { id: state.id, reached: false };
+  let step = -1;
+  try {
+    const response = await open(page, stateUrl(state));
+    if (response && response.status() >= 400) {
+      throw new Error(`${stateUrl(state)} answered HTTP ${response.status()}`);
+    }
+    if (state.story) await assertStoryRendered(page, state.story);
+    for (step = 0; step < (state.steps ?? []).length; step += 1) {
+      const [action, arg] = Object.entries(state.steps[step])[0];
+      await page.evaluate((i) => window.__rgaaStatus?.mark(i), step);
+      await ACTIONS[action](page, arg);
+    }
+    await settle(page);
+    await page.evaluate(() => window.__rgaaStatus?.stop());
+    result.reached = true;
+    result.url = page.url();
+    if (onReached) await onReached(page, result);
+  } catch (error) {
+    result.error = error.message.split("\n")[0];
+    if (step >= 0 && step < (state.steps ?? []).length) result.failed_step = step;
+    result.url = page.url();
+    if (onFailure) await onFailure(page, result).catch(() => {});
+  } finally {
+    await context.close();
+  }
+  return result;
+}

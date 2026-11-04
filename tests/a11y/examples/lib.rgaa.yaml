@@ -1,0 +1,20 @@
+# Example rgaa.yaml of lib-components, validated by the lint workflow.
+# States are Storybook stories; no session.
+version: 1
+target: http://storybook:6006
+
+criteria:
+  - "1.1"
+  - "1.2"
+  - "7.1"
+  - "7.3"
+  - "11.1"
+
+states:
+  - id: button-primary
+    story: components-button--primary
+  - id: confirm-modal-open
+    story: components-confirmmodal--default
+    steps:
+      - press: Tab
+      - wait_for: { role: dialog }

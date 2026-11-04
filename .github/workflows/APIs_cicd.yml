@@ -13,7 +13,7 @@ on:
       semgrep_config:
         required: false
         type: string
-        default: "p/rust p/secrets p/dockerfile p/github-actions"
+        default: "p/rust p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr"
         description: "Semgrep rulesets (space-separated) run by the SAST job"
       semgrep_fail_on_findings:
         required: false
@@ -25,10 +25,24 @@ on:
         type: boolean
         default: true
         description: "Fail the release on fixable HIGH/CRITICAL vulnerabilities found by Trivy in the image (accepted risks go in .trivyignore)"
+      # [NOUVEAU] MAIR-291: GDPR contract check.
+      gdpr_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model that proposes field-to-column mappings in the GDPR contract check (MAIR-291); only used when the ANTHROPIC_API_KEY secret is set"
+      gdpr_inventory_ref:
+        required: false
+        type: string
+        default: "main"
+        description: "Ref of mairie360/Database whose gdpr/inventory.yaml the GDPR contract check reads (MAIR-291)"
     secrets:
       ANTHROPIC_API_KEY:
         required: false
-        description: "Claude API key of the release journal (org secret); without it the journal keeps plain commit lists"
+        description: "Claude API key of the release journal and of the GDPR contract proposals (org secret); without it the journal keeps plain commit lists and the contract check runs without AI proposals"
+      # [NOUVEAU] MAIR-291: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
       RELEASE_APP_ID:
         required: false
         description: "Release app (org secret) pushing the release journal on main"
@@ -226,6 +240,46 @@ jobs:
           app_id: ${{ secrets.RELEASE_APP_ID }}
           app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
+  # [NOUVEAU] MAIR-291: the responses of the OpenAPI contract carry no credentials column of the
+  # GDPR inventory (actions/security/gdpr-contract). A check job of every event: `release-dev` does
+  # not need it, but promote-staging refuses a commit whose main run has a failed job (MAIR-494).
+  gdpr_contract:
+    name: GDPR contract (OpenAPI)
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      # Same command as publish-openapi-rust: the spec the release publishes.
+      - name: Generate the OpenAPI spec
+        run: cargo open_api > "$RUNNER_TEMP/openapi.json"
+
+      - name: Check the contract
+        uses: ./cicd-repo/actions/security/gdpr-contract
+        with:
+          spec_file: ${{ runner.temp }}/openapi.json
+          inventory_ref: ${{ inputs.gdpr_inventory_ref }}
+          ai_model: ${{ inputs.gdpr_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
@@ -236,6 +290,7 @@ jobs:
       - build
       - unit_test
       - release-dev
+      - gdpr_contract
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools

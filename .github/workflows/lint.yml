@@ -50,6 +50,9 @@ jobs:
       - name: Test isolated frontend target selection
         run: python3 -m unittest discover -s actions/integration/frontend-isolated-qa/tests -v
 
+      - name: Test the newman report summary of the BFF integration gate
+        run: python3 -m unittest discover -s actions/integration/bffs/tests -v
+
       - name: Test the release journal
         run: python3 -m unittest discover -s actions/release/release-journal/tests -v
 
@@ -64,6 +67,10 @@ jobs:
 
       - name: Test the fronts' end-to-end gate (MAIR-602)
         run: python3 -m unittest discover -s actions/e2e/fronts/tests -v
+
+      # MAIR-677: range scanned when the push base is unknown, inline allow ignored.
+      - name: Test the secret-scan range and flags
+        run: python3 -m unittest discover -s actions/security/gitleaks/tests -v
 
   frontend-exception-security:
     name: frontend dev exception source scans
@@ -86,3 +93,89 @@ jobs:
         uses: ./actions/security/gitleaks-binary
         with:
           fail_on_findings: 'true'
+
+  # [NOUVEAU] MAIR-285: unit tests of the GDPR inventory gate (tests/gdpr, no database, the
+  # Anthropic client is mocked).
+  gdpr:
+    name: GDPR checks tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/gdpr
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+        env:
+          # The browser comes with the Playwright image (end-to-end step below).
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Test
+        run: npm test
+
+      # [NOUVEAU] MAIR-292: the browser checks (tests/gdpr/privacy) on real pages, inside the pinned
+      # Playwright image, on a copy of the package with its own node_modules.
+      - name: Run the browser end-to-end tests
+        run: |
+          docker run --rm -v "$PWD:/engine:ro" -e GDPR_E2E=1 "$(cat privacy/runner-image)" sh -c \
+            'mkdir /tmp/engine && tar -C /engine --exclude=./node_modules -cf - . | tar -C /tmp/engine -xf - && cd /tmp/engine && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund --loglevel=error && node --test privacy/*.test.mjs'
+
+  # [NOUVEAU] MAIR-291: the GDPR Semgrep rules against their annotated test files.
+  semgrep-rules:
+    name: GDPR Semgrep rules tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # Same pinned image as actions/security/semgrep.
+      - name: Test the rules
+        run: |
+          image=$(sed -n 's/^ *default: "\(semgrep\/semgrep:[^"]*\)".*/\1/p' actions/security/semgrep/action.yml)
+          docker run --rm -v "$PWD/tests/semgrep:/src/semgrep:ro" -w /src "$image" \
+            semgrep --test --metrics=off --disable-version-check semgrep/gdpr
+
+  # [NOUVEAU] MAIR-316: the rgaa.yaml schema and its validator are consumed by every front and by
+  # lib-components; their tests (and the examples, which document the format) must stay green.
+  a11y:
+    name: RGAA engine tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/a11y
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tests/a11y/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # The browsers come with the runner image (end-to-end step below).
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Validate the examples
+        run: node validate.mjs examples/*.rgaa.yaml
+
+      # [NOUVEAU] MAIR-317: plays states in a real browser, inside the pinned runner image the
+      # consumers use, on a copy of the engine with its own node_modules (as run.sh does).
+      - name: Run end-to-end tests in the runner image
+        run: |
+          docker run --rm -v "$PWD:/engine:ro" -e RGAA_E2E=1 "$(cat runner-image)" sh -c \
+            'mkdir /tmp/engine && tar -C /engine --exclude=./node_modules -cf - . | tar -C /tmp/engine -xf - && cd /tmp/engine && npm ci --no-audit --no-fund --loglevel=error && node --test'

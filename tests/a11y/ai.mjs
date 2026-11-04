@@ -1,0 +1,292 @@
+// AI pre-audit of the relevance criteria (MAIR-320). Claude judges the extracted elements whose
+// fingerprint has no cached verdict; the verdicts never change the gating rate: they produce
+// proposals and an estimated rate for the RGAA reviewer (MAIR-298).
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import Anthropic from "@anthropic-ai/sdk";
+import { CONTEXT_FREE } from "./extract.mjs";
+import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { z } from "zod";
+
+export const DEFAULT_MODEL = "claude-sonnet-5-5";
+const BATCH_SIZE = 15;
+const CONCURRENCY = 3;
+
+// Models that accept the server-side refusal fallback in its "default" form.
+const FALLBACK_MODELS = new Set(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"]);
+
+// USD per million tokens, for the cost line of the report (other models: tokens only).
+const PRICES = {
+  "claude-sonnet-5-5": { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 },
+  "claude-opus-5-5": { input: 4, output: 20, cache_read: 0.2, cache_write: 5 },
+  "claude-haiku-4-5": { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
+};
+
+const COMMON = `You assist the RGAA 4.1.2 accessibility reviewer of Mairie 360, a French municipal web platform.
+You receive elements extracted from rendered pages (or component stories), as JSON, and judge each one
+for ONE criterion only. Judge from the element, its accessible name and its surrounding text; do not
+assume anything that is not given. Answer "valid" when the element complies, "invalid" when it clearly
+does not, "uncertain" when the information given is not enough to decide. The interface is in French:
+names in French are expected. Ignore technical attributes the user never perceives (id, data-*,
+class). Judge identical elements identically. Write each reason in French, in one short sentence of at
+most 20 words, naming what is wrong or what makes it compliant. Return exactly one verdict per element id.`;
+
+export const PROMPTS = {
+  "1.3": `${COMMON}
+Criterion 1.3: is the text alternative of each informative image relevant? The "name" is the alt (or
+accessible name). A screenshot of the image is attached when available, labelled with the element id.
+Invalid: file names, "image", "icon", "logo" alone when the logo carries a name, text that does not
+describe what the image conveys in its context, an avatar alt that is not the person's name.`,
+  "6.1": `${COMMON}
+Criterion 6.1: is each link explicit? A link is explicit when its name alone, or its name together with
+its context (the surrounding text given), lets the user know where it leads or what it does.
+Invalid: "cliquez ici", "en savoir plus", "voir", "lien" without context that disambiguates them; a link
+opening a file or a new window should say so.`,
+  "11.2": `${COMMON}
+Criterion 11.2: is the label of each form field relevant? Judge only the relevance of an existing
+label: a field with no label at all is "valid" here (it is judged by criterion 11.1). The label must let
+the user know what to enter. The expected format is judged by criterion 11.10, not here, and the value
+the field holds is never given: do not judge it. Invalid: generic labels ("champ", "texte", "input"), a
+label that does not match the field's type or purpose.`,
+  "11.9": `${COMMON}
+Criterion 11.9: is the accessible name of each button relevant? It must describe the action. When the
+button shows a visible label, the accessible name must contain that label; containment ignores case,
+punctuation and position ("Modèle terminé" contains "Terminé"). Exceptions, which are valid:
+- a trigger of a list or menu (popup "listbox", "menu", "true"): its visible text is the selected value,
+  not a label; the name must identify the field or the menu (e.g. "Filtrer par rôle" showing "Tous les
+  rôles" is valid);
+- a whole card or calendar entry made clickable: the name may summarize it (title, date) without
+  repeating every visible detail.
+Invalid: empty names, "bouton", placeholder names, a name that does not match the action, an
+icon-only button whose name does not say what it does, a name that leaves out the visible label of a
+regular button.`,
+  "13.5": `${COMMON}
+Criterion 13.5: does each cryptic content (emoji, symbol, ASCII art) have an alternative where needed?
+Valid: decorative symbols hidden from assistive technologies (aria_hidden true); common symbols whose
+spoken name carries the meaning in their sentence (→ between two values, ©, •, ✓ next to a label);
+symbols already explained by the text next to them. Invalid: an emoji or symbol whose meaning is
+lost when read aloud and that has no aria-label, role="img" name or equivalent text.`,
+  "13.6": `${COMMON}
+Criterion 13.6: for each cryptic content that has an explicit alternative (aria-label, role="img" name,
+title), is that alternative relevant, i.e. does it convey the meaning of the symbol? Elements without
+an explicit alternative are "valid" here: whether they need one is judged by criterion 13.5.`,
+};
+
+const Verdicts = z.object({
+  verdicts: z.array(
+    z.object({
+      id: z.string(),
+      verdict: z.enum(["valid", "invalid", "uncertain"]),
+      reason: z.string(),
+    }),
+  ),
+});
+
+export function aiSettings(env = process.env) {
+  const disabled = (env.RGAA_AI ?? "").trim().toLowerCase() === "off";
+  const cache = (env.RGAA_AI_CACHE ?? "").trim() || (existsSync("/ai-cache") ? "/ai-cache/verdicts.json" : "");
+  return {
+    enabled: !disabled && Boolean(env.ANTHROPIC_API_KEY),
+    reason: disabled ? "disabled by RGAA_AI=off" : env.ANTHROPIC_API_KEY ? null : "no ANTHROPIC_API_KEY",
+    model: (env.RGAA_AI_MODEL ?? "").trim() || DEFAULT_MODEL,
+    cache,
+  };
+}
+
+export function loadCache(file) {
+  if (!file || !existsSync(file)) return { version: 1, verdicts: {} };
+  try {
+    const cache = JSON.parse(readFileSync(file, "utf8"));
+    return cache?.version === 1 && cache.verdicts ? cache : { version: 1, verdicts: {} };
+  } catch {
+    return { version: 1, verdicts: {} };
+  }
+}
+
+export function saveCache(file, cache) {
+  if (!file) return;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(cache)}\n`);
+}
+
+// What the model sees of an item: no fingerprint, target or screenshot bytes.
+// The context is not sent for the criteria judged without it (it is not in their fingerprint either):
+// a cached verdict must not depend on the neighbours of the first occurrence, and nearby controls
+// misled the model ("Effacer" judged against the "Exporter CSV" next to it).
+function describe(item, id) {
+  const { fingerprint, target, index, image, state, kind, criterion, ...fields } = item;
+  if (CONTEXT_FREE.has(criterion)) delete fields.context;
+  return { id, ...fields };
+}
+
+// Elements differing only by numbers (calendar days and slots: "Sélectionner le 15 Juin 2026 à
+// 10:00") are sorted next to each other so that they share a batch and get the same verdict.
+const shape = (item) => `${item.name}|${item.visible_text ?? ""}|${item.html}`.replace(/\d+/g, "#");
+
+function requestFor(model, criterion, batch) {
+  const content = [{ type: "text", text: JSON.stringify(batch.map(({ id, item }) => describe(item, id))) }];
+  for (const { id, item } of batch) {
+    if (!item.image) continue;
+    content.push({ type: "text", text: `Screenshot of element ${id}:` });
+    content.push({ type: "image", source: { type: "base64", media_type: "image/png", data: item.image } });
+  }
+  return {
+    model,
+    max_tokens: 8000,
+    output_config: { effort: "low", format: betaZodOutputFormat(Verdicts) },
+    // Same system prompt for every batch of a criterion: cached after the first request.
+    system: [{ type: "text", text: PROMPTS[criterion], cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content }],
+    ...(FALLBACK_MODELS.has(model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" } : {}),
+  };
+}
+
+function addUsage(total, usage, model) {
+  for (const key of ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]) {
+    total[key] = (total[key] ?? 0) + (usage?.[key] ?? 0);
+  }
+  const price = PRICES[model];
+  if (price) {
+    total.cost_usd =
+      Math.round(
+        ((total.cost_usd ?? 0) +
+          ((usage?.input_tokens ?? 0) * price.input +
+            (usage?.output_tokens ?? 0) * price.output +
+            (usage?.cache_read_input_tokens ?? 0) * price.cache_read +
+            (usage?.cache_creation_input_tokens ?? 0) * price.cache_write) /
+            1e6) *
+          10000,
+      ) / 10000;
+  }
+}
+
+async function judgeBatch(client, model, criterion, batch, usage) {
+  const uncertain = (reason) => batch.map(({ id }) => ({ id, verdict: "uncertain", reason }));
+  try {
+    const response = await client.beta.messages.parse(requestFor(model, criterion, batch));
+    addUsage(usage, response.usage, model);
+    if (response.stop_reason === "refusal") return uncertain(`refus du modèle (${response.stop_details?.category ?? "sans catégorie"})`);
+    if (response.stop_reason === "max_tokens") return uncertain("réponse du modèle tronquée");
+    const byId = new Map((response.parsed_output?.verdicts ?? []).map((v) => [v.id, v]));
+    return batch.map(({ id }) => byId.get(id) ?? { id, verdict: "uncertain", reason: "pas de verdict renvoyé pour cet élément" });
+  } catch (error) {
+    if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) throw error;
+    if (error instanceof Anthropic.APIError) {
+      usage.errors = (usage.errors ?? 0) + 1;
+      usage.last_error = `${error.status ?? "network"}: ${error.error?.error?.message ?? error.message}`.slice(0, 300);
+      return uncertain(`erreur de l'API (${error.status ?? "réseau"})`);
+    }
+    throw error;
+  }
+}
+
+// `items`: extracted items, possibly repeated across states. Returns verdicts by fingerprint and the
+// run statistics; the cache object is updated in place.
+export async function judge(items, { client, model, cache }) {
+  const unique = new Map();
+  for (const item of items) if (!unique.has(item.fingerprint)) unique.set(item.fingerprint, item);
+  const todo = [...unique.values()].filter((item) => !cache.verdicts[item.fingerprint]);
+
+  const batches = [];
+  for (const criterion of Object.keys(PROMPTS)) {
+    // Similar elements in the same batch: they get consistent verdicts.
+    const list = todo
+      .filter((item) => item.criterion === criterion)
+      .sort((a, b) => shape(a).localeCompare(shape(b)) || `${a.name}|${a.html}`.localeCompare(`${b.name}|${b.html}`));
+    for (let i = 0; i < list.length; i += BATCH_SIZE) {
+      batches.push({ criterion, batch: list.slice(i, i + BATCH_SIZE).map((item, k) => ({ id: `e${i + k + 1}`, item })) });
+    }
+  }
+
+  const usage = {};
+  let next = 0;
+  const worker = async () => {
+    while (next < batches.length) {
+      const { criterion, batch } = batches[next];
+      next += 1;
+      const verdicts = await judgeBatch(client, model, criterion, batch, usage);
+      verdicts.forEach((verdict, k) => {
+        const { item } = batch[k];
+        // Uncertain answers caused by an error are not cached: they are retried at the next run.
+        if (/^(erreur|refus|réponse du modèle tronquée)/.test(verdict.reason)) return;
+        cache.verdicts[item.fingerprint] = { verdict: verdict.verdict, reason: verdict.reason, model, criterion };
+      });
+      batch.forEach(({ item }, k) => (item.verdict = verdicts[k]));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, worker));
+  // Every request failed: a configuration problem (key, workspace, model name), not the content.
+  // Reported as a pre-audit failure instead of hundreds of silent "uncertain" verdicts.
+  if (batches.length > 0 && usage.errors === batches.length) {
+    throw new Error(`every AI request failed (${usage.last_error})`);
+  }
+
+  const verdicts = {};
+  for (const [fingerprint, item] of unique) {
+    verdicts[fingerprint] = cache.verdicts[fingerprint] ?? { ...item.verdict, model };
+  }
+  return {
+    verdicts,
+    stats: { elements: unique.size, judged: todo.length, cached: unique.size - todo.length, requests: batches.length, usage },
+  };
+}
+
+// Per declared AI criterion: the proposal for the reviewer. Any invalid element invalidates the
+// criterion; it is proposed as validated only when every element is valid.
+export function proposals(items, verdicts) {
+  const out = {};
+  for (const item of items) {
+    const verdict = verdicts[item.fingerprint];
+    if (!verdict) continue;
+    const entry = (out[item.criterion] ??= { elements: 0, valid: 0, invalid: [], uncertain: 0, seen: new Set() });
+    if (entry.seen.has(item.fingerprint)) continue;
+    entry.seen.add(item.fingerprint);
+    entry.elements += 1;
+    if (verdict.verdict === "valid") entry.valid += 1;
+    else if (verdict.verdict === "uncertain") entry.uncertain += 1;
+    else entry.invalid.push({ state: item.state, target: item.target, html: item.html, name: item.name, reason: verdict.reason });
+  }
+  for (const entry of Object.values(out)) {
+    delete entry.seen;
+    entry.proposal = entry.invalid.length > 0 ? "invalidated" : entry.uncertain === 0 ? "validated" : "uncertain";
+  }
+  return out;
+}
+
+// Every judged element, once per (fingerprint, state), for the reviewer form of the n8n chain
+// (MAIR-298) and for checking the verdicts: no screenshot, the html excerpt is enough.
+export function elements(items, verdicts) {
+  const seen = new Set();
+  return items
+    .filter((item) => verdicts[item.fingerprint] && !seen.has(`${item.fingerprint}|${item.state}`) && seen.add(`${item.fingerprint}|${item.state}`))
+    .map(({ fingerprint, criterion, state, target, html, name }) => ({
+      fingerprint,
+      criterion,
+      state,
+      target,
+      name,
+      html,
+      verdict: verdicts[fingerprint].verdict,
+      reason: verdicts[fingerprint].reason,
+    }));
+}
+
+// Estimated rate: the decided criteria, plus the AI proposals on the criteria left to review.
+export function estimatedRate(criteria, ai) {
+  let validated = 0;
+  let invalidated = 0;
+  for (const c of criteria) {
+    const status = c.status === "to_review" ? ai[c.id]?.proposal : c.status;
+    if (status === "validated") validated += 1;
+    if (status === "invalidated") invalidated += 1;
+  }
+  const decided = validated + invalidated;
+  return { validated, invalidated, value: decided === 0 ? null : Math.round((validated / decided) * 1000) / 10 };
+}
+
+// ANTHROPIC_WORKSPACE_ID: needed when the API key is not scoped to a workspace (the API then
+// answers 400 "must include the anthropic-workspace-id header").
+export function createClient(env = process.env) {
+  const workspace = (env.ANTHROPIC_WORKSPACE_ID ?? "").trim();
+  return new Anthropic({ maxRetries: 4, ...(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {}) });
+}

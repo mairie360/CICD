@@ -7,14 +7,17 @@ name: Promote to Prod
 #   resolve       the commit (input, else main's newest one on staging) must have `staging-<sha>`
 #   version       semantic-release dry run on that commit (it can be behind main's tip)
 #   release_folder  database only: the Liquibase release folder matches that version (MAIR-491)
+#   gdpr_inventory  database only: every column of the staging schema is in gdpr/inventory.yaml (MAIR-285)
+#   gdpr_marker   APIs and BFFs: no value of a marker user reaches the logs of the staging image (MAIR-290)
+#   gdpr_simulation  APIs, BFFs and fronts: GDPR usage simulation on the staging image + AI review (MAIR-497)
+#   rgaa          fronts only: RGAA check of the staging image on the states of rgaa.yaml (MAIR-317)
+#   e2e_tests     fronts only: Playwright user journeys of the front's `e2e/` on the stack of its
+#                 `docker-compose-e2e.yml`, with the `staging-<sha>` image under promotion (MAIR-602)
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package, release journal
 #
-#   e2e_tests     fronts only: Playwright user journeys of the front's `e2e/` on the stack of its
-#                 `docker-compose-e2e.yml`, with the `staging-<sha>` image under promotion (MAIR-602)
-#
-# The other prod gates of epic MAIR-492 (RGPD MAIR-604, RGAA MAIR-317/319) plug in as jobs between
-# `version` and `promote`, like `release_folder` and `e2e_tests`.
+# The prod gates of epic MAIR-492 (RGPD MAIR-604, RGAA MAIR-317/319, E2E MAIR-602) plug in as jobs
+# between `version` and `promote`, like `release_folder` and `e2e_tests`.
 
 on:
   workflow_call:
@@ -41,8 +44,36 @@ on:
         type: string
         default: "openapi-spec.json"
         description: "Committed OpenAPI contract of a BFF (same as the main pipeline's input)"
+      npm_scope:
+        required: false
+        type: string
+        default: "@mairie360"
+        description: "BFFs: npm scope of the .npmrc a GDPR marker stack building an image mounts (MAIR-290)"
+      gdpr_simulation_ai_model:
+        required: false
+        type: string
+        default: "claude-haiku-5-5"
+        description: "Claude model of the AI review of the GDPR simulation (MAIR-497); only used when ANTHROPIC_API_KEY is set"
+      rgaa_min_rate:
+        required: false
+        type: number
+        default: 60
+        description: "Fronts: minimum RGAA rate (percent) of the automatically decided criteria; below it the rgaa job fails and the front is not promoted (MAIR-319)"
+      rgaa_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Fronts: Claude model of the RGAA AI pre-audit (MAIR-320); only used when ANTHROPIC_API_KEY is set"
+      gdpr_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model that proposes a classification for the columns missing from the GDPR inventory (MAIR-285, database); only used when ANTHROPIC_API_KEY is set"
     secrets:
       ANTHROPIC_API_KEY:
+        required: false
+      # [NOUVEAU] MAIR-285: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
         required: false
       # The release app pushes the prod tag (actions/promote/create-release).
       RELEASE_APP_ID:
@@ -77,8 +108,8 @@ jobs:
       actions: read
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
-      image: ${{ steps.resolve.outputs.image }}
       sha_tag: ${{ steps.resolve.outputs.sha_tag }}
+      image: ${{ steps.resolve.outputs.image }}
       digest: ${{ steps.resolve.outputs.digest }}
       extra_digest: ${{ steps.resolve.outputs.extra_digest }}
     steps:
@@ -202,6 +233,168 @@ jobs:
           last_tag: ${{ needs.version.outputs.last_tag }}
           next_version: ${{ needs.version.outputs.published == 'true' && needs.version.outputs.version || '' }}
 
+  # [NOUVEAU] MAIR-285 (epic MAIR-284), database only: migrates an empty database with the images
+  # of the promoted commit (staging digests) and checks that `gdpr/inventory.yaml` classifies every
+  # column. It runs before `promote` waits for the Prod approval, so the approver reads the job
+  # summary first: the gaps, the inventory changes since the last tag and Claude's proposals for
+  # the unclassified columns (never part of the verdict). A gap skips the prod release.
+  gdpr_inventory:
+    name: GDPR inventory
+    if: inputs.stack == 'database'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0  # the previous release tag, for the diff of the inventory
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Check the GDPR inventory
+        uses: ./cicd-repo/actions/promote/gdpr-inventory
+        with:
+          sha: ${{ needs.resolve.outputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          digest: ${{ needs.resolve.outputs.digest }}
+          migrations_digest: ${{ needs.resolve.outputs.extra_digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          ai_model: ${{ inputs.gdpr_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+
+  # [NOUVEAU] MAIR-290 (epic MAIR-284), APIs and BFFs: personal data in logs test. The repo's marker
+  # stack (at the promoted commit) runs the staging image by digest and a runner that plays the
+  # journey of gdpr-marker.yaml with a marker user; the logs of every container are then searched
+  # for its values. The summary is read before the Prod approval; a leak skips the prod release.
+  # Skipped with a warning while the repo has no gdpr-marker.yaml.
+  gdpr_marker:
+    name: GDPR log marker
+    if: inputs.stack == 'apis' || inputs.stack == 'bffs'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.stack == 'bffs' && 60 || 25 }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run the GDPR log marker test
+        uses: ./cicd-repo/actions/promote/gdpr-marker
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          npm_scope: ${{ inputs.stack == 'bffs' && inputs.npm_scope || '' }}
+          node_auth_token: ${{ inputs.stack == 'bffs' && secrets.GITHUB_TOKEN || '' }}
+
+  # [NOUVEAU] MAIR-497 (epic MAIR-284), APIs and BFFs: GDPR usage simulation on the staging image of
+  # the promoted commit (test stack only), then deterministic checks and an AI review of the log
+  # templates and free-text columns. Read before the Prod approval; a persona value found or an
+  # unaccepted high risk skips the prod release. Skipped with a warning without gdpr-simulation.yaml.
+  # [CHANGEMENT] MAIR-497: the fronts too; their stack opens the personas' pages in a browser
+  # (`browser` section of gdpr-simulation.yaml) and adds the browser console, storage and privacy
+  # findings (MAIR-292, report-only) to the run.
+  gdpr_simulation:
+    name: GDPR simulation
+    if: inputs.stack == 'apis' || inputs.stack == 'bffs' || inputs.stack == 'fronts'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.stack == 'bffs' && 60 || inputs.stack == 'fronts' && 40 || 30 }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run the GDPR simulation
+        uses: ./cicd-repo/actions/promote/gdpr-simulation
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+          ai_model: ${{ inputs.gdpr_simulation_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          npm_scope: ${{ inputs.stack == 'bffs' && inputs.npm_scope || '' }}
+          node_auth_token: ${{ inputs.stack == 'bffs' && secrets.GITHUB_TOKEN || '' }}
+          timeout_minutes: ${{ inputs.stack == 'fronts' && '30' || '20' }}
+
+  # [NOUVEAU] MAIR-317 (epic MAIR-492), fronts only: RGAA check of the staging image of the promoted
+  # commit. The front's accessibility stack (at that commit) runs `<image>@<staging digest>` and the
+  # runner plays the states of `rgaa.yaml` with the engine of `cicd-repo/tests/a11y`. The report
+  # (job summary + `rgaa-report` artifact, input of the n8n release chain) is read before the Prod
+  # approval; a failure skips the prod release. Unlike the GDPR gates, a front without `rgaa.yaml`
+  # fails: the scope is required from this major on.
+  rgaa:
+    name: RGAA check
+    if: inputs.stack == 'fronts'
+    needs: [resolve, version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      - name: Run the RGAA check
+        timeout-minutes: 20
+        uses: ./cicd-repo/actions/promote/rgaa-front
+        with:
+          image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # [NOUVEAU] MAIR-319
+          min_rate: ${{ inputs.rgaa_min_rate }}
+          # [NOUVEAU] MAIR-320: AI pre-audit of the relevance criteria, skipped without the key.
+          ai_model: ${{ inputs.rgaa_ai_model }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+
+      # Outside the action: it must still run when the step timeout kills the stack.
+      - name: Dump container logs
+        if: failure()
+        uses: ./cicd-repo/actions/integration/container-logs
+
   e2e_tests:
     name: End-to-end journeys (Playwright)
     if: inputs.stack == 'fronts'
@@ -244,13 +437,20 @@ jobs:
 
   promote:
     name: Release Prod
-    needs: [resolve, version, release_folder, e2e_tests]
+    # [CHANGEMENT] MAIR-285 / MAIR-290 / MAIR-497: also waits for the GDPR inventory, log marker and simulation gates.
+    # [CHANGEMENT] MAIR-317: and for the RGAA check of the fronts.
+    # [CHANGEMENT] MAIR-602: and for the end-to-end journeys of the fronts.
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa, e2e_tests]
     if: >-
       always()
       && needs.resolve.result == 'success'
       && needs.version.result == 'success'
       && needs.version.outputs.published == 'true'
       && (needs.release_folder.result == 'success' || needs.release_folder.result == 'skipped')
+      && (needs.gdpr_inventory.result == 'success' || needs.gdpr_inventory.result == 'skipped')
+      && (needs.gdpr_marker.result == 'success' || needs.gdpr_marker.result == 'skipped')
+      && (needs.gdpr_simulation.result == 'success' || needs.gdpr_simulation.result == 'skipped')
+      && (needs.rgaa.result == 'success' || needs.rgaa.result == 'skipped')
       && (needs.e2e_tests.result == 'success' || needs.e2e_tests.result == 'skipped')
     runs-on: ubuntu-latest
     environment: Prod
@@ -346,7 +546,7 @@ jobs:
   notify-cicd-failure:
     name: Notify n8n on failure
     if: failure()
-    needs: [resolve, version, release_folder, e2e_tests, promote]
+    needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa, e2e_tests, promote]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools

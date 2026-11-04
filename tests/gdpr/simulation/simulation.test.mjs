@@ -1,0 +1,448 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { parseInventory } from "../inventory.mjs";
+import { parseAccepted } from "./accepted.mjs";
+import { review } from "./ai.mjs";
+import { main as analyzeMain } from "./analyze.mjs";
+import { contentSampleSql, erasureSql, retentionSql } from "./db.mjs";
+import { assertTestStack, isStackHost } from "./guard.mjs";
+import { generatePersonas } from "./personas.mjs";
+import { main as simulateMain } from "./simulate.mjs";
+import { main as sqlMain } from "./sql.mjs";
+import { groupTemplates, templateOf } from "./templates.mjs";
+
+let seed = 0;
+const random = (n) => (seed = (seed * 31 + 7) % 9973) % n;
+
+test("the simulation refuses to run outside a test stack", () => {
+  assert.ok(isStackHost("core") && isStackHost("localhost") && isStackHost("172.18.0.4") && isStackHost("api.test"));
+  assert.ok(!isStackHost("core.mairie360.fr") && !isStackHost("8.8.8.8"));
+  assert.throws(() => assertTestStack(["http://core:3000"], {}), /GDPR_SIMULATION=test-stack is not set/);
+  assert.throws(() => assertTestStack(["https://core.mairie360.fr"], { GDPR_SIMULATION: "test-stack" }), /not a host of a test stack/);
+  assert.doesNotThrow(() => assertTestStack(["http://core:3000"], { GDPR_SIMULATION: "test-stack" }));
+});
+
+test("log lines are grouped into stable templates", () => {
+  assert.equal(templateOf("2026-10-08T11:32:56.364Z WARN user 42 session 2f9a1c74-5b3e-4d21-9c8a-7e6f0b1d4a35 from 172.18.0.6 in 12ms"),
+    "<date> WARN user <n> session <uuid> from <ip> in <n>");
+  assert.equal(templateOf('{"password": "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"}'), '{"password": "<hash>"}', "salted hashes do not change the template");
+  const groups = groupTemplates([
+    { service: "core-1", text: "GET /users/1 200" },
+    { service: "core-1", text: "GET /users/2 200" },
+    { service: "bff", text: "GET /users/2 200" },
+  ]);
+  assert.deepEqual(groups.map((g) => [g.service, g.count]), [["bff", 1], ["core", 2]]);
+  assert.equal(groupTemplates([{ service: "core-1", text: "GET /users/9 200" }])[0].fingerprint, groups[1].fingerprint, "same template, same fingerprint");
+});
+
+test("accepted risks need a fingerprint, a reason, a date and an author", () => {
+  assert.equal(parseAccepted("version: 1\nrisks:\n  - {fingerprint: 0123456789abcdef01234567, reason: ok, date: 2026-10-08, author: Quentin}\n").accepted.size, 1);
+  assert.deepEqual(parseAccepted("version: 1\nrisks:\n  - {fingerprint: x, reason: '', date: yesterday}\n").errors, [
+    "risks[0]: fingerprint must be the 24 hex characters of the report",
+    "risks[0]: reason is required",
+    "risks[0]: date must be YYYY-MM-DD",
+    "risks[0]: author is required",
+  ]);
+});
+
+test("the database checks skip the kept columns and the password", () => {
+  const { entries } = parseInventory(`version: 1
+tables:
+  users:
+    personal:
+      id: {category: identifier, erasure: keep, visibility: directory}
+      email: {category: contact, erasure: anonymize, visibility: directory}
+      password: {category: credentials, erasure: anonymize, visibility: internal}
+  access_logs:
+    personal:
+      reason: {category: activity, erasure: keep, visibility: internal}
+  messages:
+    personal:
+      content: {category: content, erasure: anonymize, visibility: members}
+`);
+  const schema = [
+    { table_name: "users", column_name: "id", type: "integer" },
+    { table_name: "users", column_name: "email", type: "character varying(320)" },
+    { table_name: "users", column_name: "password", type: "text" },
+    { table_name: "access_logs", column_name: "reason", type: "text" },
+    { table_name: "messages", column_name: "content", type: "text" },
+  ];
+  seed = 1;
+  const personas = generatePersonas(2, 1, random);
+  const sql = erasureSql(entries, schema, personas);
+  assert.match(sql, /FROM "users" WHERE "email"::text ILIKE/);
+  assert.match(sql, /FROM "messages" WHERE "content"::text ILIKE/);
+  assert.doesNotMatch(sql, /access_logs|"password"|'p1'/, "kept columns, hashes and the personas that stay are not probed");
+  assert.match(retentionSql({ sessions: "created_at" }), /x\."created_at" < now\(\) - p\.retention_period/);
+  assert.match(contentSampleSql(entries, schema), /FROM "messages"/);
+});
+
+function writeRun(dir, personas, { log, console = [], storage = [], erasure = [] }) {
+  mkdirSync(join(dir, "browser"), { recursive: true });
+  mkdirSync(join(dir, "db"), { recursive: true });
+  writeFileSync(join(dir, "personas.json"), JSON.stringify({ personas, ignore: [{ service: "mailpit", reason: "SMTP sink" }] }));
+  writeFileSync(join(dir, "containers.log"), log);
+  writeFileSync(join(dir, "browser", "console.json"), JSON.stringify(console));
+  writeFileSync(join(dir, "browser", "storage.json"), JSON.stringify(storage));
+  writeFileSync(join(dir, "db", "erasure.sql.json"), JSON.stringify(erasure));
+  writeFileSync(join(dir, "db", "retention.sql.json"), "[]");
+  writeFileSync(join(dir, "db", "content.sql.json"), "[]");
+}
+
+test("a leak in a log, the console or the storage blocks; erasure is an expected failure", async () => {
+  seed = 2;
+  const personas = generatePersonas(2, 1, random);
+  const email = personas[0].values.email;
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-"));
+  const env = { GDPR_AI: "off" };
+  const log = () => {};
+  writeRun(dir, personas, { log: `core-1  | GET /users/1 200\nmailpit-1  | mail for ${email}\n`, erasure: [{ table_name: "messages", column_name: "content", persona: "p2", field: "email", rows: 1 }] });
+  assert.equal(await analyzeMain([dir, join(dir, "report")], { env, log }), 0, "mailpit is ignored, the erasure gap is expected");
+  assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /expected failures until MAIR-289/);
+  assert.equal(await analyzeMain([dir, join(dir, "report")], { env: { ...env, GDPR_SIMULATION_ERASURE: "enforce" }, log }), 1);
+
+  for (const leak of [
+    { log: `core-1  | login failed for ${email}\n` },
+    { log: "core-1  | ok\n", console: [{ state: "login", type: "log", text: `user ${email}` }] },
+    { log: "core-1  | ok\n", storage: [{ state: "profile", area: "local", key: "user", value: JSON.stringify({ email }) }] },
+  ]) {
+    writeRun(dir, personas, leak);
+    assert.equal(await analyzeMain([dir, join(dir, "report")], { env, log }), 1);
+    const report = JSON.parse(readFileSync(join(dir, "report", "report.json"), "utf8"));
+    assert.equal(report.deterministic[0].persona, "p1");
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(email.replace(".", "\\.")), "the report masks the values");
+  }
+});
+
+test("a high AI risk blocks unless accepted, and the cache gives the same verdicts", async () => {
+  seed = 3;
+  const personas = generatePersonas(1, 0, random);
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-ai-"));
+  writeRun(dir, personas, { log: "core-1  | request body {\"note\":\"x\"}\ncore-1  | GET /health 200\n" });
+  let calls = 0;
+  const client = {
+    beta: { messages: { parse: async (request) => {
+      calls += 1;
+      const items = JSON.parse(request.messages[0].content);
+      return { stop_reason: "end_turn", usage: {}, parsed_output: { verdicts: items.map((i) => ({ id: i.id, risk: i.text.includes("body") ? "high" : "none", justification: "fixture" })) } };
+    } } },
+  };
+  const env = { ANTHROPIC_API_KEY: "test", GDPR_AI_CACHE: join(dir, "cache.json") };
+  assert.equal(await analyzeMain([dir, join(dir, "report")], { env, client, log: () => {} }), 1);
+  const high = JSON.parse(readFileSync(join(dir, "report", "report.json"), "utf8")).findings.find((f) => f.risk === "high");
+  assert.equal(await analyzeMain([dir, join(dir, "report2")], { env, client, log: () => {} }), 1);
+  assert.equal(calls, 1, "the second run is answered from the cache");
+  writeFileSync(join(dir, "accepted.yaml"), `version: 1\nrisks:\n  - {fingerprint: ${high.fingerprint}, reason: fixture body, date: 2026-10-08, author: test}\n`);
+  assert.equal(await analyzeMain([dir, join(dir, "report3"), join(dir, "accepted.yaml")], { env, client, log: () => {} }), 0);
+  const cache = { version: 1, answers: {} };
+  const first = await review([{ fingerprint: "a", kind: "log", where: "x", text: "body" }], { client, model: "m", cache });
+  assert.equal(first.verdicts.get("a").risk, "high");
+});
+
+test("the driver plays the journey per persona and the erase steps for the erased ones", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-run-"));
+  writeFileSync(join(dir, "journey.yaml"), `version: 1
+target: http://api:3000
+steps:
+  - name: create
+    request: {method: POST, path: /users, json: {email: "{{marker.email}}"}}
+    capture: {id: body.id}
+`);
+  writeFileSync(join(dir, "sim.yaml"), `version: 1
+journey: journey.yaml
+personas: 3
+erased: 1
+erase:
+  - name: erase
+    request: {method: DELETE, path: "/users/{{id}}"}
+`);
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push(`${init.method} ${new URL(url).pathname}`);
+    return new Response(JSON.stringify({ id: calls.length }), { status: 200 });
+  };
+  assert.equal(await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], { env: {}, fetchImpl, log: () => {} }), 3, "refused without GDPR_SIMULATION");
+  assert.equal(await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], { env: { GDPR_SIMULATION: "test-stack" }, fetchImpl, log: () => {} }), 0);
+  assert.deepEqual(calls, ["POST /users", "POST /users", "POST /users", "DELETE /users/3"]);
+  const { personas } = JSON.parse(readFileSync(join(dir, "run", "personas.json"), "utf8"));
+  assert.deepEqual(personas.map((p) => p.erase), [false, false, true]);
+});
+
+test("every Redis key expires within its declared prefix", async () => {
+  const { checkRedis, parseKeys, prefixPattern } = await import("./redis.mjs");
+  assert.ok(prefixPattern("core-api:{user_id}/first_connection_token").test("core-api:42/first_connection_token"));
+  assert.ok(!prefixPattern("core-api:{user_id}/first_connection_token").test("core-api:42/x/first_connection_token"));
+  const prefixes = { "revoked:{session_id}": { max_ttl_seconds: 3600 }, "core-api:{token}/first_connection_id": { max_ttl_seconds: 86400 } };
+  const keys = parseKeys("revoked:abc\t3500\nrevoked:def\t-1\ncore-api:t1/first_connection_id\t90000\ncache:users:7\t60\ngone:x\t-2\n");
+  assert.deepEqual(checkRedis(keys, prefixes).map((f) => [f.where, f.excerpt]), [
+    ["revoked:{session_id}", "key without TTL"],
+    ["core-api:{token}/first_connection_id", "TTL 90000 s above the declared maximum of 86400 s"],
+    ["cache:…", "key prefix not declared in the inventory (redis section)"],
+  ]);
+});
+
+// Fronts (MAIR-497): the `browser` section is checked against the journey it follows.
+test("the browser section of a front is validated against the journey's env and captures", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-browser-"));
+  writeFileSync(join(dir, "journey.yaml"), `version: 1
+target: http://front:5001
+env: [ADMIN_JWT]
+steps:
+  - name: create
+    request: {method: POST, path: /api/projects, json: {title: "{{marker.last_name}}"}}
+    capture: {project_id: body.id}
+`);
+  const sim = (browser) => `version: 1\njourney: journey.yaml\nerased: 0\nbrowser:\n${browser}`;
+  const errorsOf = async (browser) => {
+    writeFileSync(join(dir, "sim.yaml"), sim(browser));
+    const lines = [];
+    const original = console.error;
+    console.error = (line) => lines.push(line);
+    try {
+      assert.equal(await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], { env: { GDPR_SIMULATION: "test-stack" }, fetchImpl: async () => new Response("{}"), log: () => {} }), 2);
+    } finally {
+      console.error = original;
+    }
+    return lines.join("\n");
+  };
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: []\n"), /`pages` must list at least one page/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: '/x/{{task_id}}'}]\n"), /unknown placeholder \{\{task_id\}\}/);
+  assert.match(await errorsOf("  target: http://front:5001\n  cookies: {accessToken: '{{env.OTHER}}'}\n  pages: [{name: p, path: /}]\n"), /cookie accessToken: unknown placeholder \{\{env.OTHER\}\}/);
+  assert.match(await errorsOf("  target: http://front:5001/app\n  pages: [{name: p, path: /}]\n"), /`target` must be the front's origin/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, wait: 3}]\n"), /unknown key `wait`/);
+  assert.match(await errorsOf("  target: http://front:5001\n  wait_until: idle\n  pages: [{name: p, path: /}]\n"), /`wait_until` must be one of networkidle, load, domcontentloaded/);
+  assert.match(await errorsOf("  target: http://front:5001?preview=1\n  pages: [{name: p, path: /}]\n"), /without path, query or fragment/);
+  assert.match(await errorsOf("  target: http://front:5001#top\n  pages: [{name: p, path: /}]\n"), /without path, query or fragment/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, expect: []}]\n"), /`expect` must list HTTP status codes \(100-599\)/);
+  assert.match(await errorsOf("  target: http://front:5001\n  pages: [{name: p, path: /, expect: [999]}]\n"), /`expect` must list HTTP status codes \(100-599\)/);
+  writeFileSync(join(dir, "sim.yaml"), sim("  target: https://www.example.com\n  pages: [{name: p, path: /}]\n"));
+  assert.equal(await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], { env: { GDPR_SIMULATION: "test-stack" }, log: () => {} }), 3, "a browser target outside the stack is refused");
+});
+
+test("a front's pages are opened per persona after its journey and before its erasure", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-front-"));
+  writeFileSync(join(dir, "journey.yaml"), `version: 1
+target: http://front:5001
+env: [ADMIN_JWT]
+steps:
+  - name: create
+    request: {method: POST, path: /api/projects, headers: {Cookie: "accessToken={{env.ADMIN_JWT}}"}, json: {title: "{{marker.last_name}}"}}
+    capture: {project_id: body.id}
+`);
+  writeFileSync(join(dir, "sim.yaml"), `version: 1
+journey: journey.yaml
+personas: 2
+erased: 1
+erase:
+  - name: erase
+    request: {method: DELETE, path: "/api/projects/{{project_id}}", headers: {Cookie: "accessToken={{env.ADMIN_JWT}}"}}
+browser:
+  target: http://front:5001
+  cookies: {accessToken: "{{env.ADMIN_JWT}}"}
+  wait_until: load
+  pages:
+    - {name: project, path: "/projects/{{project_id}}"}
+`);
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push(`${init.method} ${new URL(url).pathname}`);
+    return new Response(JSON.stringify({ id: calls.length }), { status: 200 });
+  };
+  let personas = null;
+  const recordPage = async (browser, url, { cookies, waitUntil, settleMs }) => {
+    calls.push(`PAGE ${new URL(url).pathname}`);
+    assert.deepEqual([waitUntil, settleMs], ["load", 2000], "a page with a stream waits for load, then settles");
+    assert.equal(browser, "fake-browser");
+    assert.deepEqual(cookies.map((c) => [c.name, c.value, c.url]), [["accessToken", "jwt", "http://front:5001"]]);
+    const leak = calls.length === 2 ? `title of ${personas ?? "?"}` : "page ready";
+    return {
+      status: 200,
+      url,
+      requests: [{ origin: "http://front:5001", type: "document", example: url }, { origin: "https://cdn.example.com", type: "font", example: "https://cdn.example.com/f.woff2" }],
+      set_cookies: [], js_cookies: [], legal: { legal_notice: false, privacy_policy: true },
+      console: [{ type: "log", text: leak }],
+      storage: [{ area: "local", key: "draft", value: "x" }],
+    };
+  };
+  let closed = false;
+  const launchBrowser = async () => ({ toString: () => "fake-browser", close: async () => { closed = true; } });
+  const run = join(dir, "run");
+  // The fake page logs the first persona's last name: read it from the values simulate.mjs generates.
+  const code = await simulateMain([join(dir, "sim.yaml"), run], {
+    env: { GDPR_SIMULATION: "test-stack", ADMIN_JWT: "jwt" }, fetchImpl, log: () => {},
+    launchBrowser, recordPage: async (browser, url, options) => recordPage(String(browser), url, options),
+  });
+  assert.equal(code, 0);
+  assert.ok(closed, "the browser is closed");
+  assert.deepEqual(calls, ["POST /api/projects", "PAGE /projects/1", "POST /api/projects", "PAGE /projects/3", "DELETE /api/projects/3"]);
+  const consoleEntries = JSON.parse(readFileSync(join(run, "browser", "console.json"), "utf8"));
+  assert.deepEqual(consoleEntries.map((c) => c.state), ["p1 project", "p2 project"]);
+  assert.equal(JSON.parse(readFileSync(join(run, "browser", "storage.json"), "utf8")).length, 2);
+  const privacy = JSON.parse(readFileSync(join(run, "browser", "privacy.json"), "utf8"));
+  assert.deepEqual(privacy.third_party.map((t) => t.origin), ["https://cdn.example.com"]);
+  assert.equal(privacy.legal_missing.length, 2);
+  const journeys = JSON.parse(readFileSync(join(run, "journeys.json"), "utf8"));
+  assert.deepEqual(journeys[1].results.map((r) => r.name), ["create", "page project", "erase"]);
+
+  // A persona value printed in the browser console blocks; the privacy findings are report-only.
+  personas = JSON.parse(readFileSync(join(run, "personas.json"), "utf8")).personas;
+  writeFileSync(join(run, "containers.log"), "front-1  | GET /projects/1 200\n");
+  writeFileSync(join(run, "browser", "console.json"), JSON.stringify([{ state: "p1 project", type: "log", text: `title of ${personas[0].values.last_name}` }]));
+  const report = join(dir, "report");
+  assert.equal(await analyzeMain([run, report], { env: {}, log: () => {} }), 1);
+  const text = readFileSync(join(report, "summary.md"), "utf8");
+  assert.match(text, /\| console \| `p1 project`/);
+  assert.match(text, /## GDPR in the browser \(report-only\)/);
+  assert.match(text, /cdn\.example\.com/);
+  writeFileSync(join(run, "browser", "console.json"), "[]");
+  assert.equal(await analyzeMain([run, report], { env: {}, log: () => {} }), 0, "privacy findings alone do not block");
+});
+
+test("a page redirected elsewhere fails, and a browser failure still erases the persona", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-redirect-"));
+  writeFileSync(join(dir, "journey.yaml"), `version: 1
+target: http://front:5001
+env: [ADMIN_JWT]
+steps:
+  - name: create
+    request: {method: POST, path: /api/projects, json: {title: "{{marker.last_name}}"}}
+    capture: {project_id: body.id}
+`);
+  const sim = (cookie) => `version: 1
+journey: journey.yaml
+personas: 1
+erased: 1
+erase:
+  - name: erase
+    request: {method: DELETE, path: "/api/projects/{{project_id}}"}
+browser:
+  target: http://front:5001
+  cookies: {accessToken: "${cookie}"}
+  pages:
+    - {name: project, path: "/projects/{{project_id}}"}
+`;
+  const run = async (cookie, recordPage) => {
+    writeFileSync(join(dir, "sim.yaml"), sim(cookie));
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push(`${init.method} ${new URL(url).pathname}`);
+      return new Response(JSON.stringify({ id: 7 }), { status: 200 });
+    };
+    const code = await simulateMain([join(dir, "sim.yaml"), join(dir, "run")], {
+      env: { GDPR_SIMULATION: "test-stack", ADMIN_JWT: "jwt" }, fetchImpl, log: () => {},
+      launchBrowser: async () => ({ close: async () => {} }), recordPage,
+    });
+    return { code, calls, journeys: JSON.parse(readFileSync(join(dir, "run", "journeys.json"), "utf8")) };
+  };
+  const page = (url) => ({ status: 200, url, requests: [], set_cookies: [], js_cookies: [], legal: null, console: [], storage: [] });
+
+  // The front sent the browser to the login page, which answers 200: the persona's page was never seen.
+  const redirected = await run("{{env.ADMIN_JWT}}", async () => page("http://login-front:5000/?redirect=%2Fprojects%2F7"));
+  assert.equal(redirected.code, 1);
+  assert.match(redirected.journeys[0].results[1].error, /ended on http:\/\/login-front:5000\/ instead of http:\/\/front:5001\/projects\/7/);
+  // A query normalized by the front is the same page.
+  assert.equal((await run("{{env.ADMIN_JWT}}", async (b, url) => page(`${url}?view=kanban`))).code, 0);
+
+  // The browser cannot even start the page: the run fails, the erase step still runs.
+  const broken = await run("{{env.ADMIN_JWT}}", async () => { throw new Error("browser crashed"); });
+  assert.equal(broken.code, 1);
+  assert.deepEqual(broken.calls, ["POST /api/projects", "DELETE /api/projects/7"]);
+  assert.deepEqual(broken.journeys[0].results.map((r) => [r.name, r.ok]), [["create", true], ["page project", false], ["erase", true]]);
+});
+
+test("persona values in the third-party request examples and cookie names are masked in the report", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-mask-"));
+  const values = { email: "gdpr.maskme@example.com", first_name: "Markermaskme", last_name: "Tracermaskme", phone: "0612345678", password: "Mkabcdef!1234ABCD" };
+  writeFileSync(join(dir, "personas.json"), JSON.stringify({ personas: [{ id: "p1", erase: false, values }], ignore: [] }));
+  writeFileSync(join(dir, "containers.log"), "front-1  | GET / 200\n");
+  mkdirSync(join(dir, "browser"));
+  writeFileSync(join(dir, "browser", "privacy.json"), JSON.stringify({
+    third_party: [{ origin: "https://tracker.example.com", types: ["image"], states: ["p1 board"], example: `https://tracker.example.com/pixel?u=${values.email}` }],
+    cookies: [{ name: `pref_${values.email}`, via: "document.cookie", problems: ["not a session cookie"], states: ["p1 board"] }], legal_missing: [], checked: 1,
+  }));
+  const report = join(dir, "report");
+  await analyzeMain([dir, report], { env: {}, log: () => {} });
+  for (const file of ["summary.md", "report.json"]) {
+    const text = readFileSync(join(report, file), "utf8");
+    assert.match(text, /tracker\.example\.com/);
+    assert.ok(!text.includes(values.email), `${file} holds the persona's e-mail`);
+  }
+});
+
+// One OTLP JSON export request, as the collector's `file` exporter writes it (MAIR-501).
+function otlpLine(service, name, attributes) {
+  return JSON.stringify({
+    resourceSpans: [{
+      resource: { attributes: [{ key: "service.name", value: { stringValue: service } }] },
+      scopeSpans: [{ spans: [{ name, attributes: Object.entries(attributes).map(([key, v]) => ({ key, value: typeof v === "number" ? { intValue: String(v) } : { stringValue: v } })) }] }],
+    }],
+  });
+}
+
+test("traces and the usage ledger carry actions only (MAIR-501)", async () => {
+  seed = 3;
+  const personas = generatePersonas(2, 1, random);
+  const email = personas[0].values.email;
+  const env = { GDPR_AI: "off" };
+  const log = () => {};
+  const clean = otlpLine("core-api", "GET /api/v1/user/me", { "http.request.method": "GET", "http.route": "/api/v1/user/me", "http.response.status_code": 200, "url.full": "http://core:3000/api/v1/user/me" });
+  const ledger = [{ service: "core-api", operation: "GET /api/v1/user/me", period: "2026-10-09T10", actions: 42, distinct_users: 7 }];
+
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-traces-"));
+  writeRun(dir, personas, { log: "core-1  | ok\n" });
+  assert.equal(await analyzeMain([dir, join(dir, "report")], { env, log }), 0);
+  assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /Not checked: traces, usage ledger/);
+
+  writeFileSync(join(dir, "traces.jsonl"), `${clean}\n`);
+  writeFileSync(join(dir, "usage.json"), JSON.stringify(ledger));
+  assert.equal(await analyzeMain([dir, join(dir, "report")], { env, log }), 0, "actions only: nothing blocks");
+  assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /1 spans/);
+
+  for (const [label, traces, usage, check] of [
+    ["persona value in a span", otlpLine("core-api", "POST /login", { "app.login": email }), ledger, "trace"],
+    ["user id attribute", otlpLine("core-api", "GET /me", { "enduser.id": 12 }), ledger, "trace attribute"],
+    ["query string", otlpLine("bff-user", "GET /search", { "url.full": `http://core:3000/api/v1/user?search=${encodeURIComponent("Dupont")}` }), ledger, "trace attribute"],
+    ["persona value in the ledger", clean, [{ ...ledger[0], operation: `GET /user?email=${email}` }], "usage"],
+    ["person key in the ledger", clean, [{ ...ledger[0], user_id: 12 }], "usage field"],
+  ]) {
+    writeFileSync(join(dir, "traces.jsonl"), `${traces}\n`);
+    writeFileSync(join(dir, "usage.json"), JSON.stringify(usage));
+    assert.equal(await analyzeMain([dir, join(dir, "report")], { env, log }), 1, label);
+    const report = JSON.parse(readFileSync(join(dir, "report", "report.json"), "utf8"));
+    assert.ok(report.deterministic.some((d) => d.check === check), `${label}: ${JSON.stringify(report.deterministic)}`);
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(email.replace(/[.+]/g, "\\$&")), `${label}: the value is masked in the report`);
+  }
+});
+
+test("MAIR-497: the database checks stop on a stack column the inventory does not classify", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdpr-sim-sql-"));
+  writeFileSync(join(dir, "personas.json"), JSON.stringify({ personas: [] }));
+  writeFileSync(join(dir, "inventory.yaml"), `version: 1
+tables:
+  users:
+    personal:
+      email: {category: contact, erasure: anonymize, visibility: directory}
+    not_personal: [id]
+  legacy:
+    not_personal: [id]
+`);
+  const column = (table_name, column_name) => ({ table_name, column_name, type: "text", nullable: true, comment: null, refers_to: null });
+  const errors = [];
+  const error = console.error;
+  console.error = (line) => errors.push(line);
+  try {
+    // users.nickname is new in the stack: it would be left out of the erasure and content checks.
+    writeFileSync(join(dir, "schema.json"), JSON.stringify([column("users", "id"), column("users", "email"), column("users", "nickname")]));
+    assert.equal(sqlMain([join(dir, "inventory.yaml"), join(dir, "schema.json"), dir]), 1);
+    assert.match(errors.join("\n"), /users\.nickname/);
+    // An entry the stack does not have yet (legacy.id: inventory newer than the image) is fine.
+    writeFileSync(join(dir, "schema.json"), JSON.stringify([column("users", "id"), column("users", "email")]));
+    assert.equal(sqlMain([join(dir, "inventory.yaml"), join(dir, "schema.json"), dir]), 0);
+    assert.ok(readFileSync(join(dir, "db", "erasure.sql"), "utf8").length > 0, "the checks are written");
+  } finally {
+    console.error = error;
+  }
+});

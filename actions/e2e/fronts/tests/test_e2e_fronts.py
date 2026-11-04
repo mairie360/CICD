@@ -86,10 +86,16 @@ class PromoteProdWiring(unittest.TestCase):
         self.assertIn('uses: ./cicd-repo/actions/integration/container-logs', job)
 
     def test_release_waits_for_the_journeys(self):
+        # The other prod gates (RGPD, RGAA) sit in the same lists: only check that e2e_tests is there.
+        def needs_of(job):
+            line = next(l for l in job.splitlines() if l.strip().startswith('needs:'))
+            return [n.strip() for n in line.split('[', 1)[1].rstrip(']').split(',')]
+
         promote = self.text[self.text.index('  promote:'):self.text.index('  notify-cicd-failure:')]
-        self.assertIn('needs: [resolve, version, release_folder, e2e_tests]', promote)
+        self.assertIn('e2e_tests', needs_of(promote))
         self.assertIn("(needs.e2e_tests.result == 'success' || needs.e2e_tests.result == 'skipped')", promote)
-        self.assertIn('needs: [resolve, version, release_folder, e2e_tests, promote]', self.text)
+        notify = self.text[self.text.index('  notify-cicd-failure:'):]
+        self.assertIn('e2e_tests', needs_of(notify))
 
 
 if __name__ == '__main__':

@@ -10,18 +10,34 @@ on:
       semgrep_config:
         required: false
         type: string
-        default: "p/typescript p/react p/secrets p/github-actions"
+        default: "p/typescript p/react p/secrets p/github-actions cicd-repo/tests/semgrep/gdpr"
         description: "Semgrep rulesets (space-separated) run by the SAST job"
       semgrep_fail_on_findings:
         required: false
         type: boolean
         default: false
         description: "Fail the pipeline on Semgrep findings (report-only by default until the existing findings are triaged, see README)"
+      rgaa_min_rate:
+        required: false
+        type: number
+        default: 60
+        description: "Minimum CI RGAA rate (percent) of the automatically decided criteria; below it the accessibility job fails (MAIR-319)"
+      rgaa_ai_model:
+        required: false
+        type: string
+        default: "claude-sonnet-5-5"
+        description: "Claude model of the RGAA AI pre-audit (MAIR-320); the pre-audit only runs when the ANTHROPIC_API_KEY secret is set"
     secrets:
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
         required: true
+      # [NOUVEAU] MAIR-320: optional; without it the RGAA AI pre-audit is skipped.
+      ANTHROPIC_API_KEY:
+        required: false
+      # [NOUVEAU] MAIR-320: only when the API key is not scoped to a workspace.
+      ANTHROPIC_WORKSPACE_ID:
+        required: false
 
 permissions:
   contents: read
@@ -157,9 +173,103 @@ jobs:
       - name: Run Gitleaks Secret Scan
         uses: ./cicd-repo/actions/security/gitleaks
 
+  # [NOUVEAU] MAIR-317 (epic MAIR-297): plays the stories declared in the lib's `rgaa.yaml` with the
+  # RGAA engine of `cicd-repo/tests/a11y`, at release time only: on `main`, once the unit tests
+  # pass, before `package` publishes (the fronts are checked by the `rgaa` job of promote-prod.yml). The static
+  # Storybook is served on a private Docker network as `http://storybook:6006` (the `target` of the
+  # lib's rgaa.yaml).
+  accessibility_tests:
+    name: Accessibility Tests (RGAA)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the accessibility scope
+        run: |
+          if [ ! -f rgaa.yaml ]; then
+            echo "::error title=RGAA::rgaa.yaml is missing: the lib declares the RGAA scope of its stories (see the mairie360/CICD README, \"RGAA scope\")"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build Storybook
+        run: npm run build-storybook
+
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+
+      # [NOUVEAU] MAIR-320: AI verdicts by element fingerprint, kept between runs so that only new or
+      # changed elements are sent to Claude (until the n8n store, MAIR-275, holds them).
+      - name: Restore RGAA AI verdicts
+        uses: actions/cache/restore@v6
+        with:
+          path: .rgaa-ai-cache
+          key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: rgaa-ai-${{ github.repository }}-
+
+      - name: Run accessibility tests on the stories
+        timeout-minutes: 15
+        env:
+          RGAA_MIN_RATE: ${{ inputs.rgaa_min_rate }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+          RGAA_AI_MODEL: ${{ inputs.rgaa_ai_model }}
+        run: |
+          mkdir -p rgaa-report .rgaa-ai-cache
+          docker network create rgaa
+          docker run -d --name storybook --network rgaa -v "$PWD/storybook-static:/site:ro" \
+            python:3-alpine python -m http.server 6006 --directory /site
+          docker run --rm --network rgaa --user "$(id -u):$(id -g)" -e RGAA_MIN_RATE -e ANTHROPIC_API_KEY -e ANTHROPIC_WORKSPACE_ID -e RGAA_AI_MODEL \
+            -v "$PWD/.rgaa-ai-cache:/ai-cache" \
+            -v "$PWD/cicd-repo/tests/a11y:/engine:ro" \
+            -v "$PWD/rgaa.yaml:/scope/rgaa.yaml:ro" \
+            -v "$PWD/rgaa-report:/report" \
+            "$(cat cicd-repo/tests/a11y/runner-image)" sh /engine/run.sh
+
+      - name: Save RGAA AI verdicts
+        if: always() && hashFiles('.rgaa-ai-cache/verdicts.json') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: .rgaa-ai-cache
+          key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f rgaa-report/summary.md ]; then
+            cat rgaa-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No RGAA report (the runner did not start, see the logs)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload RGAA report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rgaa-report
+          path: rgaa-report/
+          if-no-files-found: ignore
+
+      - name: Dump Storybook server logs
+        if: failure()
+        run: docker logs storybook 2>&1 | tail -50 || true
+
   storybook:
     name: Storybook Chain
-    needs: [security, security_sast]
+    needs: [security, security_sast, accessibility_tests]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
@@ -212,7 +322,7 @@ jobs:
 
   package:
     name: Package Publish
-    needs: [test, security, security_sast]
+    needs: [test, security, security_sast, accessibility_tests]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -270,6 +380,7 @@ jobs:
       - test
       - security
       - security_sast
+      - accessibility_tests
       - storybook
       - package
     runs-on: ubuntu-latest

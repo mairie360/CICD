@@ -1,3 +1,6 @@
 # Python bytecode (created when tests/zap/zap_hooks.py is run or imported locally)
 __pycache__/
 *.pyc
+
+# Dependencies of the RGAA engine (tests/a11y), installed with npm ci
+node_modules/
