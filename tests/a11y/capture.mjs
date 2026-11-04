@@ -51,7 +51,7 @@ async function runAxe(page, rules) {
 }
 
 // `scope` is the validated rgaa.yaml, `criteria` the parsed criteria.yaml. Returns
-// { fingerprint, files, checks, undeclared } and writes the snapshot under <dir>.
+// { fingerprint, files, checks, undeclared, aiItems, components } and writes the snapshot under <dir>.
 export async function captureState(page, { scope, criteria, dir, stateId = "", ai = false }) {
   mkdirSync(dir, { recursive: true });
   await page.addScriptTag({ content: HELPERS_SOURCE });
@@ -61,6 +61,18 @@ export async function captureState(page, { scope, criteria, dir, stateId = "", a
   writeFileSync(join(dir, "page.html"), html);
   writeFileSync(join(dir, "aria.yml"), aria);
   await page.screenshot({ path: join(dir, "desktop.png"), fullPage: true });
+  // Lib components the state shows (MAIR-318): names of the visible data-m360-component markers of
+  // @mairie360/lib-components (outermost first in each value; a closed modal is not audited, so it
+  // does not count), compared by components.mjs with the components the front renders.
+  const components = await page.evaluate(() =>
+    [
+      ...new Set(
+        [...document.querySelectorAll("[data-m360-component]")]
+          .filter((e) => window.__rgaa.visible(e))
+          .flatMap((e) => e.getAttribute("data-m360-component").split(/\s+/).filter(Boolean)),
+      ),
+    ].sort(),
+  );
   const files = { html: "page.html", aria: "aria.yml", screenshots: ["desktop.png"] };
   const screenshot = async (name) => {
     await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
@@ -97,5 +109,5 @@ export async function captureState(page, { scope, criteria, dir, stateId = "", a
   }
   if (!files.screenshots.includes("mobile-320.png")) await screenshot("mobile-320");
 
-  return { fingerprint: fingerprint(html, aria), files, checks, undeclared, aiItems };
+  return { fingerprint: fingerprint(html, aria), files, checks, undeclared, aiItems, components };
 }

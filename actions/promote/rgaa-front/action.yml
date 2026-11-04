@@ -87,6 +87,14 @@ runs:
         path: .rgaa-ai-cache
         key: rgaa-ai-${{ github.repository }}-${{ github.run_id }}-${{ github.run_attempt }}
 
+    # Report only (MAIR-318): lib components the front renders (src/) that no captured state shows,
+    # from the data-m360-component markers the runner recorded per state. Never fails the gate.
+    - name: RGAA lib component coverage
+      if: always() && hashFiles('rgaa-report/report.json') != ''
+      continue-on-error: true
+      shell: bash
+      run: node cicd-repo/tests/a11y/components.mjs src rgaa-report
+
     - name: RGAA job summary
       if: always()
       shell: bash

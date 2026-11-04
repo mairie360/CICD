@@ -1038,8 +1038,10 @@ front's `rgaa.yaml` fails the run, with the element.
 - `criteria[]`: `id`, `level`, `coverage`, `checks`, `failures[]` and `review[]` (axe
   "incomplete" results, scenario errors), each item with its `state`, `check`, `target`, `html`
   and `message`;
-- `states[]`: `id`, `reached`, `url`, `fingerprint` and `files`;
-- `undeclared[]`.
+- `states[]`: `id`, `reached`, `url`, `fingerprint`, `files` and `components` (the lib
+  components the state shows, see below);
+- `undeclared[]`;
+- `lib_components` (fronts only, added after the run, see below).
 
 States run in parallel, 4 at a time by default (`RGAA_CONCURRENCY`, 1-16), each in its own browser
 context; the report keeps the order of `rgaa.yaml`. Table, group and legend checks only look at
@@ -1049,6 +1051,22 @@ The runner copies the engine out of its read-only `/engine` mount before `npm ci
 writes a root-owned `node_modules` into the consumer's `cicd-repo/`.
 
 The job fails on an unreachable state or an undeclared criterion, and on the rate gate below.
+
+**Lib component coverage (report only).** Every component of `@mairie360/lib-components` marks
+its root element with `data-m360-component` (the names of the components that render it, outermost
+first: `ConfirmModal Modal`, `SaveButton Button`; lib-components MAIR-318). The capture records the
+names of the *visible* marked elements of each state (`states[].components`; a closed modal does
+not count, it is not audited). After the stack, the `rgaa-front` action runs
+`tests/a11y/components.mjs src rgaa-report`: it lists the lib components the front renders (a name
+imported from `@mairie360/lib-components`, `/primitives` or `/shell` and used as a JSX element, so
+types, hooks, helpers and constants never count; tests, stories and `node_modules` are skipped)
+and writes `lib_components` (`used` name → files, `seen`, `missing`, `marked`) into `report.json`,
+a "Lib components" section into the summary and one warning per missing component. Add a state to
+`rgaa.yaml` that shows each missing one. It never changes the verdict. A front still on a lib
+release without the markers shows none: `marked` is `false` and nothing is called missing. Preset
+objects (`<ButtonPresets.save>`) are not resolved: import the preset component (`SaveButton`)
+instead. Run it by hand on a local report with
+`node cicd-repo/tests/a11y/components.mjs src rgaa-report`.
 
 ## RGAA rate gate (MAIR-319)
 

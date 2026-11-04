@@ -45,6 +45,15 @@ const FORM = page("fr", `<main><h1>Connexion</h1><label for="e">Email</label><in
 
 // A board of scrollable columns without focusable content: Chromium makes each scroller a Tab stop
 // that tabbables() does not count. Not a keyboard trap.
+// Lib component markers (MAIR-318): nested names, outermost first, and a closed modal.
+const MARKED = page(
+  "fr",
+  `<main data-m360-component="AccessibleShell"><h1>Projets</h1>
+  <button data-m360-component="SaveButton Button">Enregistrer</button>
+  <div role="status" data-m360-component=" Toast  ">Enregistré</div></main>
+  <div data-m360-component="ConfirmModal Modal" hidden><p>Supprimer ?</p></div>`,
+);
+
 const SCROLLERS = page(
   "fr",
   `<main><h1>Tableau</h1>${Array.from({ length: 8 }, (_, i) =>
@@ -151,7 +160,7 @@ before(async () => {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(FORM);
       return;
     }
-    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE, "/form": FORM, "/scrollers": SCROLLERS }[new URL(request.url, "http://x").pathname];
+    const body = { "/good": GOOD, "/bad": BAD, "/status": STATUS, "/modal": MODAL, "/ai": AI_PAGE, "/form": FORM, "/scrollers": SCROLLERS, "/marked": MARKED }[new URL(request.url, "http://x").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" }).end(body ?? "");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -227,6 +236,12 @@ test("no skip link is required when the keyboard starts in the main content", { 
   assert.deepEqual(failing(form, "12.7"), []);
 });
 
+test("MAIR-318: the capture lists the lib components the state shows", { skip: !e2e }, async () => {
+  const marked = await capture("/marked");
+  assert.deepEqual(marked.components, ["AccessibleShell", "Button", "SaveButton", "Toast"], "a hidden component (closed modal) is not shown");
+  assert.deepEqual((await capture("/good")).components, []);
+});
+
 test("run.mjs plays an unreached state once more before failing it", { skip: !e2e }, async () => {
   const { code, report } = await runEngine(`version: 1\ntarget: ${target()}\ncriteria: ["1.1", "8.3", "11.1"]\nstates:\n  - id: flaky\n    route: /flaky\n`);
   assert.equal(code, 0);
@@ -252,6 +267,7 @@ test("run.mjs writes the report and fails on undeclared criteria", { skip: !e2e 
   assert.deepEqual(report.criteria.map((c) => c.id), ["1.1", "8.3"]);
   assert.deepEqual(report.undeclared.map((u) => u.criterion).sort(), ["11.1", "6.2"]);
   assert.match(report.states[0].fingerprint, /^[0-9a-f]{64}$/);
+  assert.deepEqual(report.states[0].components, [], "MAIR-318: the lib components each state shows are kept in the report");
   // Both declared criteria have full coverage and pass on /good.
   assert.deepEqual(report.rate, { validated: 2, invalidated: 0, to_review: 0, value: 100, min: 60, passed: true });
   assert.match(readFileSync(join(dir, "report", "summary.md"), "utf8"), /### Undeclared criteria/);
