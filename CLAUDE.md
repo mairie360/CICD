@@ -138,7 +138,7 @@ with nothing to review → `validated`; else `to_review`), CI rate = validated /
 invalidated), `RGAA_MIN_RATE` (input `rgaa_min_rate` of `promote-prod.yml` / `front-libs-cicd.yml`,
 default 60, the front's compose must forward it) → `run.mjs` exits 3 below it (exit 1 still wins
 for unreached states / undeclared criteria). AI pre-audit (MAIR-320): `extract.mjs` (in-page
-extraction for 1.3 / 6.1 / 11.2 / 11.9 / 13.5 / 13.6, before the scenarios move the focus;
+extraction for 1.3 / 6.1 / 11.2 / 11.9 / 13.5 / 13.6, plus the page-level 3.1 (title, ARIA snapshot, JPEG page screenshot, fingerprint on a `normalizedHtml({ keepStyles: true })` digest, never the pixels) / 7.4 (selectable controls) / 9.1 (heading outline) / 11.3 (labels of every state, merged into one item by `mergeSiteItems` in `run.mjs`), before the scenarios move the focus;
 image screenshots; fingerprint = sha256 of criterion + fields + `EXTRACTION_VERSION`, bump it
 when a prompt changes), `ai.mjs` (`@anthropic-ai/sdk` `client.beta.messages.parse` +
 `betaZodOutputFormat`, default `claude-sonnet-5-5` / `RGAA_AI_MODEL`, effort `low`, system

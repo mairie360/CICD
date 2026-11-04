@@ -89,7 +89,9 @@
   // builds and runs: they are rewritten to stable placeholders, in document order.
   const GENERATED_ID = /^(:[^:]+:|«[^»]+»|_R_.*|radix-.*|headlessui-.*|react-aria\d*-.*)$/;
 
-  function normalizedHtml() {
+  // keepStyles (MAIR-320, page-level AI items): keep class and style, so that a change of colours or
+  // layout changes the result; nonces and build hashes still go.
+  function normalizedHtml({ keepStyles = false } = {}) {
     const clone = document.documentElement.cloneNode(true);
     clone.querySelectorAll("script, style, noscript, link[rel=preload], link[rel=modulepreload], next-route-announcer")
       .forEach((n) => n.remove());
@@ -101,7 +103,7 @@
     };
     const walker = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT);
     for (let node = walker.currentNode; node; node = walker.nextNode()) {
-      for (const name of ["class", "style", "nonce"]) node.removeAttribute(name);
+      for (const name of keepStyles ? ["nonce"] : ["class", "style", "nonce"]) node.removeAttribute(name);
       for (const attr of [...node.attributes]) {
         if (attr.name.startsWith("data-next") || attr.name.startsWith("data-precedence")) node.removeAttribute(attr.name);
       }
