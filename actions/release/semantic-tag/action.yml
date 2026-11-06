@@ -25,7 +25,7 @@ runs:
     # [CHANGEMENT] Ajout de l'action setup-node pour garantir une version stable de Node.js
     # au lieu d'utiliser l'environnement global implicite du runner.
     - name: Setup Node.js
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version: "24"
 
@@ -56,7 +56,7 @@ runs:
 
     - name: Semantic Release
       id: semantic
-      uses: cycjimmy/semantic-release-action@v6.0.0
+      uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
       with:
         dry_run: ${{ inputs.dry_run }}
         extra_plugins: |

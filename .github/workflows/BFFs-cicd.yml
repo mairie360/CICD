@@ -90,12 +90,12 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -118,12 +118,12 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -147,12 +147,12 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -174,12 +174,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0  # Gitleaks scans the commits of the push / PR
 
       - name: Checkout CICD repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -207,12 +207,12 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -238,12 +238,12 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -283,7 +283,7 @@ jobs:
       sha_tag: ${{ steps.release.outputs.sha_tag }}
       digest: ${{ steps.release.outputs.digest }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [CHANGEMENT] Checkout nécessaire avant le build pour pouvoir appeler
       # l'action composite locale : contrairement au commentaire précédent,
@@ -292,7 +292,7 @@ jobs:
       # l'image runtime finale des Dockerfile multi-stage). Même compromis
       # que APIs_cicd.yml, qui appelle déjà `docker-release` de cette façon.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -337,7 +337,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/docker-build.npmrc"
 
       - name: Download OpenAPI Spec
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: openapi-spec
           path: .
@@ -375,17 +375,17 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
       - name: Download the OpenAPI spec
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: openapi-spec
           path: ${{ runner.temp }}/openapi
@@ -414,7 +414,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}

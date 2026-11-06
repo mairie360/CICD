@@ -34,12 +34,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -56,12 +56,12 @@ jobs:
     needs: dependencies
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -77,12 +77,12 @@ jobs:
     needs: dependencies
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -100,12 +100,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0  # Gitleaks scans the commits of the push / PR
 
       - name: Checkout CICD repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -127,12 +127,12 @@ jobs:
     needs: [lint, security_audit, security_sast] # Bloqué si l'audit de sécurité échoue
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -149,12 +149,12 @@ jobs:
     needs: lint
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # [NOUVEAU] MAIR-493: the job's steps are a composite action of this repo; only `actions/`
       # is checked out, so that the consumer's tools (`eslint .`, jest, cargo...) never see it.
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -187,7 +187,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
@@ -201,7 +201,7 @@ jobs:
 
       - name: Setup Rust & Cargo Release
         if: steps.set_tag.outputs.new_release_published == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Publish to Cargo
         if: steps.set_tag.outputs.new_release_published == 'true'
@@ -250,7 +250,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CICD Tools
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
