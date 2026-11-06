@@ -95,7 +95,7 @@ runs:
     # Never containers.log nor marker.json: the raw logs and the values stay on the runner.
     - name: Upload the marker report
       if: always() && steps.present.outputs.present == 'true'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: gdpr-marker
         path: |
