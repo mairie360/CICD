@@ -1,0 +1,62 @@
+name: "IaC misconfiguration scan (terraform)"
+description: >-
+  Trivy misconfiguration scan (`trivy config`) of the Terraform code (and any Dockerfile or Kubernetes manifest) of
+  the checked-out repo (`security_sast` job of terraform_cicd.yml, after Semgrep and Gitleaks).
+  Pinned image (version + digest, like docker-release), `.terraform/` and `cicd-repo/` skipped,
+  `.trivyignore` at the repo root honoured for accepted risks. Fails on `severity` findings unless
+  `fail_on_findings` is 'false'; a scan error always fails.
+
+inputs:
+  severity:
+    description: "Comma-separated Trivy severities that count as findings"
+    required: false
+    default: "HIGH,CRITICAL"
+  fail_on_findings:
+    description: "'true' fails the job on findings, 'false' only reports them"
+    required: false
+    default: "true"
+  trivy_image:
+    description: >
+      Trivy image, pinned by version AND digest (same pin as release/docker-release; bump both
+      together).
+    required: false
+    default: "aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Scan the IaC with Trivy
+      shell: bash
+      env:
+        TRIVY_IMAGE: ${{ inputs.trivy_image }}
+        SEVERITY: ${{ inputs.severity }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+      run: |
+        set -uo pipefail
+        ignore_args=()
+        if [ -f "$GITHUB_WORKSPACE/.trivyignore" ]; then
+          ignore_args=(--ignorefile /src/.trivyignore)
+        fi
+        # Exit code 1 = findings (with --exit-code 1); anything else = scan error.
+        docker run --rm \
+          -v "$GITHUB_WORKSPACE:/src:ro" \
+          -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+          -w /src \
+          "$TRIVY_IMAGE" config \
+            --severity "$SEVERITY" \
+            --skip-dirs cicd-repo \
+            --skip-dirs '**/.terraform' \
+            --skip-version-check \
+            --exit-code 1 \
+            "${ignore_args[@]}" \
+            .
+        code=$?
+        if [ "$code" -eq 0 ]; then
+          exit 0
+        fi
+        if [ "$code" -eq 1 ] && [ "$FAIL_ON_FINDINGS" != "true" ]; then
+          echo "::warning title=Trivy IaC::$SEVERITY misconfigurations found (report-only, fail_on_findings is false), see the log above"
+          exit 0
+        fi
+        echo "::error title=Trivy IaC::$SEVERITY misconfigurations found (or the scan failed, exit code $code)"
+        exit 1

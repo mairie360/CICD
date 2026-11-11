@@ -19,6 +19,38 @@ jobs:
 The jobs that need something from this repo check it out at that same `cicd_version` into
 `cicd-repo/` at the root of the consumer checkout.
 
+## Terraform CI (`terraform_cicd.yml`, MAIR-617)
+
+CI of the `Infra` repo (Terraform for the Scaleway resources). Checks and security only: Terraform
+is applied by hand by an operator, never by CI, so the workflow has no release job and receives no
+cloud credential.
+
+| Job | Content |
+| --- | --- |
+| `tests` | one matrix entry per root of `roots`: `actions/unit-tests/terraform` (`fmt -check -recursive`, `init -backend=false`, `validate`, `terraform test`; the tests mock the providers) |
+| `security_sast` | Semgrep (`semgrep_config`, blocking), Gitleaks, then `actions/security/terraform`: `trivy config` with the image pinned like `docker-release`, blocking on HIGH/CRITICAL misconfigurations (`iac_scan_fail_on_findings`), `.trivyignore` at the repo root for accepted risks |
+| `notify-cicd-failure` | n8n notification when `N8N_WEBHOOK_SECRET` is passed |
+
+```yaml
+# Infra/.github/workflows/cicd.yml
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    uses: mairie360/CICD/.github/workflows/terraform_cicd.yml@v5.6.0
+    with:
+      cicd_version: v5.6.0  # must match the ref above
+      roots: '["bootstrap", "modules/instance", "orgs/mairie360"]'
+    secrets:
+      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
+```
+
 ## Composite actions (`actions/`, MAIR-493)
 
 The steps of every job live in composite actions sorted by check type, then by stack:
@@ -28,9 +60,9 @@ The steps of every job live in composite actions sorted by check type, then by s
 | `actions/dependencies/<stack>` | toolchain setup, install, dependency audit where the stack runs one (`audit: 'true'` for the BFF / front `security_audit` jobs) | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
 | `actions/lint/<stack>` | lint command | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
 | `actions/build/<stack>` | build and its artifacts | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib` |
-| `actions/unit-tests/<stack>` | tests and the Codecov upload | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib`, `db` |
+| `actions/unit-tests/<stack>` | tests and the Codecov upload; `terraform`: fmt, init without backend, validate, `terraform test` of one root (MAIR-617) | `apis`, `bffs`, `fronts`, `back-lib`, `bffs-lib`, `front-lib`, `db`, `terraform` |
 | `actions/integration/<stack>` | integration tests against the dev image (`bffs` replays the repo's newman collection, MAIR-262: junit summary in the job summary + `newman-report-<package_name>` artifact); `container-logs` is the log dump shared by every job that starts a Docker stack; `frontend-isolated-qa` holds `target.py` of `frontend-isolated-qa.yml` | `apis`, `bffs`, `fronts` |
-| `actions/security/<stack>` | stack-specific security check: OWASP ZAP (`apis`, `bffs`, `fronts`), `cargo audit` + `cargo deny` (`back-lib`), npm audit + typecheck (`front-lib`) | `apis`, `bffs`, `fronts`, `back-lib`, `front-lib` |
+| `actions/security/<stack>` | stack-specific security check: OWASP ZAP (`apis`, `bffs`, `fronts`), `cargo audit` + `cargo deny` (`back-lib`), npm audit + typecheck (`front-lib`), Trivy IaC misconfiguration scan (`terraform`, MAIR-617) | `apis`, `bffs`, `fronts`, `back-lib`, `front-lib`, `terraform` |
 | `actions/security/semgrep`, `actions/security/gitleaks` | cross-stack SAST and secret scan (pinned Docker images), `security_sast` job of every workflow but the fronts' | all but `fronts` |
 | `actions/security/semgrep-pypi`, `actions/security/gitleaks-binary` | the same scans from the hash-checked Semgrep wheel and Gitleaks release binary (no Docker Hub pull); `frontend-cicd.yml`, `frontend-dev-exception.yml` and this repo's `lint.yml` | `fronts` |
 | `actions/performance/<stack>` | k6 load test (`apis`, `bffs`, `fronts`), schema bench (`db`) | `apis`, `bffs`, `fronts`, `db` |
@@ -65,6 +97,7 @@ publish jobs for front libs) waits for it.
 | `front-libs-cicd.yml` | `p/typescript p/react p/secrets p/github-actions cicd-repo/tests/semgrep/gdpr` | no, report-only |
 | `bffs-lib-cicd.yml` | `p/typescript p/nodejs p/expressjs p/secrets p/github-actions cicd-repo/tests/semgrep/gdpr` | no, report-only |
 | `database_cicd.yml` | `p/secrets p/dockerfile p/github-actions cicd-repo/tests/semgrep/gdpr` | yes (since MAIR-416) |
+| `terraform_cicd.yml` | `p/secrets p/terraform p/github-actions cicd-repo/tests/semgrep/gdpr` | yes (MAIR-617) |
 
 `cicd-repo/tests/semgrep/gdpr` holds the GDPR rules of MAIR-291 (one file per language, each
 tested by `semgrep --test` against the file of the same name in the `semgrep-rules` job of
