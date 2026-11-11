@@ -1,0 +1,47 @@
+name: "Terraform checks (terraform)"
+description: >-
+  Static checks and tests of one Terraform root or module of the `Infra` repo (`tests` job of
+  terraform_cicd.yml, one matrix entry per root): `fmt -check`, `init -backend=false` (no state, no
+  cloud credentials), `validate`, then `terraform test` (the tests mock the providers, so nothing
+  is read from or written to Scaleway). The caller checks out the repo first.
+
+inputs:
+  root:
+    description: "Directory of the root or module to check, relative to the workspace (e.g. orgs/mairie360)"
+    required: true
+  terraform_version:
+    description: "Exact Terraform version"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v4
+      with:
+        terraform_version: ${{ inputs.terraform_version }}
+        terraform_wrapper: false
+
+    - name: Format
+      shell: bash
+      env:
+        ROOT: ${{ inputs.root }}
+      run: terraform -chdir="$ROOT" fmt -check -recursive -diff
+
+    - name: Init (no backend)
+      shell: bash
+      env:
+        ROOT: ${{ inputs.root }}
+      run: terraform -chdir="$ROOT" init -backend=false -input=false
+
+    - name: Validate
+      shell: bash
+      env:
+        ROOT: ${{ inputs.root }}
+      run: terraform -chdir="$ROOT" validate -no-color
+
+    - name: Test
+      shell: bash
+      env:
+        ROOT: ${{ inputs.root }}
+      run: terraform -chdir="$ROOT" test -no-color

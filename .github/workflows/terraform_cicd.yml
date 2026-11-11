@@ -1,0 +1,134 @@
+name: Terraform CI
+
+# [NOUVEAU] MAIR-617: CI of the Terraform repo `Infra` (Scaleway resources). Checks and security
+# only: Terraform is applied by hand by an operator (`scripts/tf.sh <root> apply`), never by CI,
+# so there is no release job and no cloud credential here.
+on:
+  workflow_call:
+    inputs:
+      cicd_version:
+        required: true
+        type: string
+      roots:
+        required: true
+        type: string
+        description: >-
+          JSON array of the Terraform roots and modules to check, relative to the repo root
+          (e.g. '["bootstrap", "modules/instance", "orgs/mairie360"]'). Each gets fmt, init
+          without backend, validate and `terraform test`.
+      terraform_version:
+        required: false
+        type: string
+        default: "1.17.1"
+        description: "Exact Terraform version of the checks"
+      semgrep_config:
+        required: false
+        type: string
+        default: "p/secrets p/terraform p/github-actions cicd-repo/tests/semgrep/gdpr"
+        description: "Semgrep rulesets (space-separated) run by the SAST job"
+      semgrep_fail_on_findings:
+        required: false
+        type: boolean
+        default: true
+        description: "Fail the pipeline on Semgrep findings"
+      iac_scan_fail_on_findings:
+        required: false
+        type: boolean
+        default: true
+        description: "Fail the pipeline on HIGH/CRITICAL Trivy misconfigurations (accepted risks go in .trivyignore)"
+    secrets:
+      N8N_WEBHOOK_SECRET:
+        required: false
+        description: "n8n webhook secret of the failure notification; without it nothing is sent"
+
+jobs:
+  tests:
+    name: Terraform checks (${{ matrix.root }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        root: ${{ fromJSON(inputs.roots) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Only `actions/`, like the other check jobs (MAIR-493).
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+          persist-credentials: false
+
+      - name: Terraform checks
+        uses: ./cicd-repo/actions/unit-tests/terraform
+        with:
+          root: ${{ matrix.root }}
+          terraform_version: ${{ inputs.terraform_version }}
+
+  security_sast:
+    name: Code Security Audit (Semgrep, Gitleaks, Trivy IaC)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Gitleaks scans the commits of the push / PR
+          persist-credentials: false
+
+      - name: Checkout CICD repo
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          persist-credentials: false
+
+      - name: Run Semgrep Security Scan
+        uses: ./cicd-repo/actions/security/semgrep
+        with:
+          config: ${{ inputs.semgrep_config }}
+          fail_on_findings: ${{ inputs.semgrep_fail_on_findings }}
+
+      - name: Run Gitleaks Secret Scan
+        uses: ./cicd-repo/actions/security/gitleaks
+
+      - name: Run Trivy IaC Scan
+        uses: ./cicd-repo/actions/security/terraform
+        with:
+          fail_on_findings: ${{ inputs.iac_scan_fail_on_findings }}
+
+  notify-cicd-failure:
+    name: Notify n8n on failure
+    if: failure()
+    needs:
+      - tests
+      - security_sast
+    runs-on: ubuntu-latest
+    env:
+      HAS_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET != '' }}
+    steps:
+      - name: Checkout CICD Tools
+        uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: ${{ inputs.cicd_version }}
+          path: cicd-repo
+          sparse-checkout: actions
+          persist-credentials: false
+
+      - name: Notify n8n
+        if: env.HAS_SECRET == 'true'
+        uses: ./cicd-repo/actions/notify/cicd-failure
+        with:
+          n8n_webhook_secret: ${{ secrets.N8N_WEBHOOK_SECRET }}
