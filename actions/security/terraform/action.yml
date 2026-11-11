@@ -4,7 +4,7 @@ description: >-
   the checked-out repo (`security_sast` job of terraform_cicd.yml, after Semgrep and Gitleaks).
   Pinned image (version + digest, like docker-release), `.terraform/` and `cicd-repo/` skipped,
   `.trivyignore` at the repo root honoured for accepted risks. Fails on `severity` findings unless
-  `fail_on_findings` is 'false'; a scan error always fails.
+  `fail_on_findings` is 'false'; a scan error (any exit code but 0 / 42) always fails.
 
 inputs:
   severity:
@@ -37,7 +37,10 @@ runs:
         if [ -f "$GITHUB_WORKSPACE/.trivyignore" ]; then
           ignore_args=(--ignorefile /src/.trivyignore)
         fi
-        # Exit code 1 = findings (with --exit-code 1); anything else = scan error.
+        # Exit code 42 = findings (--exit-code 42); Trivy exits 1 on its own
+        # fatal errors (DB download...), so anything but 0 / 42 is a scan error.
+        # Captured with `||`: the step shell runs with -e.
+        code=0
         docker run --rm \
           -v "$GITHUB_WORKSPACE:/src:ro" \
           -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
@@ -47,14 +50,13 @@ runs:
             --skip-dirs cicd-repo \
             --skip-dirs '**/.terraform' \
             --skip-version-check \
-            --exit-code 1 \
+            --exit-code 42 \
             "${ignore_args[@]}" \
-            .
-        code=$?
+            . || code=$?
         if [ "$code" -eq 0 ]; then
           exit 0
         fi
-        if [ "$code" -eq 1 ] && [ "$FAIL_ON_FINDINGS" != "true" ]; then
+        if [ "$code" -eq 42 ] && [ "$FAIL_ON_FINDINGS" != "true" ]; then
           echo "::warning title=Trivy IaC::$SEVERITY misconfigurations found (report-only, fail_on_findings is false), see the log above"
           exit 0
         fi

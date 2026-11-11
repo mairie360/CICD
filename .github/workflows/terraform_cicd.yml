@@ -66,6 +66,7 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
           sparse-checkout: actions
+          persist-credentials: false
 
       - name: Terraform checks
         uses: ./cicd-repo/actions/unit-tests/terraform
@@ -91,6 +92,7 @@ jobs:
           repository: mairie360/CICD
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
+          persist-credentials: false
 
       - name: Run Semgrep Security Scan
         uses: ./cicd-repo/actions/security/semgrep
@@ -123,6 +125,7 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
           sparse-checkout: actions
+          persist-credentials: false
 
       - name: Notify n8n
         if: env.HAS_SECRET == 'true'
