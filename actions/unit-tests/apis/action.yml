@@ -12,17 +12,17 @@ runs:
   using: "composite"
   steps:
     - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       with:
         components: llvm-tools-preview
 
     - name: Rust Cache
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
     # [CHANGEMENT] Installation via taiki-e/install-action (plus rapide que `cargo install`),
     # aligné sur back-lib-cicd.yml.
     - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@cargo-llvm-cov
+      uses: taiki-e/install-action@9299c56f1fb893650f348425bb02c3acf492ebd2 # cargo-llvm-cov
 
     # [CHANGEMENT] Passe par l'alias cargo `cov` défini par le repo consommateur
     # (aligné sur la convention `cargo lint_check`). L'alias doit exécuter les tests,
@@ -35,7 +35,7 @@ runs:
     # uniquement sur main ou sur une PR ciblant main.
     - name: Envoyer à Codecov
       if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-      uses: codecov/codecov-action@v7
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
       with:
         token: ${{ inputs.codecov_token }}
         files: codecov.json
