@@ -109,13 +109,31 @@ class VerifyPinsTest(ScratchRepo):
         self.assertNotIn('bff-project:dev', self.summary.read_text())
         self.assertNotIn('express', self.summary.read_text())
 
-    def test_dev_contract_package_is_refused_by_name(self):
+    def test_published_dev_contract_is_accepted_and_a_range_refused(self):
+        # MAIR-998: contracts are only bumped when the code needs it; any exact published build goes.
+        with self.known.open('a') as known:
+            known.write('@mairie360/core-api-openapi@0.0.0-dev-156a9b9\n')
         package = json.loads(json.dumps(PACKAGE))
         package['dependencies']['@mairie360/core-api-openapi'] = '0.0.0-dev-156a9b9'
-        sha = self.commit(package=package)
-        result = self.run_script(sha)
+        self.assertEqual(self.run_script(self.commit(package=package)).returncode, 0)
+        package['dependencies']['@mairie360/core-api-openapi'] = '0.0.0-dev-0000000'
+        result = self.run_script(self.commit(package=package))
+        self.assertIn('@mairie360/core-api-openapi@0.0.0-dev-0000000 (package.json dependencies): not published', result.stdout)
+        package['dependencies']['@mairie360/core-api-openapi'] = '^2.3.0'
+        result = self.run_script(self.commit(package=package))
         self.assertEqual(result.returncode, 1)
-        self.assertIn('::error title=verify-pins::@mairie360/core-api-openapi@0.0.0-dev-156a9b9 (package.json dependencies)', result.stdout)
+        self.assertIn('@mairie360/core-api-openapi@^2.3.0 (package.json dependencies): not an exact published version', result.stdout)
+
+    def test_stage_moving_tag_is_accepted_other_variables_refused(self):
+        # MAIR-998: the stacks follow ${UPSTREAM_TAG:-dev}, which the prod gates set to latest.
+        compose = ('services:\n  db:\n    image: ${DB_IMAGE:-ghcr.io/mairie360/database:${UPSTREAM_TAG:-dev}}\n'
+                   '  core:\n    image: ghcr.io/mairie360/core-api:${UPSTREAM_TAG:-dev}\n')
+        result = self.run_script(self.commit(compose=compose))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('`ghcr.io/mairie360/core-api:${UPSTREAM_TAG:-dev}` | ok (moving tag of the stage', self.summary.read_text())
+        result = self.run_script(self.commit(compose='services:\n  core:\n    image: ghcr.io/mairie360/core-api:${CORE_TAG:-dev}\n'))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('not reproducible', result.stdout)
 
     def test_dev_image_of_a_test_stack_is_refused_with_its_line(self):
         sha = self.commit(compose=COMPOSE.replace('database:3.4.0', 'database:dev-c5b8e22'))
@@ -169,18 +187,12 @@ class VerifyPinsTest(ScratchRepo):
         self.assertIn('npm view', result.stdout)
 
 
-# Registry fake for the prod-equivalence rule: `npm view <name> dist-tags.latest` reads
-# $LATEST/<name with / as _>, `npm pack <spec>` copies $TARBALLS/<spec with / as _>.tgz, and
-# `docker buildx imagetools inspect <ref>` prints the digest listed for <ref> in $DIGESTS.
+# Registry fake: `npm view` reads $KNOWN, `docker buildx imagetools inspect <ref>` prints the digest
+# listed for <ref> in $DIGESTS.
 PROD_FAKE = r"""#!/usr/bin/env bash
 case "$(basename "$0") $1" in
   "npm view")
-    if [ "$3" = dist-tags.latest ]; then
-      f="$LATEST/$(echo "$2" | tr / _)"; [ -f "$f" ] && { printf '"%s"' "$(cat "$f")"; exit 0; }
-    elif grep -qxF "$2" "$KNOWN"; then echo '"ok"'; exit 0; fi ;;
-  "npm pack")
-    f="$TARBALLS/$(echo "$2" | tr / _).tgz"
-    if [ -f "$f" ]; then cp "$f" "$4/x-$(basename "$f")"; printf '[{"filename":"x-%s"}]' "$(basename "$f")"; exit 0; fi ;;
+    grep -qxF "$2" "$KNOWN" && { echo '"ok"'; exit 0; } ;;
   "docker buildx")
     d=$(awk -v r="$4" '$1 == r {print $2}' "$DIGESTS")
     [ -n "$d" ] && { printf '{"digest":"%s"}' "$d"; exit 0; } ;;
@@ -190,61 +202,22 @@ exit 1
 """
 
 
-def make_tarball(path, version, endpoint='export const getProject = 1;\n'):
-    import io
-    import tarfile
-    with tarfile.open(path, 'w:gz') as archive:
-        for name, text in (('package/package.json', json.dumps({'name': '@mairie360/core-api-openapi', 'version': version})),
-                           ('package/endpoints/project.ts', endpoint)):
-            data = text.encode()
-            info = tarfile.TarInfo(name)
-            info.size = len(data)
-            archive.addfile(info, io.BytesIO(data))
-
-
 class ProdEquivalentPinsTest(ScratchRepo):
-    """MAIR-998 / MAIR-1005: a dev or staging pin of an upstream goes to prod when it is the
-    upstream's current prod release (same package contents, same image digest)."""
-
-    DEV = '0.0.0-dev-156a9b9'
+    """MAIR-998 / MAIR-1005: a hard-coded dev or staging image tag of an upstream goes to prod
+    only when it has the digest of the upstream's `latest`."""
 
     def setUp(self):
         super().setUp()
         root = Path(self.env['HOME'])
         for tool in ('npm', 'docker'):
             (root / 'bin' / tool).write_text(PROD_FAKE)
-        latest, tarballs = root / 'latest', root / 'tarballs'
-        latest.mkdir()
-        tarballs.mkdir()
-        (latest / '@mairie360_core-api-openapi').write_text('2.3.0')
-        make_tarball(tarballs / '@mairie360_core-api-openapi@2.3.0.tgz', '2.3.0')
-        make_tarball(tarballs / '@mairie360_core-api-openapi@{}.tgz'.format(self.DEV), self.DEV)
-        make_tarball(tarballs / '@mairie360_core-api-openapi@0.0.0-dev-2222222.tgz', '0.0.0-dev-2222222',
-                     endpoint='export const getProject = 2;\n')
         self.digests = root / 'digests'
         self.digests.write_text('\n'.join([
             'ghcr.io/mairie360/database:latest sha256:aaa', 'ghcr.io/mairie360/database:dev-c5b8e22 sha256:aaa',
             'ghcr.io/mairie360/database:dev-0000000 sha256:old', 'ghcr.io/mairie360/database:3.4.0 sha256:aaa',
             'ghcr.io/mairie360/core-api:2.3.0 sha256:ccc', 'ghcr.io/mairie360/core-api:latest sha256:ccc',
         ]) + '\n')
-        self.env.update(LATEST=str(latest), TARBALLS=str(tarballs), DIGESTS=str(self.digests))
-
-    def package(self, version):
-        package = json.loads(json.dumps(PACKAGE))
-        package['dependencies']['@mairie360/core-api-openapi'] = version
-        return package
-
-    def test_dev_package_identical_to_prod_is_accepted(self):
-        sha = self.commit(package=self.package(self.DEV))
-        result = self.run_script(sha)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('ok (= prod 2.3.0)', self.summary.read_text())
-
-    def test_dev_package_of_another_commit_is_refused(self):
-        sha = self.commit(package=self.package('0.0.0-dev-2222222'))
-        result = self.run_script(sha)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn('@mairie360/core-api-openapi@0.0.0-dev-2222222 (package.json dependencies): not the current prod release', result.stdout)
+        self.env.update(DIGESTS=str(self.digests))
 
     def test_dev_image_with_the_prod_digest_is_accepted(self):
         sha = self.commit(compose=COMPOSE.replace('database:3.4.0', 'database:dev-c5b8e22'))
@@ -262,21 +235,6 @@ class ProdEquivalentPinsTest(ScratchRepo):
         for tag in ('latest', 'dev', 'staging'):
             sha = self.commit(compose=COMPOSE.replace('database:3.4.0', 'database:' + tag))
             self.assertEqual(self.run_script(sha).returncode, 1, tag)
-
-
-class PackageFilesTest(unittest.TestCase):
-    def test_only_the_version_may_differ(self):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('verify_pins', SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        with tempfile.TemporaryDirectory() as tmp:
-            a, b, c = (Path(tmp) / n for n in ('a.tgz', 'b.tgz', 'c.tgz'))
-            make_tarball(a, '0.0.0-dev-156a9b9')
-            make_tarball(b, '2.3.0')
-            make_tarball(c, '2.3.0', endpoint='changed\n')
-            self.assertEqual(module.package_files(a), module.package_files(b))
-            self.assertNotEqual(module.package_files(b), module.package_files(c))
 
 
 class WorkflowWiringTest(unittest.TestCase):

@@ -5,7 +5,7 @@ name: Promote to Prod
 # `staging-<sha>` gets the semver tag and `latest`.
 #
 #   resolve       the commit (input, else main's newest one on staging) must have `staging-<sha>`,
-#                 and its internal pins must be releases or the upstream's prod artifact (verify-pins, MAIR-1005)
+#                 and its internal pins must be published and reproducible (verify-pins, MAIR-1005)
 #   version       semantic-release dry run on that commit (it can be behind main's tip)
 #   release_folder  database only: the Liquibase release folder matches that version (MAIR-491)
 #   gdpr_inventory  database only: every column of the staging schema is in gdpr/inventory.yaml (MAIR-285)
@@ -105,6 +105,12 @@ on:
 permissions:
   contents: read
 
+
+# [NOUVEAU] MAIR-998: the compose stacks pull their upstreams (database, APIs, BFFs) as
+# ghcr.io/<owner>/<name>:${UPSTREAM_TAG:-dev}; the prod gates test against what prod runs. No pin to bump,
+# no commit; actions/integration/upstream-images logs the digests in the job summary.
+env:
+  UPSTREAM_TAG: latest
 jobs:
   resolve:
     name: Resolve the commit
@@ -152,11 +158,10 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           dry_run: ${{ inputs.dry_run }}
 
-      # [NOUVEAU] MAIR-1005: prod only ships released internal artifacts. Every @mairie360/* package
-      # of the commit's package.json and every ghcr.io/mairie360 image of its root compose files
-      # must be an existing X.Y.Z, or a dev / staging build that is the upstream's current prod
-      # release (same package contents / same digest as latest, MAIR-998); anything else fails here,
-      # before any gate, naming the pin.
+      # [NOUVEAU] MAIR-1005: prod only ships published, reproducible internal artifacts. Every
+      # @mairie360/* package of the commit's package.json must be an exact published version, every
+      # upstream ghcr.io/mairie360 image of its root compose files ${UPSTREAM_TAG:-dev} (latest here,
+      # MAIR-998) or an existing X.Y.Z; anything else fails here, before any gate, naming the pin.
       - name: Verify the internal pins
         uses: ./cicd-repo/actions/promote/verify-pins
         with:

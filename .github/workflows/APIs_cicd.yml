@@ -54,6 +54,12 @@ on:
       N8N_WEBHOOK_SECRET:
         required: true
 
+
+# [NOUVEAU] MAIR-998: the compose stacks pull their upstreams (database, APIs, BFFs) as
+# ghcr.io/<owner>/<name>:${UPSTREAM_TAG:-dev}; PRs and main test against the newest dev build of every upstream. No pin to bump,
+# no commit; actions/integration/upstream-images logs the digests in the job summary.
+env:
+  UPSTREAM_TAG: dev
 jobs:
   dependencies:
     name: Dependencies

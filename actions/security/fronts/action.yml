@@ -18,6 +18,11 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # [NOUVEAU] MAIR-998: the stack pulls its upstreams with the moving tag of the stage
+    # (UPSTREAM_TAG, set by the workflow): record the digests it is about to test.
+    - name: Log the upstream images
+      uses: ./cicd-repo/actions/integration/upstream-images
+
     - name: Run ZAP Security Scan via Docker Compose
       shell: bash
       run: ./security_test.sh

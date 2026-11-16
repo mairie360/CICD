@@ -71,6 +71,12 @@ on:
 permissions:
   contents: read
 
+
+# [NOUVEAU] MAIR-998: the compose stacks pull their upstreams (database, APIs, BFFs) as
+# ghcr.io/<owner>/<name>:${UPSTREAM_TAG:-dev}; the staging gates test against what staging runs (upstreams are promoted first). No pin to bump,
+# no commit; actions/integration/upstream-images logs the digests in the job summary.
+env:
+  UPSTREAM_TAG: staging
 jobs:
   resolve:
     name: Resolve the commit

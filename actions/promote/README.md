@@ -9,9 +9,9 @@ the other types (`actions/<type>/<stack>`).
   staging, `staging-<sha>` for prod. Outputs the full sha, the short tag, the image and the
   digest(s) the promotion must re-tag. Tests: `python3 -m unittest discover -s actions/promote/resolve/tests`.
 - `verify-pins/` (MAIR-1005): step of promote-prod's `resolve` job; refuses the commit unless every
-  `@mairie360/*` package of its `package.json` and every `ghcr.io/mairie360/*` image of its test
-  stacks (`docker-compose-*.yml`) is an existing `X.Y.Z` release, or a dev / staging build that is the
-  upstream's current prod release (same package contents / same digest as `latest`). `mode: report` only warns. Tests:
+  `@mairie360/*` package of its `package.json` is an exact published version (release or dev / staging
+  build) and every upstream `ghcr.io/mairie360/*` image of its test stacks (`docker-compose-*.yml`)
+  uses `${UPSTREAM_TAG:-dev}` (MAIR-998) or an existing `X.Y.Z` tag. `mode: report` only warns. Tests:
   `python3 -m unittest discover -s actions/promote/verify-pins/tests`.
 - `next-version/`: semantic-release dry run on a commit that may be behind main's tip (local bare
   mirror + `url.<mirror>.insteadOf`), for the version and notes promote-prod releases.

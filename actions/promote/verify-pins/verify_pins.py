@@ -1,44 +1,40 @@
 """Check the internal pins of the commit a promote-prod run promotes (MAIR-1005).
 
-Prod only ships released artifacts: every internal pin of the promoted commit must be a semver
-release that exists, or a dev / staging build that IS the upstream's current prod release (user
-decision, 2026-11-16): a service that pins `dev-<sha>` of an upstream can go to prod without a
-re-pinning wave when that upstream's prod (`latest`) is the same artifact. Until now the rule was only
-checked on the image tags of Deploiment's values (`scripts/check-image-tags.sh`); a service could
-reach prod with a dev contract or a dev image in its test stacks, which the next release then had
-to re-pin by hand.
+Prod only ships published, reproducible internal artifacts (user decisions of 2026-11-16,
+MAIR-998). Pins read at the promoted commit (`git show <sha>:<file>`, the checkout is main's tip):
 
-Pins read at the promoted commit (`git show <sha>:<file>`, the checkout is main's tip):
-
-- `package.json`: every `@<owner>/*` dependency (OpenAPI contracts, bffs-lib, lib-components),
-  which must be an exact `X.Y.Z` that the registry knows (`npm view`), or a `0.0.0-dev…` /
-  `0.0.0-staging…` version whose package has the same contents (version aside) as the `latest`
-  dist-tag: promotions republish that very tarball (MAIR-999);
-- the test stacks `docker-compose-*.yml` at the repo root (not the local `docker-compose.yml`): every `ghcr.io/<owner>/<name>:<tag>`, which
-  must be an `X.Y.Z` tag that exists (`docker buildx imagetools inspect`), or a `dev-<sha>` /
-  `staging-<sha>` tag with the digest of `:latest` (promotions re-tag one digest). The repo's own images
-  (`package_name`, `extra_package_name`) are left out: their stacks run the promoted digest.
+- `package.json`: every `@<owner>/*` dependency (OpenAPI contracts, bffs-lib, lib-components) must
+  be an exact version that the registry knows (`npm view`): a release `X.Y.Z` or a dev / staging
+  build (`0.0.0-dev…`, `0.0.0-staging…`). Contracts are only bumped when the code needs a new
+  route or field; compatibility with the upstream is proven by the gates, which run against its
+  prod images. Ranges and dist-tags are refused (not reproducible).
+- the test stacks `docker-compose-*.yml` at the repo root (not the local `docker-compose.yml`):
+  every upstream `ghcr.io/<owner>/<name>` must use the moving tag of the stage,
+  `${UPSTREAM_TAG:-dev}`, which the prod gates resolve to `latest` (what prod runs); an `X.Y.Z`
+  tag that exists is still accepted, and so is a `dev-<sha>` / `staging-<sha>` tag with the digest
+  of `:latest`. A hard-coded moving tag (`latest`, `dev`, `staging`, none) or another variable is
+  refused. The repo's own images (`package_name`, `extra_package_name`) are left out: their stacks
+  run the promoted digest.
 
 MODE=enforce fails (exit 1) on any finding, naming each pin; MODE=report (dry runs, MAIR-1007)
 only warns. Standard library only; writes a summary table to $GITHUB_STEP_SUMMARY.
 """
 
-import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
-import tarfile
-import tempfile
 
 SEMVER = re.compile(r'^\d+\.\d+\.\d+$')
 # The test stacks of the gates (docker-compose-integration.yml, -security, -e2e...); the plain
 # docker-compose.yml is the local dev stack, never run by CI, and holds placeholders.
 COMPOSE = re.compile(r'^docker-compose[-.](?!ya?ml$)[^/]*\.ya?ml$')
-# Dev / staging builds, accepted when they are the upstream's current prod release.
+# Dev / staging builds: exact, reproducible versions (packages), or the prod digest (images).
 PRERELEASE_PACKAGE = re.compile(r'^0\.0\.0-(dev|staging)[.-][0-9a-f]{7,40}$')
 PRERELEASE_TAG = re.compile(r'^(dev|staging)-[0-9a-f]{7,40}$')
+# The moving tag of the stage, set by the CICD workflows (dev / staging / latest), MAIR-998.
+STAGE_TAG = re.compile(r'^\$\{UPSTREAM_TAG(:?-[a-z]+)?$')
 NOT_FOUND = ('E404', '404 Not Found', 'is not in this registry', 'No matching version')
 
 
@@ -93,50 +89,6 @@ def package_exists(name, version):
     raise Error('npm view {}@{} failed: {}'.format(name, version, (result.stderr or result.stdout).strip()))
 
 
-def npm_json(args):
-    """Parsed `npm <args> --json`, None on a 404, raises on any other error."""
-    result = subprocess.run(['npm', *args, '--json'], capture_output=True, text=True)
-    if result.returncode == 0:
-        try:
-            return json.loads(result.stdout or 'null')
-        except ValueError:
-            return None
-    if any(marker in result.stderr + result.stdout for marker in NOT_FOUND):
-        return None
-    raise Error('npm {} failed: {}'.format(' '.join(args), (result.stderr or result.stdout).strip()))
-
-
-def package_files(tarball):
-    """{path: sha256} of a package tarball, `version` left out of package.json."""
-    files = {}
-    with tarfile.open(tarball) as archive:
-        for member in archive.getmembers():
-            if not member.isfile():
-                continue
-            data = archive.extractfile(member).read()
-            if member.name == 'package/package.json':
-                manifest = json.loads(data)
-                manifest.pop('version', None)
-                data = json.dumps(manifest, sort_keys=True).encode()
-            files[member.name] = hashlib.sha256(data).hexdigest()
-    return files
-
-
-def prod_package(name, version):
-    """The `latest` version of `name` when `name@version` has the same contents, else None."""
-    latest = npm_json(['view', name, 'dist-tags.latest'])
-    if not isinstance(latest, str) or not SEMVER.match(latest):
-        return None
-    with tempfile.TemporaryDirectory() as workdir:
-        contents = []
-        for spec in ('{}@{}'.format(name, version), '{}@{}'.format(name, latest)):
-            packed = npm_json(['pack', spec, '--pack-destination', workdir])
-            if not packed:
-                return None
-            contents.append(package_files(os.path.join(workdir, packed[0]['filename'])))
-    return latest if contents[0] == contents[1] else None
-
-
 def image_digest(ref):
     result = subprocess.run(['docker', 'buildx', 'imagetools', 'inspect', ref, '--format', '{{json .Manifest}}'],
                             capture_output=True, text=True)
@@ -162,7 +114,7 @@ def image_exists(ref):
 
 
 def check(sha, owner, own_images, package_exists=package_exists, image_exists=image_exists,
-          prod_package=prod_package, prod_image=prod_image):
+          prod_image=prod_image):
     """Rows (kind, file, pin, verdict) and the list of findings."""
     rows, findings = [], []
 
@@ -175,14 +127,8 @@ def check(sha, owner, own_images, package_exists=package_exists, image_exists=im
     if manifest is not None:
         for name, version, section in package_pins(manifest, owner):
             pin = '{}@{}'.format(name, version)
-            if PRERELEASE_PACKAGE.match(version):
-                prod = prod_package(name, version)
-                add('npm', 'package.json ' + section, pin,
-                    None if prod else 'not the current prod release (latest): prod needs X.Y.Z or the same package')
-                if prod:
-                    rows[-1] = rows[-1][:3] + ('ok (= prod {})'.format(prod),)
-            elif not SEMVER.match(version):
-                add('npm', 'package.json ' + section, pin, 'not a release: prod needs an exact X.Y.Z')
+            if not (SEMVER.match(version) or PRERELEASE_PACKAGE.match(version)):
+                add('npm', 'package.json ' + section, pin, 'not an exact published version: prod needs X.Y.Z or a dev / staging build')
             elif not package_exists(name, version):
                 add('npm', 'package.json ' + section, pin, 'not published')
             else:
@@ -193,15 +139,18 @@ def check(sha, owner, own_images, package_exists=package_exists, image_exists=im
         for image, tag, number in image_pins(show(sha, path) or '', owner, own_images):
             where = '{}:{}'.format(path, number)
             pin = '{}:{}'.format(image, tag) if tag else image
-            if not tag:
-                add('image', where, pin, 'no tag (latest): prod needs an X.Y.Z tag')
+            if STAGE_TAG.match(tag):
+                add('image', where, pin + '}', None)
+                rows[-1] = rows[-1][:3] + ('ok (moving tag of the stage: latest in prod)',)
+            elif not tag:
+                add('image', where, pin, 'no tag (latest): use ${UPSTREAM_TAG:-dev} or an X.Y.Z tag')
             elif PRERELEASE_TAG.match(tag):
                 same = prod_image(image, tag)
-                add('image', where, pin, None if same else 'not the current prod image (latest): prod needs an X.Y.Z tag or the same digest')
+                add('image', where, pin, None if same else 'not the current prod image (latest): use ${UPSTREAM_TAG:-dev}')
                 if same:
                     rows[-1] = rows[-1][:3] + ('ok (= prod digest)',)
             elif not SEMVER.match(tag):
-                add('image', where, pin, 'not a release: prod needs an X.Y.Z tag')
+                add('image', where, pin, 'not reproducible: use ${UPSTREAM_TAG:-dev} or an X.Y.Z tag')
             elif not image_exists(pin):
                 add('image', where, pin, 'tag not found')
             else:
