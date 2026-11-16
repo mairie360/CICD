@@ -1,6 +1,6 @@
 name: "Dependencies (fronts)"
 description: >-
-  Node.js setup against GitHub Packages and `npm ci` of a Next.js front (`dependencies` job of
+  Node.js setup against GitHub Packages and `npm ci` (or the cached node_modules, MAIR-1009) of a Next.js front (`dependencies` job of
   frontend-cicd.yml); with `audit: 'true'`, also `npm audit --omit=dev --audit-level=high`
   (blocking) and a report-only `npm audit --audit-level=high` (`security_audit` job).
 
@@ -19,21 +19,14 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # [CHANGEMENT] Utilisation native du cache npm de setup-node (sur ~/.npm)
-    # plus léger et performant que la sauvegarde complète du dossier node_modules.
-    - name: Setup Node.js
-      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+    # [CHANGEMENT] MAIR-1009: node_modules comes from the cache keyed on package-lock.json and the
+    # Node version; `npm ci` only runs when it changed.
+    - name: Install dependencies (cached)
+      uses: ./cicd-repo/actions/dependencies/node-install
       with:
-        node-version: ${{ inputs.node_version }}
-        registry-url: 'https://npm.pkg.github.com'
-        scope: '@mairie360'
-        cache: 'npm'
-
-    - name: Install Dependencies
-      shell: bash
-      run: npm ci
-      env:
-        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+        node_version: ${{ inputs.node_version }}
+        node_auth_token: ${{ inputs.node_auth_token }}
+        save: 'true'
 
     # MAIR-510: only production dependencies gate the pipeline. Dev-only advisories
     # (ESLint/tooling chains such as braces via eslint-config-next) never reach the

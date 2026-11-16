@@ -1,0 +1,69 @@
+name: "Install node_modules (cached)"
+description: >-
+  Node.js setup against GitHub Packages, then `node_modules` restored from the cache when
+  `package-lock.json` (and `vendor/`), the Node version and the runner OS are unchanged, else
+  `npm ci` (MAIR-1009). Shared by the dependency, lint, build and test actions of the fronts and
+  BFFs: `npm ci` used to run in every job of the pipeline.
+
+inputs:
+  node_version:
+    description: "Node.js version (the workflow input node_version)"
+    required: true
+  npm_scope:
+    description: "npm scope hosted on GitHub Packages"
+    required: false
+    default: "@mairie360"
+  node_auth_token:
+    description: "Token for the GitHub Packages registry (the caller passes secrets.GITHUB_TOKEN)"
+    required: true
+  save:
+    description: "'true' to save node_modules after an install (the `dependencies` job, first of the pipeline)"
+    required: false
+    default: "false"
+
+outputs:
+  cache_hit:
+    description: "'true' when node_modules came from the cache"
+    value: ${{ steps.restore.outputs.cache-hit == 'true' && 'true' || 'false' }}
+
+runs:
+  using: "composite"
+  steps:
+    # No `cache: npm` any more: on a hit npm never runs, on a miss the install downloads once and
+    # the `dependencies` job saves the result for every later job.
+    - name: Setup Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: ${{ inputs.node_version }}
+        registry-url: https://npm.pkg.github.com
+        scope: ${{ inputs.npm_scope }}
+
+    # Exact key only: a partial node_modules from another lockfile must never be reused. The fronts
+    # install vendored backports (`vendor/`), part of the key.
+    - name: Restore node_modules
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: node_modules
+        key: node-modules-${{ runner.os }}-node${{ inputs.node_version }}-${{ hashFiles('package-lock.json', 'vendor/**') }}
+
+    - name: Install dependencies
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+
+    # `npm ci` runs the lifecycle scripts; a restored node_modules skips them, so the checks they
+    # hold (the fronts' `postinstall` verifies the vendored security backports) run here.
+    - name: Run the install checks
+      if: steps.restore.outputs.cache-hit == 'true'
+      shell: bash
+      run: npm run --if-present postinstall
+
+    - name: Save node_modules
+      if: inputs.save == 'true' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: node_modules
+        key: ${{ steps.restore.outputs.cache-primary-key }}

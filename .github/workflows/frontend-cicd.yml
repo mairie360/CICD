@@ -155,8 +155,13 @@ jobs:
       - name: Run Gitleaks Secret Scan
         uses: ./cicd-repo/actions/security/gitleaks-binary
 
+  # [CHANGEMENT] MAIR-1009: not on main any more. There the only build is the image's, in
+  # release-dev (the Dockerfile runs `npm run build` itself and nothing reused this job's output);
+  # a build error still fails the pipeline before anything is pushed. Pull requests keep this
+  # quick check before their ZAP / k6 stacks.
   build:
     name: Build Check (Next.js)
+    if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: [lint, security_audit, security_sast]
     steps:
@@ -205,7 +210,8 @@ jobs:
 
   release-dev:
     if: github.ref == 'refs/heads/main'
-    needs: [build, test]
+    # [CHANGEMENT] MAIR-1009: the checks `build` used to wait for, without `build` itself.
+    needs: [lint, security_audit, security_sast, test]
     runs-on: ubuntu-latest
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
     # is released to dev right away. Staging and prod are promote-staging.yml / promote-prod.yml
