@@ -9,8 +9,12 @@ runs:
       with:
         components: rustfmt, clippy
 
+    # MAIR-1002: only `main` writes the cache. A pull request cache (refs/pull/<n>/merge) cannot be read by
+    # any other run but counts against the 10 GB quota, so each pull request evicted the `main` caches.
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     # [CHANGEMENT] Utilisation de la commande cargo standard au lieu de l'action-rs/cargo
     - name: Run lint check
