@@ -125,8 +125,10 @@ jobs:
       - name: Run Gitleaks Secret Scan
         uses: ./cicd-repo/actions/security/gitleaks
 
+  # [CHANGEMENT] MAIR-999: only generates the OpenAPI spec (no more release build, see
+  # actions/build/apis); gdpr_contract and release-dev download it instead of compiling it again.
   build:
-    name: Build Project & Spec
+    name: OpenAPI Spec
     runs-on: ubuntu-latest
     needs: [lint, security_sast]
     steps:
@@ -143,7 +145,7 @@ jobs:
           path: cicd-repo
           sparse-checkout: actions
 
-      - name: Build Project
+      - name: Generate the OpenAPI spec
         uses: ./cicd-repo/actions/build/apis
 
   unit_test:
@@ -174,8 +176,8 @@ jobs:
 
   release-dev:
     if: github.ref == 'refs/heads/main'
-    # [CHANGEMENT] `build` ajouté explicitement : `unit_test` ne dépend plus de `build`,
-    # or ce job consomme l'artefact `api-assets`.
+    # `build` explicitly: `unit_test` does not need it, and this job reads its `openapi-spec`
+    # artifact (MAIR-999).
     needs: [unit_test, build]
     # [CHANGEMENT] MAIR-416: no `environment: Dev`, so no approval gate: every commit on main
     # is released to dev right away. Staging and prod are promote-staging.yml / promote-prod.yml
@@ -196,11 +198,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Download Spec
+      # [CHANGEMENT] MAIR-999: the spec of `build` (was the unused `api-assets` artifact with the
+      # release binaries). Outside the workspace: the Docker build context stays the repo.
+      - name: Download the OpenAPI spec
         uses: actions/download-artifact@v8
         with:
-          name: api-assets
-          path: .
+          name: openapi-spec
+          path: ${{ runner.temp }}/openapi
 
       - name: Checkout CICD Tools
         uses: actions/checkout@v7
@@ -227,6 +231,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: 0.0.0-dev-${{ steps.release.outputs.sha_tag }}
           dist_tag: dev
+          spec_file: ${{ runner.temp }}/openapi/openapi.json
 
       # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
       # A journal failure never fails the release.
@@ -245,7 +250,8 @@ jobs:
   # not need it, but promote-staging refuses a commit whose main run has a failed job (MAIR-494).
   gdpr_contract:
     name: GDPR contract (OpenAPI)
-    needs: lint
+    # [CHANGEMENT] MAIR-999: reads the spec of `build` instead of compiling the API a third time.
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -261,19 +267,12 @@ jobs:
           ref: ${{ inputs.cicd_version }}
           path: cicd-repo
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # MAIR-1002: only `main` writes the cache. A pull request cache (refs/pull/<n>/merge) cannot be read by
-      # any other run but counts against the 10 GB quota, so each pull request evicted the `main` caches.
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+      # The spec the release publishes.
+      - name: Download the OpenAPI spec
+        uses: actions/download-artifact@v8
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # Same command as publish-openapi-rust: the spec the release publishes.
-      - name: Generate the OpenAPI spec
-        run: cargo open_api > "$RUNNER_TEMP/openapi.json"
+          name: openapi-spec
+          path: ${{ runner.temp }}
 
       - name: Check the contract
         uses: ./cicd-repo/actions/security/gdpr-contract

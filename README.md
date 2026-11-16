@@ -67,7 +67,7 @@ The steps of every job live in composite actions sorted by check type, then by s
 | `actions/security/semgrep-pypi`, `actions/security/gitleaks-binary` | the same scans from the hash-checked Semgrep wheel and Gitleaks release binary (no Docker Hub pull); `frontend-cicd.yml`, `frontend-dev-exception.yml` and this repo's `lint.yml` | `fronts` |
 | `actions/performance/<stack>` | k6 load test (`apis`, `bffs`, `fronts`), schema bench (`db`) | `apis`, `bffs`, `fronts`, `db` |
 | `actions/e2e/<stack>` | Playwright user journeys of a front on its `docker-compose-e2e.yml` stack, prod gate of `promote-prod.yml` (MAIR-602) | `fronts` |
-| `actions/release/` | `docker-release`, `semantic-tag`, `publish-openapi-rust`, `publish-openapi-typescript`, `release-folder` (database), `docker-manual-build`, `frontend-dev-exception` (`check_policy.py` of `frontend-dev-exception.yml`) | — |
+| `actions/release/` | `docker-release`, `semantic-tag`, `publish-openapi-rust`, `publish-openapi-typescript`, `promote-openapi` (MAIR-999), `release-folder` (database), `docker-manual-build`, `frontend-dev-exception` (`check_policy.py` of `frontend-dev-exception.yml`) | — |
 | `actions/promote/` | `resolve` (commit promoted and its checks), `next-version` (semantic-release dry run on a commit behind main's tip), used by `promote-staging.yml` / `promote-prod.yml` (MAIR-494) | — |
 | `actions/notify/cicd-failure` | n8n notification of a failed run | all |
 
@@ -242,6 +242,17 @@ semantic-release reads the tags and checks the branch there, and the release not
 repository links. The tag and the release are then created through the API on that commit. A run
 with nothing to release (only `chore` / `ci` / `docs` commits since the last tag) stops after
 `version`, with a notice.
+
+The OpenAPI package of a promotion is not generated again (MAIR-999): `actions/release/promote-openapi`
+downloads the package of the previous environment (`0.0.0-dev-<sha7>` / `0.0.0-dev.<sha40>` for
+staging, `0.0.0-staging.<sha>` for prod), changes its `version` and publishes it with the new
+dist-tag, so the promote job compiles nothing after the approval and the contents are the ones dev
+tested. Only when that package does not exist (a commit released before MAIR-999) does the job fall
+back to `publish-openapi-rust` / `publish-openapi-typescript`; any other registry error fails it.
+In the main pipeline of the APIs the spec is generated once, by the `build` job (`cargo open_api`,
+`openapi-spec` artifact; the release build it used to make was never used, the Dockerfile compiles
+the image), and read by `gdpr_contract` and by the dev publication (`spec_file` input of
+`publish-openapi-rust`).
 
 Both runs take a lock per repo and target (`concurrency: promote-<repo>-<target>`, in the caller),
 and only run on `main`. The commits a promotion creates (the release journal) carry `[skip ci]`;
@@ -464,8 +475,8 @@ job, for stacks that build an image.
 
 ### GDPR contract (`actions/security/gdpr-contract`, MAIR-291)
 
-`APIs_cicd.yml` and `BFFs-cicd.yml` run a `gdpr_contract` job on every event (APIs: after `lint`,
-on `cargo open_api`; BFFs: after `build`, on the `openapi-spec` artifact). `release-dev` does not
+`APIs_cicd.yml` and `BFFs-cicd.yml` run a `gdpr_contract` job on every event (APIs: after `build`,
+on its `openapi-spec` artifact, MAIR-999; BFFs: after `build`, on the `openapi-spec` artifact). `release-dev` does not
 need it, but promote-staging refuses a commit whose main run has a failed job.
 It reads the personal data inventory of the database (`gdpr/inventory.yaml` of
 mairie360/Database, input `gdpr_inventory_ref`, `main` by default) and walks every response schema
