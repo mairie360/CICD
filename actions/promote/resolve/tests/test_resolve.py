@@ -138,7 +138,7 @@ class MainTest(unittest.TestCase):
         self.tags['ghcr.io/mairie360/core-api:dev-' + two[:7]] = DIGEST
         out = resolve.main(self.env)
         self.assertEqual(out, {'sha': two, 'sha_tag': two[:7], 'image': 'ghcr.io/mairie360/core-api',
-                               'digest': DIGEST, 'extra_digest': ''})
+                               'digest': DIGEST, 'extra_digest': '', 'source_stage': 'dev'})
         self.check_ci.assert_called_once_with('mairie360/Core_API', 'cicd.yml', two, 'main', 't')
 
     def test_short_sha_is_expanded(self):
@@ -171,6 +171,38 @@ class MainTest(unittest.TestCase):
             resolve.main(env)
         self.tags['ghcr.io/mairie360/liquibase-migrations:staging-' + one[:7]] = EXTRA
         self.assertEqual(resolve.main(env)['extra_digest'], EXTRA)
+
+    # MAIR-1007: a dry run runs the gates without promoting; prod accepts a commit only on dev.
+    def test_prod_dry_run_accepts_a_commit_only_on_dev(self):
+        one = self.repo.shas[0]
+        self.tags['ghcr.io/mairie360/core-api:dev-' + one[:7]] = DIGEST
+        out = resolve.main(dict(self.env, TARGET='prod', SHA_INPUT=one, DRY_RUN='true'))
+        self.assertEqual((out['digest'], out['source_stage']), (DIGEST, 'dev'))
+
+    def test_prod_dry_run_prefers_the_staging_image(self):
+        one = self.repo.shas[0]
+        self.tags['ghcr.io/mairie360/core-api:dev-' + one[:7]] = DIGEST
+        self.tags['ghcr.io/mairie360/core-api:staging-' + one[:7]] = EXTRA
+        out = resolve.main(dict(self.env, TARGET='prod', SHA_INPUT=one, DRY_RUN='true'))
+        self.assertEqual((out['digest'], out['source_stage']), (EXTRA, 'staging'))
+
+    def test_prod_dry_run_default_takes_main_newest_commit_on_dev(self):
+        one, two = self.repo.shas[:2]
+        self.tags['ghcr.io/mairie360/core-api:staging-' + one[:7]] = DIGEST
+        self.tags['ghcr.io/mairie360/core-api:dev-' + two[:7]] = EXTRA
+        self.assertEqual(resolve.main(dict(self.env, TARGET='prod', DRY_RUN='true'))['sha'], two)
+        # Without dry run the same state promotes the commit already on staging.
+        self.assertEqual(resolve.main(dict(self.env, TARGET='prod'))['sha'], one)
+
+    def test_prod_dry_run_still_refuses_a_commit_never_released(self):
+        with self.assertRaisesRegex(resolve.Refused, 'staging-.* does not exist'):
+            resolve.main(dict(self.env, TARGET='prod', SHA_INPUT=self.repo.shas[0], DRY_RUN='true'))
+
+    def test_staging_dry_run_still_checks_the_main_run(self):
+        two = self.repo.shas[1]
+        self.tags['ghcr.io/mairie360/core-api:dev-' + two[:7]] = DIGEST
+        resolve.main(dict(self.env, DRY_RUN='true'))
+        self.check_ci.assert_called_once()
 
     def test_commit_outside_main_is_refused(self):
         run('git', 'checkout', '-q', '-b', 'feature')
@@ -213,3 +245,35 @@ class PromotionCommitsSkipCiTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DryRunWiringTest(unittest.TestCase):
+    """MAIR-1007: a dry run runs the gates of both promotions and promotes nothing."""
+
+    def job(self, text, name):
+        start = text.index('\n  {}:\n'.format(name))
+        following = re.search(r'\n  [a-z_-]+:\n', text[start + 1:])
+        return text[start:start + 1 + following.start()] if following else text[start:]
+
+    def test_both_promotions_skip_promote_and_pass_the_flag_to_resolve(self):
+        for name in ('promote-staging.yml', 'promote-prod.yml'):
+            with self.subTest(workflow=name):
+                full = (ROOT / '.github' / 'workflows' / name).read_text()
+                self.assertTrue(re.search(r'dry_run:\n\s+required: false\n\s+type: boolean\n\s+default: false', full))
+                text = full[full.index('\njobs:\n'):]
+                self.assertTrue('dry_run: ${{ inputs.dry_run }}' in self.job(text, 'resolve'))
+                promote = self.job(text, 'promote')
+                self.assertTrue('&& !inputs.dry_run' in promote, 'promote must be skipped in a dry run')
+                # Everything that tags, publishes or writes the journal lives in `promote` only.
+                for job_name in re.findall(r'\n  ([a-z_-]+):\n', text):
+                    if job_name == 'promote':
+                        continue
+                    body = self.job(text, job_name)
+                    for forbidden in ('release/docker-release', 'promote/create-release', 'release-journal',
+                                      'promote-openapi', 'publish-openapi', 'environment:'):
+                        self.assertFalse(forbidden in body, '{} {} uses {}'.format(name, job_name, forbidden))
+
+    def test_prod_dry_run_runs_the_journeys_and_only_reports_the_pins(self):
+        text = (ROOT / '.github' / 'workflows' / 'promote-prod.yml').read_text()
+        self.assertTrue("|| inputs.dry_run)" in self.job(text, 'e2e_tests'))
+        self.assertTrue("mode: ${{ inputs.dry_run && 'report' || 'enforce' }}" in self.job(text, 'resolve'))

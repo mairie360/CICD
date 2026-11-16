@@ -17,6 +17,9 @@ name: Promote to Prod
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
 #                 OpenAPI semver package (the staging package republished, MAIR-999), release journal
 #
+# dry_run (MAIR-1007): resolve also accepts a commit only on dev (`dev-<sha>`), verify-pins only
+# warns, every gate runs and `promote` is skipped. nightly-gates.yml calls it on main.
+#
 # The prod gates of epic MAIR-492 (RGPD MAIR-604, RGAA MAIR-317/319, E2E MAIR-602) plug in as jobs
 # between `version` and `promote`, like `release_folder` and `e2e_tests`.
 
@@ -70,6 +73,11 @@ on:
         type: string
         default: "claude-sonnet-5-5"
         description: "Claude model that proposes a classification for the columns missing from the GDPR inventory (MAIR-285, database); only used when ANTHROPIC_API_KEY is set"
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+        description: "MAIR-1007: run every gate of the stack but promote nothing (no tag, release, package, journal nor environment approval)"
     secrets:
       ANTHROPIC_API_KEY:
         required: false
@@ -142,6 +150,7 @@ jobs:
           package_name: ${{ inputs.package_name }}
           extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.dry_run }}
 
       # [NOUVEAU] MAIR-1005: prod only ships released internal artifacts. Every @mairie360/* package
       # of the commit's package.json and every ghcr.io/mairie360 image of its root compose files
@@ -154,6 +163,8 @@ jobs:
           sha: ${{ steps.resolve.outputs.sha }}
           package_name: ${{ inputs.package_name }}
           extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
+          # MAIR-1007: a dry run tests main, whose pins follow dev: report them without failing.
+          mode: ${{ inputs.dry_run && 'report' || 'enforce' }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
   version:
@@ -411,8 +422,9 @@ jobs:
 
   e2e_tests:
     name: End-to-end journeys (Playwright)
-    # No stack when there is nothing to release: promote would be skipped anyway.
-    if: inputs.stack == 'fronts' && needs.version.outputs.published == 'true'
+    # No stack when there is nothing to release: promote would be skipped anyway. A dry run
+    # (MAIR-1007) plays the journeys whatever the version.
+    if: inputs.stack == 'fronts' && (needs.version.outputs.published == 'true' || inputs.dry_run)
     needs: [resolve, version]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -457,8 +469,10 @@ jobs:
     # [CHANGEMENT] MAIR-317: and for the RGAA check of the fronts.
     # [CHANGEMENT] MAIR-602: and for the end-to-end journeys of the fronts.
     needs: [resolve, version, release_folder, gdpr_inventory, gdpr_marker, gdpr_simulation, rgaa, e2e_tests]
+    # [CHANGEMENT] MAIR-1007: skipped in a dry run, so no Staging / Prod approval is requested.
     if: >-
       always()
+      && !inputs.dry_run
       && needs.resolve.result == 'success'
       && needs.version.result == 'success'
       && needs.version.outputs.published == 'true'

@@ -7,6 +7,7 @@ name: Promote to Staging
 #
 #   resolve   the commit (input, else main's newest) must have `dev-<sha>` and a green main run
 #   gates     staging gates on `<image>:dev-<sha>`: integration (APIs, BFFs), ZAP and k6 (APIs, BFFs, fronts)
+#   dry_run   (MAIR-1007) the gates run, `promote` is skipped: nothing is tagged or published
 #   promote   environment Staging: retag by digest + OpenAPI staging package (the dev package
 #             republished, MAIR-999) + release journal
 
@@ -45,6 +46,11 @@ on:
         type: string
         default: "openapi-spec.json"
         description: "Committed OpenAPI contract of a BFF (same as the main pipeline's input)"
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+        description: "MAIR-1007: run every gate of the stack but promote nothing (no tag, release, package, journal nor environment approval)"
     secrets:
       ANTHROPIC_API_KEY:
         required: false
@@ -111,6 +117,7 @@ jobs:
           extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
           ci_workflow: ${{ inputs.ci_workflow }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.dry_run }}
 
   # ==========================================================================
   # Staging gates, on the published dev image of the commit. The database has none of its own:
@@ -284,8 +291,10 @@ jobs:
     needs: [resolve, integration_tests, security_tests, performance_tests]
     # The gates of the other stacks are skipped; every gate that ran must have passed: a failed
     # `integration_tests` (an API or BFF collection, MAIR-262) is a 'failure' here and blocks it.
+    # [CHANGEMENT] MAIR-1007: skipped in a dry run, so no Staging / Prod approval is requested.
     if: >-
       always()
+      && !inputs.dry_run
       && needs.resolve.result == 'success'
       && !contains(needs.*.result, 'failure')
       && !contains(needs.*.result, 'cancelled')
