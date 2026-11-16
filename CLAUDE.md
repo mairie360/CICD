@@ -65,12 +65,19 @@ Key invariants:
 - Image registry is GHCR: `ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/<package_name>`. The `,,` lowercases the owner — this is **bash** parameter expansion and only works inside `run:` blocks, not in `${{ }}` expressions.
 - Short SHA convention: the `docker-release` action uniformizes the SHA tag at 7 chars (`sha_length` input) for every stack it's wired into, computed once in `steps.meta` and reused for `dev-`/`staging-` tags at every stage — no more per-job `${GITHUB_SHA::7}` recomputation to keep in sync.
 
-## Known landmines (unfixed as of this branch)
+## Known landmines
 
-These are live bugs in the workflows — don't copy the pattern, and fix in place if you touch the job:
+The two listed here before MAIR-246 are fixed: `publish-openapi-typescript` generates
+and publishes the package (see Composite actions), and Deploiment pins `<env>-<sha>` tags, not the
+`dev-latest` / `staging-latest` tags `docker-release` stopped pushing (Deploiment MAIR-172). List
+a new one here when a workflow bug is found and left unfixed.
 
-- **`publish-openapi-typescript`** only creates a staging directory — it compiles and publishes nothing. Any BFF relying on OpenAPI type publishing gets a silent no-op.
-- **Cross-repo drift (`Devops/Deploiment`)**: `docker-release` pushes mobile tags `dev` / `staging` (plus `<version>` / `latest` in prod), not the `dev-latest` / `staging-latest` the Argo CD umbrella chart's `dev`/`staging` instance `values.yaml` still pin for every image. This has been silently stale for the APIs since the `APIs_cicd.yml` pilot (their `dev-latest`/`staging-latest` tags stopped being pushed then); migrating `BFFs-cicd.yml`, `frontend-cicd.yml` and (MAIR-416) `database_cicd.yml` to `docker-release` extends the same drift to every BFF, front and the database images. `Deploiment`'s values files need `dev-latest`/`staging-latest` → `dev`/`staging` before those environments will pick up new images again.
+- **The OpenAPI packages declare an entry point they do not ship.** `publish-openapi-rust` and
+  `publish-openapi-typescript` write `"main": "./index.ts"` and `"types": "./index.ts"` in the
+  package's `package.json`, but orval only generates `endpoints/` and `model/` and no step writes
+  `index.ts`. Every consumer imports a subpath (`@mairie360/<x>-openapi/endpoints/<file>`,
+  `…/model`), which works; an import of the package root fails to resolve. Generate an `index.ts`
+  re-exporting both folders, or drop `main` / `types`, before anyone relies on the root.
 
 ## OpenAPI coverage gate (`tests/`, MAIR-194)
 
@@ -293,7 +300,7 @@ Release, shared and notify actions:
 - **`notify/cicd-failure`** — posts the failure to the n8n webhook. Context values and the secret go through `env:` and the JSON is built with `jq -n --arg` (MAIR-416: a forged branch name used to be able to inject shell code); keep it that way.
 - **`security/semgrep`** (MAIR-230) — SAST with a Semgrep image pinned by **version + digest** (input `image`; the org's "major tag" pinning rule does not apply here, bump tag and digest together). Inputs: `config` (space/newline-separated rulesets, one `--config` each), `paths`, `exclude` (defaults to `cicd-repo`, which every workflow checks out inside the workspace), `fail_on_findings` (default `'true'`), `upload_sarif` (default `'false'`, needs `security-events: write`), `sarif_category`, `artifact_name` (`semgrep-sarif`). The scan step never fails by itself: it records the exit code, the SARIF is uploaded (artifact, optionally code scanning), then a last step applies the verdict (exit 1 → findings, fail or warn; any other non-zero → Semgrep error, always fails). Outputs `findings`, `exit_code`, `sarif_file`. Called by the `security_sast` job of **every** stack workflow through the `semgrep_config` / `semgrep_fail_on_findings` workflow inputs (per-stack defaults and the rollout are in `README.md`). Code-scanning upload stays off in the workflows: consumer callers declare top-level `permissions:` without `security-events`, and a nested job cannot request more than its caller grants (startup failure).
 - **`release/publish-openapi-rust`** — `cargo open_api > openapi.json` → `npx -y orval` → publishes `@<org>/<package_name>-openapi` to `npm.pkg.github.com`.
-- **`release/publish-openapi-typescript`** — same intent for TS BFFs; currently a **stub** (only stages a directory, does not publish). Treat as incomplete.
+- **`release/publish-openapi-typescript`** — the same for the TS BFFs: generates the orval client (`endpoints/` and `model/` only) from the contract the BFF exports (`spec_file`), then publishes `@<org>/<package_name>-openapi` to `npm.pkg.github.com` with `dist_tag` (`dev`, `staging`, or `latest`).
 - **`release/docker-manual-build`** (formerly `docker/docker_manual_build`) — manual/off-main image build escape hatch; refuses to run on `main`. Composite action taking `package_name` and `github_token`; the caller must pass the token explicitly (composites cannot read `secrets`).
 
 ## Per-stack workflow notes
