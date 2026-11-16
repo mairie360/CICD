@@ -10,7 +10,8 @@ the other types (`actions/<type>/<stack>`).
   digest(s) the promotion must re-tag. Tests: `python3 -m unittest discover -s actions/promote/resolve/tests`.
 - `verify-pins/` (MAIR-1005): step of promote-prod's `resolve` job; refuses the commit unless every
   `@mairie360/*` package of its `package.json` and every `ghcr.io/mairie360/*` image of its test
-  stacks (`docker-compose-*.yml`) is an existing `X.Y.Z` release. `mode: report` only warns. Tests:
+  stacks (`docker-compose-*.yml`) is an existing `X.Y.Z` release, or a dev / staging build that is the
+  upstream's current prod release (same package contents / same digest as `latest`). `mode: report` only warns. Tests:
   `python3 -m unittest discover -s actions/promote/verify-pins/tests`.
 - `next-version/`: semantic-release dry run on a commit that may be behind main's tip (local bare
   mirror + `url.<mirror>.insteadOf`), for the version and notes promote-prod releases.

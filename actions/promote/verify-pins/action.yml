@@ -3,7 +3,8 @@ description: >-
   Refuses a prod promotion whose commit pins an internal dependency that is not a release (MAIR-1005):
   every `@<owner>/*` package of `package.json` must be an exact published `X.Y.Z`, and every
   `ghcr.io/<owner>/*` image of the root test stacks `docker-compose-*.yml` an existing `X.Y.Z` tag (the
-  repo's own images left out). Reads the files at `sha`; the caller checks the repo out with
+  repo's own images left out). A dev / staging build is accepted when it is the upstream's current prod
+  release: same package contents as the `latest` dist-tag, or the digest of `:latest`. Reads the files at `sha`; the caller checks the repo out with
   `fetch-depth: 0` and logs in to GHCR first (the resolve action does).
 
 inputs:
