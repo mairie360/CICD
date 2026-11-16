@@ -302,6 +302,7 @@ Release, shared and notify actions:
 - **`release/publish-openapi-rust`** — `cargo open_api > openapi.json` → `npx -y orval` → publishes `@<org>/<package_name>-openapi` to `npm.pkg.github.com`.
 - **`release/publish-openapi-typescript`** — the same for the TS BFFs: generates the orval client (`endpoints/` and `model/` only) from the contract the BFF exports (`spec_file`), then publishes `@<org>/<package_name>-openapi` to `npm.pkg.github.com` with `dist_tag` (`dev`, `staging`, or `latest`).
 - **`release/docker-manual-build`** (formerly `docker/docker_manual_build`) — manual/off-main image build escape hatch; refuses to run on `main`. Composite action taking `package_name` and `github_token`; the caller must pass the token explicitly (composites cannot read `secrets`).
+- **Rust caches are written by `main` only** (MAIR-1002): every `Swatinem/rust-cache` step (the `apis` and `back-lib` actions and the inline GDPR contract job of `APIs_cicd.yml`) has `save-if: ${{ github.ref == 'refs/heads/main' }}`. A pull request restores the caches of `main` and writes none: its `refs/pull/<n>/merge` entries (100 to 700 MB per job) cannot be read by another run but count against the repository's 10 GB cache quota, and used to evict the `main` entries within minutes (Core_API stood at 9.87 GB, "No cache found" on nearly every run). New Rust job: copy that `with:`.
 
 ## Per-stack workflow notes
 
