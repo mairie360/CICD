@@ -99,6 +99,9 @@ request with `op`, and the `operations_uncovered` / `operation_handler_errors` c
 `--hook`, `load-test.js` handlers, `security` in the spec) is documented in `README.md`; changing
 the hook's report format, the handler key format or the counter names is a breaking change for
 every consumer.
+Tests (MAIR-542, in `lint.yml`): `python3 -m unittest discover -s tests/zap` and `node --test tests/k6/coverage.test.mjs`
+(the k6 module is loaded with its `k6/*` imports stubbed). actionlint runs without any shellcheck
+exclusion; `zizmor` audits the workflows in a non-blocking job.
 
 ## RGAA engine (`tests/a11y/`, epic MAIR-297)
 
