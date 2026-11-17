@@ -50,6 +50,27 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(outputs['run'], 'false')
         self.assertIn('already passed', reason)
 
+    def test_runs_again_when_the_upstream_images_moved_without_a_commit(self):
+        green_head = self.commit('feat: one')
+        outputs, reason = check.decide(self.env, TUESDAY, green_head, 'new', 'old')
+        self.assertEqual(outputs['run'], 'true')
+        self.assertIn('upstream images', reason)
+
+    def test_runs_again_when_the_upstream_digests_cannot_be_read(self):
+        green_head = self.commit('feat: one')
+        outputs, _ = check.decide(self.env, TUESDAY, green_head, None, 'old')
+        self.assertEqual(outputs['run'], 'true')
+
+    def test_skipped_when_commit_and_upstream_digests_are_unchanged(self):
+        green_head = self.commit('feat: one')
+        outputs, _ = check.decide(self.env, TUESDAY, green_head, 'same', 'same')
+        self.assertEqual(outputs['run'], 'false')
+
+    def test_runs_when_the_last_green_run_recorded_no_fingerprint(self):
+        green_head = self.commit('feat: one')
+        outputs, _ = check.decide(self.env, TUESDAY, green_head, 'same', None)
+        self.assertEqual(outputs['run'], 'true')
+
     def test_runs_again_when_main_moved(self):
         green_head = self.commit('feat: one')
         two = self.commit('fix(deps): two')
@@ -78,6 +99,25 @@ class DecideTest(unittest.TestCase):
         self.commit('docs(release-journal): dev x [skip ci]')
         with self.assertRaises(check.resolve.Refused):
             check.decide(self.env, TUESDAY, None)
+
+
+class FingerprintTest(unittest.TestCase):
+    def test_upstream_images_lists_the_stage_tagged_mairie360_images_of_the_compose_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, 'docker-compose.yml').write_text(
+                'image: ${DB_IMAGE:-ghcr.io/mairie360/database:${UPSTREAM_TAG:-dev}}\n'
+                'image: ghcr.io/mairie360/core-api:${UPSTREAM_TAG:-dev}@sha256:abc\n'
+                'image: ghcr.io/mairie360/self:dev-abc1234\n')
+            Path(root, 'docker-compose-e2e.yaml').write_text('image: ghcr.io/mairie360/database:${UPSTREAM_TAG:-dev}\n')
+            self.assertEqual(check.upstream_images(root), ['core-api', 'database'])
+
+    def test_fingerprint_changes_with_a_digest_and_is_unknown_when_one_is_unreadable(self):
+        digests = {('database', 'dev'): 'a', ('database', 'staging'): 'b', ('database', 'latest'): 'c'}
+        first = check.fingerprint(['database'], 't', lambda n, t, _: digests[(n, t)])
+        digests[('database', 'staging')] = 'moved'
+        self.assertNotEqual(first, check.fingerprint(['database'], 't', lambda n, t, _: digests[(n, t)]))
+        self.assertIsNone(check.fingerprint(['database'], 't', lambda n, t, _: None))
+        self.assertEqual(check.fingerprint([], 't', lambda n, t, _: None), '')
 
 
 if __name__ == '__main__':
