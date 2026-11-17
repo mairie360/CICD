@@ -30,25 +30,29 @@ on:
         required: false
         type: string
         default: "claude-sonnet-5-5"
-        description: "Claude model that proposes field-to-column mappings in the GDPR contract check (MAIR-291); only used when the ANTHROPIC_API_KEY secret is set"
+        description: "Claude model that proposes field-to-column mappings in the GDPR contract check (MAIR-291); only used when the ANTHROPIC_REVIEW_API_KEY secret is set"
       gdpr_inventory_ref:
         required: false
         type: string
         default: "main"
         description: "Ref of mairie360/Database whose gdpr/inventory.yaml the GDPR contract check reads (MAIR-291)"
     secrets:
+      # [CHANGEMENT] Claude key of the AI reviews (low-quota org secret, the only Claude key a
+      # pull request run receives); without it the AI parts are skipped.
+      ANTHROPIC_REVIEW_API_KEY:
+        required: false
       ANTHROPIC_API_KEY:
         required: false
-        description: "Claude API key of the release journal and of the GDPR contract proposals (org secret); without it the journal keeps plain commit lists and the contract check runs without AI proposals"
+        description: "Deprecated, unused: kept optional so that callers still passing it do not fail; pass nothing"
       # [NOUVEAU] MAIR-291: only when the API key is not scoped to a workspace.
       ANTHROPIC_WORKSPACE_ID:
         required: false
       RELEASE_APP_ID:
         required: false
-        description: "Release app (org secret) pushing the release journal on main"
+        description: "Deprecated, unused: kept optional so that callers still passing it do not fail; pass nothing"
       RELEASE_APP_PK:
         required: false
-        description: "Private key of the release app (org secret)"
+        description: "Deprecated, unused: kept optional so that callers still passing it do not fail; pass nothing"
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
@@ -239,17 +243,6 @@ jobs:
           dist_tag: dev
           spec_file: ${{ runner.temp }}/openapi/openapi.json
 
-      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
-      # A journal failure never fails the release.
-      - name: Release journal
-        continue-on-error: true
-        uses: ./cicd-repo/actions/release/release-journal
-        with:
-          stage: dev
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          app_id: ${{ secrets.RELEASE_APP_ID }}
-          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   # [NOUVEAU] MAIR-291: the responses of the OpenAPI contract carry no credentials column of the
   # GDPR inventory (actions/security/gdpr-contract). A check job of every event: `release-dev` does
@@ -286,7 +279,7 @@ jobs:
           spec_file: ${{ runner.temp }}/openapi.json
           inventory_ref: ${{ inputs.gdpr_inventory_ref }}
           ai_model: ${{ inputs.gdpr_ai_model }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
 
   notify-cicd-failure:

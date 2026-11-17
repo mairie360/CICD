@@ -21,10 +21,13 @@ on:
         required: true
       CODECOV_TOKEN:
         required: true
+      # [CHANGEMENT] Secrets of the repo's `Release` environment (deployment branch: main), read by
+      # `publish_release` only; a value passed by the caller is ignored there. Optional so that
+      # callers can stop passing the org secrets.
       RELEASE_APP_ID:
-        required: true
+        required: false
       RELEASE_APP_PK:
-        required: true
+        required: false
       N8N_WEBHOOK_SECRET:
         required: true
 

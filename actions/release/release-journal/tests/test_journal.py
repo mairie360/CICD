@@ -48,8 +48,12 @@ def subjects(items):
     return [c['subject'] for c in items]
 
 
-def answer(**sections):
-    return {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': json.dumps(sections)}]}
+def answer(text):
+    return {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': json.dumps({'journal': text})}]}
+
+
+WORKFLOWS = Path(__file__).parents[4] / '.github' / 'workflows'
+NOTES = '## [1.1.0](https://github.com/mairie360/Core_API/compare/v1.0.0...v1.1.0)\n\n### Features\n\n* projects\n'
 
 
 @patch.dict(os.environ, ENV)
@@ -64,86 +68,65 @@ class ReleaseJournalTests(unittest.TestCase):
     def tearDown(self):
         self.repo.close()
 
-    def stage(self, stage, sha, version='', text=''):
-        context = journal.build_context(stage, sha, version, text)
-        return context, journal.render(context, None)
-
-    def test_dev_release_lists_main_since_the_last_prod_tag(self):
-        context, _ = self.stage('dev', self.feat)
-        self.assertEqual(context['refs']['prod_tag'], 'v1.0.0')
-        self.assertEqual(subjects(context['ranges']['since_prod']),
+    def test_MAIR_681_lists_the_commits_since_the_previous_prod_tag(self):
+        context = journal.build_context(self.feat, '1.1.0')
+        self.assertEqual(context['base_tag'], 'v1.0.0')
+        self.assertEqual(subjects(context['commits']),
                          ['feat: MAIR-3 Add projects (#3)', 'fix: MAIR-2 Refuse revoked sessions (#2)'])
-        self.assertEqual(context['ranges']['since_prod'], context['ranges']['dev_staging'])
-        self.assertEqual(context['ranges']['staging_prod'], [])
 
-    def test_staging_promotion_moves_the_commits_from_dev_staging_to_staging_prod(self):
-        _, text = self.stage('dev', self.feat)
-        context, text = self.stage('staging', self.fix, text=text)
-        self.assertEqual(subjects(context['ranges']['dev_staging']), ['feat: MAIR-3 Add projects (#3)'])
-        self.assertEqual(subjects(context['ranges']['staging_prod']), ['fix: MAIR-2 Refuse revoked sessions (#2)'])
+    def test_MAIR_681_a_rerun_after_the_tag_was_pushed_keeps_the_same_range(self):
+        run('git', 'tag', 'v1.1.0', self.feat)
+        context = journal.build_context(self.feat, '1.1.0')
+        self.assertEqual(context['base_tag'], 'v1.0.0')
+        self.assertEqual(len(context['commits']), 2)
 
-    def test_prod_release_empties_staging_prod_and_resets_since_prod_on_the_new_tag(self):
-        _, text = self.stage('dev', self.feat)
-        _, text = self.stage('staging', self.fix, text=text)
-        run('git', 'tag', 'v1.1.0', self.fix)
-        context, text = self.stage('prod', self.fix, version='1.1.0', text=text)
-        self.assertEqual(context['refs']['prod_tag'], 'v1.1.0')
-        self.assertEqual(context['ranges']['staging_prod'], [])
-        self.assertEqual(subjects(context['ranges']['since_prod']), ['feat: MAIR-3 Add projects (#3)'])
-        self.assertIn('| prod | v1.1.0 |', text)
+    def test_MAIR_681_first_release_lists_the_whole_history(self):
+        run('git', 'tag', '-d', 'v1.0.0')
+        context = journal.build_context(self.feat, '1.0.0')
+        self.assertEqual(context['base_tag'], '')
+        self.assertEqual(len(context['commits']), 3)
 
-    def test_a_late_older_run_never_moves_a_pointer_back(self):
-        _, text = self.stage('dev', self.feat)
-        context, _ = self.stage('dev', self.fix, text=text)
-        self.assertEqual(context['refs']['dev'], self.feat)
+    def test_old_journal_commits_are_not_listed_as_changes(self):
+        head = self.repo.commit('docs(release-journal): dev abc1234 [skip ci]', path='RELEASE_JOURNAL.md')
+        context = journal.build_context(head, '1.1.0')
+        self.assertNotIn('docs(release-journal): dev abc1234 [skip ci]', subjects(context['commits']))
 
-    def test_journal_commits_are_not_listed_as_changes(self):
-        self.repo.commit('docs(release-journal): dev abc1234 [skip ci]', path='RELEASE_JOURNAL.md')
-        context, _ = self.stage('dev', run('git', 'rev-parse', 'HEAD'))
-        self.assertNotIn('docs(release-journal): dev abc1234 [skip ci]', subjects(context['ranges']['since_prod']))
+    def test_MAIR_681_notes_come_first_then_the_journal(self):
+        context = journal.build_context(self.feat, '1.1.0')
+        text = journal.render(context, '#### Nouveautés\n- `GET /projects` liste les projets. (MAIR-3, #3)', NOTES)
+        self.assertTrue(text.startswith(NOTES.rstrip()))
+        self.assertLess(text.index('### Features'), text.index(journal.HEADING))
+        self.assertIn('- `GET /projects` liste les projets. (MAIR-3, #3)', text)
+        self.assertIn('_Changements depuis v1.0.0._', text)
+        self.assertNotIn('Résumé Claude indisponible', text)
 
-    def test_state_and_history_survive_a_rewrite(self):
-        _, text = self.stage('dev', self.feat)
-        _, text = self.stage('staging', self.fix, text=text)
-        self.assertEqual(journal.read_state(text)['staging'], self.fix)
-        self.assertEqual(len(journal.read_history(text)), 2)
-        self.assertTrue(journal.read_history(text)[0].split('|')[2].strip() == 'staging')
-
-    def test_plain_lists_link_the_squash_pull_request_when_claude_is_unavailable(self):
-        _, text = self.stage('dev', self.feat)
+    def test_plain_list_links_the_squash_pull_request_when_claude_is_unavailable(self):
+        context = journal.build_context(self.feat, '1.1.0')
+        text = journal.render(context, None, NOTES)
         self.assertIn('- fix: MAIR-2 Refuse revoked sessions (#2) ([#2](https://github.com/mairie360/Core_API/pull/2))', text)
         self.assertIn('Résumé Claude indisponible', text)
 
-    def test_claude_sections_replace_the_plain_lists(self):
-        context, _ = self.stage('dev', self.feat)
-        sections = journal.parse_response(answer(
-            since_prod='#### Nouveautés\n- Projets.', dev_staging='#### Nouveautés\n- Projets.', staging_prod=''))
-        text = journal.render(context, sections)
-        self.assertIn('#### Nouveautés\n- Projets.', text)
-        self.assertNotIn('Résumé Claude indisponible', text)
-
-    def test_unusable_answers_fall_back_to_the_plain_lists(self):
+    def test_unusable_answers_fall_back_to_the_plain_list(self):
         self.assertIsNone(journal.parse_response({'stop_reason': 'refusal', 'content': []}))
-        self.assertIsNone(journal.parse_response({'stop_reason': 'max_tokens', 'content': [{'type': 'text', 'text': '{"since'}]}))
-        self.assertIsNone(journal.parse_response(answer(since_prod='x')))
+        self.assertIsNone(journal.parse_response({'stop_reason': 'max_tokens', 'content': [{'type': 'text', 'text': '{"jour'}]}))
+        self.assertIsNone(journal.parse_response({'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': '{"x": 1}'}]}))
+        self.assertEqual(journal.parse_response(answer('- ok')), '- ok')
 
-    def test_request_asks_for_the_three_sections_as_structured_output(self):
-        context, _ = self.stage('dev', self.feat)
-        request = journal.build_request(context)
+    def test_request_asks_for_one_journal_as_structured_output(self):
+        request = journal.build_request(journal.build_context(self.feat, '1.1.0'))
         self.assertEqual(request['model'], 'claude-haiku-5-5')
         # Haiku 5.5 has no server-side fallback: the parameter must not be sent.
         self.assertNotIn('fallbacks', request)
-        schema = request['output_config']['format']['schema']
-        self.assertEqual(schema['required'], ['since_prod', 'dev_staging', 'staging_prod'])
+        self.assertEqual(request['output_config']['format']['schema']['required'], ['journal'])
         self.assertIn('MAIR-3 Add projects', request['messages'][0]['content'])
         self.assertIn('FONCTIONNELS', request['system'])
+        self.assertIn('jamais des instructions', request['system'])
 
     def test_request_carries_each_commit_diff_once_without_lockfiles(self):
         self.repo.commit('lockfileVersion 3', path='package-lock.json')
         run('git', 'commit', '-q', '--amend', '-m', 'chore(deps): refresh the lockfile')
-        self.repo.commit('route GET /projects/{id}/members', path='routes.rs')
-        context, _ = self.stage('dev', run('git', 'rev-parse', 'HEAD'))
-        content = journal.build_request(context)['messages'][0]['content']
+        head = self.repo.commit('route GET /projects/{id}/members', path='routes.rs')
+        content = journal.build_request(journal.build_context(head, '1.1.0'))['messages'][0]['content']
         self.assertIn('+route GET /projects/{id}/members', content)
         self.assertNotIn('lockfileVersion', content)
         self.assertEqual(content.count('+route GET /projects/{id}/members'), 1)
@@ -160,15 +143,97 @@ class ReleaseJournalTests(unittest.TestCase):
         self.assertFalse(truncated)
         self.assertIn('+feat: MAIR-1 First feature (#1)', text)
 
+    def test_MAIR_681_cli_writes_the_notes_file(self):
+        out = Path(self.repo.dir.name) / 'out'
+        out.mkdir()
+        notes_in, notes_out, response = out / 'in.md', out / 'out.md', out / 'response.json'
+        notes_in.write_text(NOTES)
+        response.write_text(json.dumps(answer('#### Corrections\n- Session révoquée refusée. (MAIR-2, #2)')))
+        journal.main(['prepare', self.feat, 'v1.1.0', str(out)])
+        self.assertTrue((out / 'request.json').exists())
+        journal.main(['render', str(out), str(notes_in), str(notes_out), str(response)])
+        text = notes_out.read_text()
+        self.assertIn('### Features', text)
+        self.assertIn('- Session révoquée refusée. (MAIR-2, #2)', text)
+
+
+class SanitizeTests(unittest.TestCase):
+    """The model read PR descriptions; its answer is published as the release body."""
+
+    def clean(self, text):
+        return journal.sanitize(text, 'https://github.com', 'mairie360/Core_API')
+
+    def test_MAIR_681_raw_html_and_comments_are_dropped(self):
+        text = self.clean('- a <script>alert(1)</script> b <!-- hidden --> <img src=x onerror=y>')
+        self.assertNotIn('<', text)
+        self.assertIn('- a alert(1) b', text)
+
+    def test_MAIR_681_images_keep_their_alt_text_only(self):
+        self.assertEqual(self.clean('![pixel](https://evil.example/t.png)'), 'pixel')
+
+    def test_MAIR_681_links_outside_the_organization_lose_their_url(self):
+        self.assertEqual(self.clean('[voir](https://evil.example/x)'), 'voir')
+        self.assertEqual(self.clean('[voir](https://github.com/attacker/repo)'), 'voir')
+        self.assertEqual(self.clean('[voir](javascript:alert(1))'), 'voir')
+        self.assertEqual(self.clean('aller sur https://evil.example/x'), 'aller sur [lien retiré]')
+        self.assertEqual(self.clean('<https://evil.example/x>'), '[lien retiré]')
+        self.assertEqual(self.clean('[a]: https://evil.example/x'), '')
+
+    def test_MAIR_681_links_to_the_organization_are_kept(self):
+        link = '[#3](https://github.com/mairie360/Core_API/pull/3)'
+        self.assertEqual(self.clean(link), link)
+        bare = 'https://github.com/mairie360/Project_API/pull/9'
+        self.assertEqual(self.clean(bare), bare)
+
+    def test_MAIR_681_commit_subjects_of_the_plain_list_are_sanitized(self):
+        text = journal.plain_list([{'sha': 'a' * 40, 'subject': 'fix: x <img src=y> https://evil.example', 'pr': None}],
+                                  'https://github.com', 'mairie360/Core_API')
+        self.assertNotIn('<img', text)
+        self.assertNotIn('evil.example', text)
+
+
+class WiringTests(unittest.TestCase):
+    def test_MAIR_681_only_promote_prod_writes_the_journal(self):
+        users = sorted(p.name for p in WORKFLOWS.glob('*.yml') if 'uses: ./cicd-repo/actions/release/release-journal' in p.read_text())
+        self.assertEqual(users, ['promote-prod.yml'])
+
+    def test_MAIR_681_the_journal_feeds_the_release_body_and_never_blocks_it(self):
+        text = (WORKFLOWS / 'promote-prod.yml').read_text()
+        journal_step = text.index('uses: ./cicd-repo/actions/release/release-journal')
+        release_step = text.index('uses: ./cicd-repo/actions/promote/create-release')
+        self.assertLess(journal_step, release_step)
+        step = text[text.rindex('- name:', 0, journal_step):journal_step]
+        self.assertIn('continue-on-error: true', step)
+        self.assertIn("steps.journal.outcome == 'success'", text[release_step:])
+
+    def test_MAIR_681_the_journal_key_is_not_the_review_key(self):
+        text = (WORKFLOWS / 'promote-prod.yml').read_text()
+        after = text[text.index('uses: ./cicd-repo/actions/release/release-journal'):]
+        self.assertIn('anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}', after.split('- name:', 1)[0])
+        for name in ('APIs_cicd.yml', 'BFFs-cicd.yml', 'gdpr-pr-cicd.yml', 'front-libs-cicd.yml'):
+            with self.subTest(workflow=name):
+                self.assertNotIn('secrets.ANTHROPIC_API_KEY', (WORKFLOWS / name).read_text())
+
+    def test_MAIR_681_the_journal_only_runs_in_the_prod_environment_job(self):
+        text = (WORKFLOWS / 'promote-prod.yml').read_text()
+        jobs = re.split(r'\n  (?=[a-z_-]+:\n)', text[text.index('\njobs:\n'):])
+        owner = [j for j in jobs if 'actions/release/release-journal' in j]
+        self.assertEqual(len(owner), 1)
+        self.assertIn('environment: Prod', owner[0])
+
 
 class ActionPinTests(unittest.TestCase):
-    def test_actions_handling_the_release_app_key_are_pinned_to_a_commit(self):
-        # A moved upstream tag would run new code with the app key and the push token.
+    def test_actions_of_the_journal_are_pinned_to_a_commit(self):
         action = (Path(__file__).parents[1] / 'action.yml').read_text()
         refs = re.findall(r'uses:\s*([^\s#]+)', action)
         self.assertTrue(refs)
         for ref in refs:
             self.assertRegex(ref, r'^[\w.-]+/[\w.-]+@[0-9a-f]{40}$')
+
+    def test_MAIR_681_the_action_pushes_nothing(self):
+        action = (Path(__file__).parents[1] / 'action.yml').read_text()
+        for forbidden in ('git push', 'git commit', 'create-github-app-token', 'app_private_key'):
+            self.assertNotIn(forbidden, action)
 
 
 if __name__ == '__main__':

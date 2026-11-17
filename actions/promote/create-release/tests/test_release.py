@@ -139,8 +139,6 @@ class CreateReleaseTest(unittest.TestCase):
 
     def test_the_app_credentials_are_checked_before_the_retag(self):
         text = WORKFLOW.read_text(encoding='utf-8')
-        self.assertRegex(text, r'RELEASE_APP_ID:\n\s+required: true')
-        self.assertRegex(text, r'RELEASE_APP_PK:\n\s+required: true')
         check = text.index('- name: Check the release app credentials')
         self.assertLess(check, text.index('- name: Promote image(s) to Prod'))
 

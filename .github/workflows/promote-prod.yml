@@ -57,7 +57,7 @@ on:
         required: false
         type: string
         default: "claude-haiku-5-5"
-        description: "Claude model of the AI review of the GDPR simulation (MAIR-497); only used when ANTHROPIC_API_KEY is set"
+        description: "Claude model of the AI review of the GDPR simulation (MAIR-497); only used when ANTHROPIC_REVIEW_API_KEY is set"
       rgaa_min_rate:
         required: false
         type: number
@@ -67,28 +67,36 @@ on:
         required: false
         type: string
         default: "claude-sonnet-5-5"
-        description: "Fronts: Claude model of the RGAA AI pre-audit (MAIR-320); only used when ANTHROPIC_API_KEY is set"
+        description: "Fronts: Claude model of the RGAA AI pre-audit (MAIR-320); only used when ANTHROPIC_REVIEW_API_KEY is set"
       gdpr_ai_model:
         required: false
         type: string
         default: "claude-sonnet-5-5"
-        description: "Claude model that proposes a classification for the columns missing from the GDPR inventory (MAIR-285, database); only used when ANTHROPIC_API_KEY is set"
+        description: "Claude model that proposes a classification for the columns missing from the GDPR inventory (MAIR-285, database); only used when ANTHROPIC_REVIEW_API_KEY is set"
       dry_run:
         required: false
         type: boolean
         default: false
         description: "MAIR-1007: run every gate of the stack but promote nothing (no tag, release, package, journal nor environment approval)"
     secrets:
-      ANTHROPIC_API_KEY:
+      # [CHANGEMENT] Claude key of the AI reviews of the gates (GDPR simulation, RGAA
+      # pre-audit, GDPR inventory proposals): the low-quota org secret every AI review uses.
+      ANTHROPIC_REVIEW_API_KEY:
         required: false
       # [NOUVEAU] MAIR-285: only when the API key is not scoped to a workspace.
       ANTHROPIC_WORKSPACE_ID:
         required: false
-      # The release app pushes the prod tag (actions/promote/create-release).
+      # [CHANGEMENT] The release secrets are secrets of the repo's `Prod` environment
+      # (deployment branch: main), read by the `promote` job only; a value passed by the caller is
+      # ignored there. Kept declared, optional, so that callers still passing them do not fail.
+      # ANTHROPIC_API_KEY: Claude key of the release journal. RELEASE_APP_*: the release app that
+      # pushes the prod tag (actions/promote/create-release).
+      ANTHROPIC_API_KEY:
+        required: false
       RELEASE_APP_ID:
-        required: true
+        required: false
       RELEASE_APP_PK:
-        required: true
+        required: false
       N8N_WEBHOOK_SECRET:
         required: true
     outputs:
@@ -300,7 +308,7 @@ jobs:
           migrations_digest: ${{ needs.resolve.outputs.extra_digest }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           ai_model: ${{ inputs.gdpr_ai_model }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
 
   # [NOUVEAU] MAIR-290 (epic MAIR-284), APIs and BFFs: personal data in logs test. The repo's marker
@@ -372,7 +380,7 @@ jobs:
         with:
           image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
           ai_model: ${{ inputs.gdpr_simulation_ai_model }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           npm_scope: ${{ inputs.stack == 'bffs' && inputs.npm_scope || '' }}
@@ -417,7 +425,7 @@ jobs:
           min_rate: ${{ inputs.rgaa_min_rate }}
           # [NOUVEAU] MAIR-320: AI pre-audit of the relevance criteria, skipped without the key.
           ai_model: ${{ inputs.rgaa_ai_model }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
 
       # Outside the action: it must still run when the step timeout kills the stack.
@@ -519,7 +527,7 @@ jobs:
           APP_PK: ${{ secrets.RELEASE_APP_PK }}
         run: |
           if [ -z "$APP_ID" ] || [ -z "$APP_PK" ]; then
-            echo "::error::RELEASE_APP_ID / RELEASE_APP_PK are empty: the prod tag cannot be pushed"
+            echo "::error::RELEASE_APP_ID / RELEASE_APP_PK are empty: set them as secrets of the Prod environment of this repo, the prod tag cannot be pushed"
             exit 1
           fi
 
@@ -536,6 +544,20 @@ jobs:
           release_published: "true"
           release_version: ${{ needs.version.outputs.version }}
 
+      # [CHANGEMENT] The release journal is the body of the GitHub release (nothing is
+      # pushed on main). It never fails the release: without it the notes stay semantic-release's.
+      - name: Release journal
+        id: journal
+        continue-on-error: true
+        uses: ./cicd-repo/actions/release/release-journal
+        with:
+          sha: ${{ needs.resolve.outputs.sha }}
+          version: ${{ needs.version.outputs.version }}
+          notes_file: ${{ runner.temp }}/release-notes/release-notes.md
+          output_file: ${{ runner.temp }}/release-notes/release-notes-journal.md
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+
       # After the retag (idempotent): if anything fails before this step, a new run computes the
       # same version again. Neither the tag nor the release starts a workflow, and no commit is
       # pushed (same `v<version>` release @semantic-release/github made).
@@ -544,7 +566,7 @@ jobs:
         with:
           version: ${{ needs.version.outputs.version }}
           sha: ${{ needs.resolve.outputs.sha }}
-          notes_file: ${{ runner.temp }}/release-notes/release-notes.md
+          notes_file: ${{ steps.journal.outcome == 'success' && format('{0}/release-notes/release-notes-journal.md', runner.temp) || format('{0}/release-notes/release-notes.md', runner.temp) }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           app_id: ${{ secrets.RELEASE_APP_ID }}
           app_private_key: ${{ secrets.RELEASE_APP_PK }}
@@ -580,18 +602,6 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: ${{ needs.version.outputs.version }}
           spec_file: ${{ inputs.openapi_spec_path }}
-
-      - name: Release journal
-        continue-on-error: true
-        uses: ./cicd-repo/actions/release/release-journal
-        with:
-          stage: prod
-          sha: ${{ needs.resolve.outputs.sha }}
-          version: ${{ needs.version.outputs.version }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          app_id: ${{ secrets.RELEASE_APP_ID }}
-          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   notify-cicd-failure:
     name: Notify n8n on failure
