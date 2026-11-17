@@ -104,7 +104,6 @@ jobs:
   zizmor:
     name: zizmor workflow audit (non-blocking)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -114,7 +113,9 @@ jobs:
       - name: Audit workflows and composite actions
         run: |
           pip install --user --quiet zizmor==1.5.2
-          "$HOME/.local/bin/zizmor" --no-progress --persona=regular .github/workflows actions
+          # Findings are reported, never failed, until the existing ones are triaged: a red check would hide real failures.
+          "$HOME/.local/bin/zizmor" --no-progress --persona=regular .github/workflows actions \
+            || echo "::warning::zizmor reported findings (non-blocking, see the log above)"
 
   frontend-exception-security:
     name: frontend dev exception source scans
