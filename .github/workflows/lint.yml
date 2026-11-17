@@ -112,10 +112,11 @@ jobs:
 
       - name: Audit workflows and composite actions
         run: |
-          pip install --user --quiet zizmor==1.5.2
-          # Findings are reported, never failed, until the existing ones are triaged: a red check would hide real failures.
-          "$HOME/.local/bin/zizmor" --no-progress --persona=regular .github/workflows actions \
-            || echo "::warning::zizmor reported findings (non-blocking, see the log above)"
+          # Neither an install failure nor the findings fail the job until the existing ones are triaged: a red check would hide real failures.
+          {
+            pip install --user --quiet zizmor==1.5.2 \
+              && "$HOME/.local/bin/zizmor" --no-progress --persona=regular .github/workflows actions
+          } || echo "::warning::zizmor could not run or reported findings (non-blocking, see the log above)"
 
   frontend-exception-security:
     name: frontend dev exception source scans
