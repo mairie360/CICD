@@ -6,7 +6,8 @@ when the commit is not on main, or is not yet on the previous environment:
 
 - staging: `dev-<sha>` exists (both images for the database) and the main CI run of the commit
   released it (`release-dev` job green, no failed job);
-- prod: `staging-<sha>` exists.
+- prod: `staging-<sha>` exists. In a dry run (MAIR-1007: gates only, nothing promoted) a commit
+  not on staging yet is accepted from `dev-<sha>`, so the prod gates can run on main every night.
 
 The cosign signature and the digest are checked again by `release/docker-release` when it tags.
 """
@@ -25,6 +26,8 @@ SKIP_RE = re.compile(r'^docs\(release-journal\):|\[skip ci\]|\[ci skip\]', re.IG
 RELEASE_DEV_JOB_RE = re.compile(r'release[ _-](to[ _-])?dev$', re.IGNORECASE)
 FAILED = {'failure', 'timed_out', 'startup_failure'}
 SOURCE_STAGE = {'staging': 'dev', 'prod': 'staging'}
+# MAIR-1007: stages a dry run may take the image from, in order of preference.
+DRY_RUN_STAGES = {'staging': ['dev'], 'prod': ['staging', 'dev']}
 MAX_COMMITS = 50
 
 
@@ -147,7 +150,8 @@ def main(env):
     target = env['TARGET']
     if target not in SOURCE_STAGE:
         raise Refused('unknown target `{}` (staging | prod)'.format(target))
-    source = SOURCE_STAGE[target]
+    dry_run = env.get('DRY_RUN', 'false').strip().lower() == 'true'
+    stages = DRY_RUN_STAGES[target] if dry_run else [SOURCE_STAGE[target]]
     branch = env.get('BRANCH', 'main')
     branch_ref = 'origin/' + branch
     length = int(env.get('SHA_LENGTH', '7'))
@@ -156,24 +160,30 @@ def main(env):
     if env.get('EXTRA_PACKAGE_NAME'):
         images.append('ghcr.io/{}/{}'.format(owner, env['EXTRA_PACKAGE_NAME']))
 
-    def source_ref(image, sha):
-        return '{}:{}-{}'.format(image, source, sha[:length])
+    def source_ref(image, sha, stage):
+        return '{}:{}-{}'.format(image, stage, sha[:length])
+
+    def released(candidate):
+        return any(image_digest(source_ref(images[0], candidate, stage)) is not None for stage in stages)
 
     requested = env.get('SHA_INPUT', '').strip()
     if requested:
         sha = resolve_sha(requested, branch_ref)
     else:
-        sha = pick_default(first_parent_commits(branch_ref), target,
-                           lambda candidate: image_digest(source_ref(images[0], candidate)) is not None)
+        sha = pick_default(first_parent_commits(branch_ref), target, released)
         print('No sha given: promoting {}'.format(sha[:7]))
 
+    # The first stage whose primary image exists; every image must then exist on that stage.
+    stage = next((stage for stage in stages if image_digest(source_ref(images[0], sha, stage)) is not None), stages[0])
     digests = []
     for image in images:
-        digest = image_digest(source_ref(image, sha))
+        digest = image_digest(source_ref(image, sha, stage))
         if digest is None:
-            raise Refused('{} does not exist: promote {} to {} first'.format(source_ref(image, sha), sha[:7], source))
-        print('{} -> {}'.format(source_ref(image, sha), digest))
+            raise Refused('{} does not exist: promote {} to {} first'.format(source_ref(image, sha, stage), sha[:7], stage))
+        print('{} -> {}'.format(source_ref(image, sha, stage), digest))
         digests.append(digest)
+    if dry_run:
+        print('Dry run: the gates run on the {} image, nothing is promoted'.format(stage))
 
     if target == 'staging':
         check_ci(env['GITHUB_REPOSITORY'], env.get('CI_WORKFLOW', 'cicd.yml'), sha, branch, env['GITHUB_TOKEN'])
@@ -184,6 +194,7 @@ def main(env):
         'image': images[0],
         'digest': digests[0],
         'extra_digest': digests[1] if len(digests) > 1 else '',
+        'source_stage': stage,
     }
 
 
@@ -197,4 +208,8 @@ if __name__ == '__main__':
         for key, value in outputs.items():
             out.write('{}={}\n'.format(key, value))
     with open(os.environ.get('GITHUB_STEP_SUMMARY', os.devnull), 'a', encoding='utf-8') as summary:
-        summary.write('Promoting `{}` to **{}** (`{}`)\n'.format(outputs['sha'], os.environ['TARGET'], outputs['digest']))
+        if os.environ.get('DRY_RUN', 'false').strip().lower() == 'true':
+            summary.write('Dry run of the {} gates on `{}` (`{}`, from {}): nothing is promoted\n'.format(
+                os.environ['TARGET'], outputs['sha'], outputs['digest'], outputs['source_stage']))
+        else:
+            summary.write('Promoting `{}` to **{}** (`{}`)\n'.format(outputs['sha'], os.environ['TARGET'], outputs['digest']))

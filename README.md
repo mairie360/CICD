@@ -243,6 +243,16 @@ repository links. The tag and the release are then created through the API on th
 with nothing to release (only `chore` / `ci` / `docs` commits since the last tag) stops after
 `version`, with a notice.
 
+Both promotions take a `dry_run` input (boolean, default `false`, MAIR-1007): every gate of the
+stack runs, then `promote` is skipped, so nothing is tagged, released, published or journaled and
+no `Staging` / `Prod` approval is requested. `promote-prod.yml` in dry run also accepts a commit
+that is not on staging yet (`resolve` takes `staging-<sha>`, else `dev-<sha>`; the default commit
+is then main's newest commit released on dev), plays the end-to-end journeys even when nothing would
+be released, and `verify-pins` only warns. A failed gate still notifies n8n. Without `dry_run` the
+behaviour is unchanged. Example: `gh workflow run promote-prod.yml -f dry_run=true` once the
+caller forwards the input (`dry_run: ${{ inputs.dry_run || false }}`); `nightly-gates.yml` is the
+scheduled caller.
+
 Prod only ships released internal artifacts (MAIR-1005): the `resolve` job of `promote-prod.yml`
 runs `actions/promote/verify-pins` on the promoted commit. Every `@mairie360/*` dependency of its
 `package.json` must be an exact published `X.Y.Z`, and every `ghcr.io/mairie360/*` image of its

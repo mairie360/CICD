@@ -130,7 +130,8 @@ class PromoteProdWiring(unittest.TestCase):
     def test_job_runs_the_action_on_the_staging_image_of_fronts(self):
         job = self.text[self.text.index('  e2e_tests:'):self.text.index('  promote:')]
         # MAIR-602 review: no stack when the promotion has nothing to release.
-        self.assertIn("if: inputs.stack == 'fronts' && needs.version.outputs.published == 'true'", job)
+        # Only when a version will be released, or in a dry run (MAIR-1007: the nightly rehearses them).
+        self.assertIn("if: inputs.stack == 'fronts' && (needs.version.outputs.published == 'true' || inputs.dry_run)", job)
         self.assertIn('uses: ./cicd-repo/actions/e2e/fronts', job)
         # MAIR-602 review: by the digest resolve checked, never the mobile staging-<sha> tag.
         self.assertIn('target_image: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}', job)
