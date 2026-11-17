@@ -12,17 +12,13 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Setup Node.js
-      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+    # [CHANGEMENT] MAIR-1009: node_modules comes from the cache keyed on package-lock.json and the
+    # Node version; `npm ci` only runs when it changed.
+    - name: Install dependencies (cached)
+      uses: ./cicd-repo/actions/dependencies/node-install
       with:
-        node-version: ${{ inputs.node_version }}
-        cache: 'npm'
-
-    - name: Install Dependencies
-      shell: bash
-      run: npm ci
-      env:
-        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+        node_version: ${{ inputs.node_version }}
+        node_auth_token: ${{ inputs.node_auth_token }}
 
     - shell: bash
       run: npm run build

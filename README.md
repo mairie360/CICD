@@ -324,6 +324,21 @@ BFFs also pass `openapi_spec_path` (the committed contract, same value as in `ci
 with `gh workflow run promote-staging.yml -R mairie360/<repo> [-f sha=<sha>]`.
 
 
+### One build per pipeline and a shared `node_modules` (MAIR-1009)
+
+Push → dev used to take 9 min (median) on a front and 5 min on a BFF. `npm ci` ran in every job,
+and the fronts built Next.js twice on main (the `build` job, whose output nobody used, then the
+Dockerfile). Now:
+
+- `actions/dependencies/node-install` restores `node_modules` from the Actions cache (exact key:
+  runner OS, Node version, hash of `package-lock.json` and `vendor/`) and only runs `npm ci` on a
+  miss; the `dependencies` job saves it for the other jobs. On a hit the `postinstall` checks still
+  run. Used by the `dependencies`, `lint`, `build` and `unit-tests` actions of the fronts and BFFs.
+- Fronts: the `build` job no longer runs on main; `release-dev` needs `lint`, `security_audit`,
+  `security_sast` and `test`, and builds the image once. A build error still fails the pipeline
+  before anything is pushed. Pull requests keep the `build` check.
+- BFFs keep their `build` job: it produces the OpenAPI spec the release publishes.
+
 ### Nightly rehearsal of the gates (`nightly-gates.yml`, MAIR-1008)
 
 The promotion gates only ran on release day, so a ZAP, k6, newman, GDPR, RGAA or e2e failure was

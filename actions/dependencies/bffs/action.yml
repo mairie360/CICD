@@ -1,6 +1,6 @@
 name: "Dependencies (BFFs)"
 description: >-
-  Node.js setup and `npm ci` of a BFF against GitHub Packages (`dependencies` job of
+  Node.js setup and `npm ci` (or the cached node_modules, MAIR-1009) of a BFF against GitHub Packages (`dependencies` job of
   BFFs-cicd.yml); with `audit: 'true'`, also `npm audit --audit-level=high` (`security_audit`
   job).
 
@@ -22,18 +22,15 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Use Node.js
-      uses: actions/setup-node@v7
+    # [CHANGEMENT] MAIR-1009: node_modules comes from the cache keyed on package-lock.json and the
+    # Node version; `npm ci` only runs when it changed.
+    - name: Install dependencies (cached)
+      uses: ./cicd-repo/actions/dependencies/node-install
       with:
-        node-version: ${{ inputs.node_version }}
-        cache: npm
-        registry-url: https://npm.pkg.github.com
-        scope: ${{ inputs.npm_scope }}
-
-    - shell: bash
-      run: npm ci
-      env:
-        NODE_AUTH_TOKEN: ${{ inputs.node_auth_token }}
+        node_version: ${{ inputs.node_version }}
+        npm_scope: ${{ inputs.npm_scope }}
+        node_auth_token: ${{ inputs.node_auth_token }}
+        save: 'true'
 
     - name: Run npm audit (Block on High/Critical)
       if: inputs.audit == 'true'

@@ -77,6 +77,10 @@ jobs:
       - name: Test the OpenAPI package promotion
         run: python3 -m unittest discover -s actions/release/promote-openapi/tests -v
 
+      # MAIR-1009: one front build on main, node_modules restored from the cache in every job.
+      - name: Test the node_modules cache and the single front build
+        run: python3 -m unittest discover -s actions/dependencies/node-install/tests -v
+
       - name: Test the fronts' end-to-end gate (MAIR-602)
         run: python3 -m unittest discover -s actions/e2e/fronts/tests -v
 
