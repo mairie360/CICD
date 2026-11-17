@@ -201,6 +201,15 @@ class WorkflowWiringTest(unittest.TestCase):
         self.assertFalse('cargo open_api' in text, 'APIs_cicd.yml still compiles the spec')
         self.assertGreaterEqual(text.count('name: openapi-spec'), 2)
 
+    def test_publish_skips_the_copy_when_the_spec_already_is_openapi_json(self):
+        # `cp x x` fails under `set -e`: a spec_file that already is ./openapi.json (same file by
+        # identity, so absolute paths count too) must not be copied onto itself.
+        action = (ACTION.parent / 'publish-openapi-rust' / 'action.yml').read_text()
+        guard = '[ ! "$SPEC_FILE" -ef openapi.json ]'
+        copy = 'cp "$SPEC_FILE" openapi.json'
+        self.assertIn(guard, action)
+        self.assertLess(action.index(guard), action.index(copy))
+
 
 if __name__ == '__main__':
     unittest.main()

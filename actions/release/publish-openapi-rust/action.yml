@@ -54,7 +54,11 @@ runs:
             echo "::error::OpenAPI spec not found or empty: '$SPEC_FILE'"
             exit 1
           fi
-          cp "$SPEC_FILE" openapi.json
+          # `cp` refuses to copy a file onto itself: skip it when the spec already is ./openapi.json
+          # (same file by identity, so absolute paths and aliases count too).
+          if [ ! "$SPEC_FILE" -ef openapi.json ]; then
+            cp "$SPEC_FILE" openapi.json
+          fi
         else
           cargo open_api > openapi.json
         fi
