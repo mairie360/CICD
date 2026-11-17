@@ -1,0 +1,49 @@
+name: "Promote an OpenAPI package"
+description: >-
+  Republishes the OpenAPI contract package of a commit (published by release-dev, or by the
+  staging promotion) under the version and dist-tag of the promotion, without regenerating it
+  (MAIR-999). Output `published` is 'false' when the source version does not exist: the caller
+  then falls back to publish-openapi-rust / publish-openapi-typescript.
+
+inputs:
+  package_name:
+    description: "Package base name (`@<owner>/<package_name>-openapi`)"
+    required: true
+  from_version:
+    description: "Version already published for the commit (e.g. 0.0.0-dev-<sha7>, 0.0.0-staging.<sha40>)"
+    required: true
+  version:
+    description: "Version to publish"
+    required: true
+  dist_tag:
+    description: "npm dist-tag of the new version (staging, latest)"
+    required: false
+    default: "latest"
+  token:
+    description: "Token reading and publishing GitHub Packages (pass secrets.GITHUB_TOKEN, `packages: write`)"
+    required: true
+
+outputs:
+  published:
+    description: "'true' when the version is published, 'false' when the source package is missing"
+    value: ${{ steps.promote.outputs.published }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+
+    - name: Republish the package
+      id: promote
+      shell: bash
+      env:
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        FROM_VERSION: ${{ inputs.from_version }}
+        TO_VERSION: ${{ inputs.version }}
+        DIST_TAG: ${{ inputs.dist_tag }}
+        NODE_AUTH_TOKEN: ${{ inputs.token }}
+        SCRIPT: ${{ github.action_path }}/promote_openapi.py
+      run: python3 -I "$SCRIPT"

@@ -1,8 +1,13 @@
-name: "Build (APIs)"
+name: "OpenAPI spec (APIs)"
 description: >-
-  Release build of a Rust API, uploaded with its OpenAPI spec as the `api-assets` artifact that the
-  release jobs download (`build` job of APIs_cicd.yml).
+  Generates the OpenAPI spec of a Rust API once (`cargo open_api`) and uploads it as the
+  `openapi-spec` artifact that the GDPR contract check and the dev release read (`build` job of
+  APIs_cicd.yml).
 
+# [CHANGEMENT] MAIR-999: no more `cargo build --release` + upload of `target/release/`. Nobody read
+# that artifact: the image is compiled by the Dockerfile in release-dev, and clippy (lint) and the
+# instrumented tests (unit_test) already check that the crate compiles. The spec used to be
+# compiled three times (here, gdpr_contract and publish-openapi-rust): it is now generated here only.
 runs:
   using: "composite"
   steps:
@@ -16,15 +21,21 @@ runs:
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
-    - name: Build Project
+    - name: Generate the OpenAPI spec
       shell: bash
-      run: cargo build --release
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/openapi"
+        cargo open_api > "$RUNNER_TEMP/openapi/openapi.json"
+        if ! jq -e '.openapi and .paths' "$RUNNER_TEMP/openapi/openapi.json" > /dev/null; then
+          echo "::error::cargo open_api did not print an OpenAPI document"
+          exit 1
+        fi
 
-    - name: Upload Artifacts
+    - name: Upload the spec
       uses: actions/upload-artifact@v7
       with:
-        name: api-assets
-        path: |
-          target/release/
-          openapi-spec.json
-        retention-days: 1 # [CHANGEMENT] Limitation de la rétention pour économiser l'espace
+        name: openapi-spec
+        path: ${{ runner.temp }}/openapi/openapi.json
+        if-no-files-found: error
+        retention-days: 1

@@ -14,7 +14,7 @@ name: Promote to Prod
 #   e2e_tests     fronts only: Playwright user journeys of the front's `e2e/` on the stack of its
 #                 `docker-compose-e2e.yml`, with the staging digest under promotion (MAIR-602)
 #   promote       environment Prod: tag + GitHub release on the commit, retag by digest,
-#                 OpenAPI semver package, release journal
+#                 OpenAPI semver package (the staging package republished, MAIR-999), release journal
 #
 # The prod gates of epic MAIR-492 (RGPD MAIR-604, RGAA MAIR-317/319, E2E MAIR-602) plug in as jobs
 # between `version` and `promote`, like `release_folder` and `e2e_tests`.
@@ -516,8 +516,23 @@ jobs:
           app_id: ${{ secrets.RELEASE_APP_ID }}
           app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
+      # [CHANGEMENT] MAIR-999: the staging package of the commit is republished under the semver
+      # (same files, new `version`) instead of being generated again (`cargo open_api` compiled the
+      # whole API after the Prod approval). The generation below only runs when that package does not
+      # exist (a commit promoted to staging before MAIR-999).
+      - name: Republish the OpenAPI package
+        id: promote_openapi
+        if: inputs.stack == 'apis' || inputs.stack == 'bffs'
+        uses: ./cicd-repo/actions/release/promote-openapi
+        with:
+          package_name: ${{ inputs.package_name }}
+          from_version: ${{ inputs.stack == 'apis' && format('0.0.0-staging.{0}', needs.resolve.outputs.sha_tag) || format('0.0.0-staging.{0}', needs.resolve.outputs.sha) }}
+          version: ${{ needs.version.outputs.version }}
+          dist_tag: latest
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish OpenAPI (APIs)
-        if: inputs.stack == 'apis'
+        if: inputs.stack == 'apis' && steps.promote_openapi.outputs.published != 'true'
         uses: ./cicd-repo/actions/release/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
@@ -525,7 +540,7 @@ jobs:
           version: ${{ needs.version.outputs.version }}
 
       - name: Publish OpenAPI (BFFs)
-        if: inputs.stack == 'bffs'
+        if: inputs.stack == 'bffs' && steps.promote_openapi.outputs.published != 'true'
         uses: ./cicd-repo/actions/release/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}

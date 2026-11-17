@@ -7,7 +7,8 @@ name: Promote to Staging
 #
 #   resolve   the commit (input, else main's newest) must have `dev-<sha>` and a green main run
 #   gates     staging gates on `<image>:dev-<sha>`: integration (APIs, BFFs), ZAP and k6 (APIs, BFFs, fronts)
-#   promote   environment Staging: retag by digest + OpenAPI staging package + release journal
+#   promote   environment Staging: retag by digest + OpenAPI staging package (the dev package
+#             republished, MAIR-999) + release journal
 
 on:
   workflow_call:
@@ -324,8 +325,23 @@ jobs:
 
       # Same package versions as the v4 pipeline: `0.0.0-staging.<sha7>` for the APIs,
       # `0.0.0-staging.<sha40>` for the BFFs (the fronts' contract-version.mjs expects it).
+      # [CHANGEMENT] MAIR-999: the package release-dev published for the commit is republished under
+      # the staging version (same files, new `version`) instead of being generated again (`cargo
+      # open_api` compiled the whole API in this job, after the approval). The generation below only
+      # runs when that package does not exist (a commit released before MAIR-999).
+      - name: Republish the OpenAPI package
+        id: promote_openapi
+        if: inputs.stack == 'apis' || inputs.stack == 'bffs'
+        uses: ./cicd-repo/actions/release/promote-openapi
+        with:
+          package_name: ${{ inputs.package_name }}
+          from_version: ${{ inputs.stack == 'apis' && format('0.0.0-dev-{0}', needs.resolve.outputs.sha_tag) || format('0.0.0-dev.{0}', needs.resolve.outputs.sha) }}
+          version: ${{ inputs.stack == 'apis' && format('0.0.0-staging.{0}', needs.resolve.outputs.sha_tag) || format('0.0.0-staging.{0}', needs.resolve.outputs.sha) }}
+          dist_tag: staging
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish OpenAPI (APIs)
-        if: inputs.stack == 'apis'
+        if: inputs.stack == 'apis' && steps.promote_openapi.outputs.published != 'true'
         uses: ./cicd-repo/actions/release/publish-openapi-rust
         with:
           package_name: ${{ inputs.package_name }}
@@ -334,7 +350,7 @@ jobs:
           dist_tag: staging
 
       - name: Publish OpenAPI (BFFs)
-        if: inputs.stack == 'bffs'
+        if: inputs.stack == 'bffs' && steps.promote_openapi.outputs.published != 'true'
         uses: ./cicd-repo/actions/release/publish-openapi-typescript
         with:
           package_name: ${{ inputs.package_name }}

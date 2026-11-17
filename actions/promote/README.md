@@ -23,3 +23,6 @@ the other types (`actions/<type>/<stack>`).
   image and searches every container's logs for the marker user's values; job `gdpr_marker`.
 - `gdpr-simulation/` (MAIR-497, APIs / BFFs): GDPR usage simulation on the staging image, then
   deterministic checks and an AI review (`tests/gdpr/simulation`); job `gdpr_simulation`.
+
+The OpenAPI package of a promotion is republished from the previous environment by
+`actions/release/promote-openapi` (MAIR-999), not regenerated: see that action.
