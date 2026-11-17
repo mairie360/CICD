@@ -25,8 +25,8 @@ jobs:
             https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
           printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$frontend_actionlint_directory/actionlint.tar.gz" | sha256sum --check --strict
           tar -xzf "$frontend_actionlint_directory/actionlint.tar.gz" -C "$frontend_actionlint_directory" actionlint
-          # Preserve the existing shellcheck info/style exclusions.
-          "$frontend_actionlint_directory/actionlint" -color -ignore SC2086 -ignore SC2016 -ignore SC2129
+          # No shellcheck exclusion (MAIR-542): SC2086, SC2016 and SC2129 are enforced again.
+          "$frontend_actionlint_directory/actionlint" -color
 
       - name: Check composite actions are valid YAML with a runs block
         run: |
@@ -71,6 +71,13 @@ jobs:
       - name: Test the nightly gates check
         run: python3 -m unittest discover -s actions/promote/nightly-check/tests -v
 
+      # MAIR-542: the OpenAPI coverage gates shared by every API and BFF repo.
+      - name: Test the ZAP OpenAPI coverage hooks
+        run: python3 -m unittest discover -s tests/zap -v
+
+      - name: Test the k6 OpenAPI coverage helper
+        run: node --test tests/k6/coverage.test.mjs
+
       - name: Test the next-version mirror
         run: python3 -m unittest discover -s actions/promote/next-version/tests -v
 
@@ -91,6 +98,25 @@ jobs:
       # MAIR-677: range scanned when the push base is unknown, inline allow ignored.
       - name: Test the secret-scan range and flags
         run: python3 -m unittest discover -s actions/security/gitleaks/tests -v
+
+  # MAIR-542: audit of the workflows (unpinned actions, template injection, excessive permissions).
+  # Non-blocking for now: findings are reported in the log until the existing ones are triaged.
+  zizmor:
+    name: zizmor workflow audit (non-blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Audit workflows and composite actions
+        run: |
+          # Neither an install failure nor the findings fail the job until the existing ones are triaged: a red check would hide real failures.
+          {
+            pip install --user --quiet zizmor==1.5.2 \
+              && "$HOME/.local/bin/zizmor" --no-progress --persona=regular .github/workflows actions
+          } || echo "::warning::zizmor could not run or reported findings (non-blocking, see the log above)"
 
   frontend-exception-security:
     name: frontend dev exception source scans
