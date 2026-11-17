@@ -1,8 +1,8 @@
 name: "Dependencies (BFFs)"
 description: >-
   Node.js setup and `npm ci` (or the cached node_modules, MAIR-1009) of a BFF against GitHub Packages (`dependencies` job of
-  BFFs-cicd.yml); with `audit: 'true'`, also `npm audit --audit-level=high` (`security_audit`
-  job).
+  BFFs-cicd.yml); with `audit: 'true'`, also `npm audit --omit=dev --audit-level=high` (blocking)
+  and a report-only full audit in the job summary (`security_audit` job).
 
 inputs:
   node_version:
@@ -15,7 +15,7 @@ inputs:
     description: "Token for the GitHub Packages registry (the caller passes secrets.GITHUB_TOKEN)"
     required: true
   audit:
-    description: "'true' to run npm audit after the install (blocks on high/critical)"
+    description: "'true' to run npm audit after the install (blocks on high/critical production advisories)"
     required: false
     default: "false"
 
@@ -32,7 +32,35 @@ runs:
         node_auth_token: ${{ inputs.node_auth_token }}
         save: 'true'
 
-    - name: Run npm audit (Block on High/Critical)
+    # [CHANGEMENT] Only production dependencies (what ships in the image / the published package)
+    # fail the job, like the fronts (MAIR-510) and front-libs (#161): picomatch GHSA-fc5q-39xc-vjpf
+    # has no fixed version and only reaches the BFFs through jest and typescript-eslint.
+    - name: Run npm audit on production dependencies (Block on High/Critical)
       if: inputs.audit == 'true'
       shell: bash
-      run: npm audit --audit-level=high
+      run: npm audit --omit=dev --audit-level=high
+
+    # [NOUVEAU] Full audit (development tools included), never blocking. It also runs when the
+    # production audit failed (`!cancelled()`), so the job summary shows everything, and publishes the
+    # report as soon as it holds a vulnerability, whatever its severity.
+    - name: Report development dependencies vulnerabilities (npm audit, non-blocking)
+      if: ${{ !cancelled() && inputs.audit == 'true' }}
+      shell: bash
+      run: |
+        report="$RUNNER_TEMP/npm-audit-full.txt"
+        npm audit > "$report" 2>&1 || true
+        if grep -q "found 0 vulnerabilities" "$report"; then
+          echo "No vulnerability, development tools included."
+        else
+          if npm audit --audit-level=high > /dev/null 2>&1; then
+            echo "::notice title=npm audit (development tools)::Vulnerabilities below the high level in development dependencies (not blocking, see the job summary)."
+          else
+            echo "::warning title=npm audit (development tools)::High or critical vulnerabilities in development dependencies (not blocking, see the job summary)."
+          fi
+          {
+            echo "### npm audit, development tools included (not blocking)"
+            echo '```'
+            head -c 60000 "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
