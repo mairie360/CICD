@@ -230,7 +230,7 @@ workflow per environment, each calling a reusable workflow of this repo. No imag
 | | `promote-staging.yml` | `promote-prod.yml` |
 | --- | --- | --- |
 | Commit | `sha` input, else main's newest commit (release journal / `[skip ci]` commits left out) | `sha` input, else main's newest commit released on staging |
-| Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists, and every internal pin of the commit is a released `X.Y.Z` or the upstream's current prod artifact (`verify-pins`, MAIR-1005) |
+| Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists, and every internal pin of the commit is published and reproducible (`verify-pins`, MAIR-1005) |
 | Gates | integration tests (APIs; BFFs since MAIR-262, newman collection), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder and GDPR inventory (database, MAIR-491, MAIR-285); end-to-end journeys (fronts, MAIR-602) on `<image>@<staging digest>`; RGPD / RGAA plug in here (MAIR-604, MAIR-317/319) |
 | Environment | `Staging` | `Prod` |
 | Publishes | `staging-<sha>` / `staging`, `@mairie360/<name>-openapi@0.0.0-staging.<sha>` (APIs: 7 chars, BFFs: 40) | git tag `v<version>` + GitHub release on the commit, `<version>` / `latest`, OpenAPI `<version>` |
@@ -253,16 +253,26 @@ behaviour is unchanged. Example: `gh workflow run promote-prod.yml -f dry_run=tr
 caller forwards the input (`dry_run: ${{ inputs.dry_run || false }}`); `nightly-gates.yml` is the
 scheduled caller.
 
-Prod only ships released internal artifacts (MAIR-1005): the `resolve` job of `promote-prod.yml`
-runs `actions/promote/verify-pins` on the promoted commit. Every `@mairie360/*` dependency of its
-`package.json` must be an exact published `X.Y.Z`, and every `ghcr.io/mairie360/*` image of its
-test stacks (`docker-compose-*.yml` at the root; the local `docker-compose.yml` and the repo's own
-images are left out) an existing `X.Y.Z` tag. A dev or staging pin passes only when it is the
-upstream's current prod release: the package has the same contents as the `latest` dist-tag
-(`version` aside, promotions republish the same tarball) or the image has the digest of `:latest`
-(MAIR-998). So a service can stay on `dev-<sha>` pins until prod as long as its upstreams were
-released to prod from those commits first. Any other pin fails the run before any gate, with one
-error per pin and a table in the job summary: release the upstream first, or bump the pin.
+Prod only ships published, reproducible internal artifacts (MAIR-1005, MAIR-998): the `resolve` job
+of `promote-prod.yml` runs `actions/promote/verify-pins` on the promoted commit. Every `@mairie360/*`
+dependency of its `package.json` must be an exact published version (`X.Y.Z`, or a dev / staging
+build: contracts are only bumped when the code needs a new route or field), and every upstream
+`ghcr.io/mairie360/*` image of its test stacks (`docker-compose-*.yml` at the root; the local
+`docker-compose.yml` and the repo's own images are left out) must use the moving tag of the stage,
+`${UPSTREAM_TAG:-dev}`, or an existing `X.Y.Z` tag (a `dev-<sha>` tag passes only with the digest
+of `:latest`). Hard-coded moving tags and ranges fail the run before any gate, with one error per
+pin and a table in the job summary.
+
+### Test stacks follow the stage (`UPSTREAM_TAG`, MAIR-998)
+
+The compose stacks of the services pull their upstreams (database, APIs, BFFs) as
+`ghcr.io/mairie360/<name>:${UPSTREAM_TAG:-dev}`, and the workflows set `UPSTREAM_TAG` per stage:
+`dev` in the stack workflows (PRs, main) and `frontend-isolated-qa.yml`, `staging` in
+`promote-staging.yml`, `latest` in `promote-prod.yml`. Every stage tests against what its
+environment runs, with no pin to bump and no commit when an upstream releases; a promotion only
+needs its upstreams promoted first. `actions/integration/upstream-images`, the first step of every
+action that starts a stack, writes the digest behind each tag into the job summary, since a rerun
+can pull newer upstreams. Locally the default is `dev`.
 
 The OpenAPI package of a promotion is not generated again (MAIR-999): `actions/release/promote-openapi`
 downloads the package of the previous environment (`0.0.0-dev-<sha7>` / `0.0.0-dev.<sha40>` for

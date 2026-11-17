@@ -13,6 +13,11 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # [NOUVEAU] MAIR-998: the stack pulls its upstreams with the moving tag of the stage
+    # (UPSTREAM_TAG, set by the workflow): record the digests it is about to test.
+    - name: Log the upstream images
+      uses: ./cicd-repo/actions/integration/upstream-images
+
     # [CHANGEMENT] Integration tests are owned by the consumer repo: `integration_test.sh`
     # (same shape as `security_test.sh`) starts `docker-compose-integration.yml`, waits for
     # the test-runner service and returns its exit code. No external service is involved.

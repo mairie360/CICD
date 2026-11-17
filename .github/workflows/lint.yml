@@ -59,6 +59,10 @@ jobs:
       - name: Test the promotion commit resolution
         run: python3 -m unittest discover -s actions/promote/resolve/tests -v
 
+      # MAIR-998: the test stacks follow the moving tag of the stage; their digests are logged.
+      - name: Upstream images action tests
+        run: python3 -m unittest discover -s actions/integration/upstream-images/tests -v
+
       # MAIR-1005: a prod promotion refuses internal pins that are not released.
       - name: Test the internal pin check
         run: python3 -m unittest discover -s actions/promote/verify-pins/tests -v

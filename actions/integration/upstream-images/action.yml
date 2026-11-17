@@ -1,0 +1,16 @@
+name: "Upstream images of the test stack"
+description: >-
+  Writes into the job summary the digest behind each `ghcr.io/<owner>/<name>:${UPSTREAM_TAG:-dev}`
+  image of the repo's root compose files (MAIR-998): the stacks follow the moving tag of the stage
+  (dev, staging, latest) instead of pinned versions, so a run records what it tested. Never fails.
+  Called first by every action that starts a stack; reads UPSTREAM_TAG from the job environment.
+
+runs:
+  using: "composite"
+  steps:
+    - name: Log the upstream digests
+      shell: bash
+      continue-on-error: true
+      env:
+        SCRIPT: ${{ github.action_path }}/upstream_images.py
+      run: python3 -I "$SCRIPT" || true
