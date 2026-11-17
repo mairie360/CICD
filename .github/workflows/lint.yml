@@ -92,6 +92,9 @@ jobs:
       - name: Test the node_modules cache and the single front build
         run: python3 -m unittest discover -s actions/dependencies/node-install/tests -v
 
+      - name: Test the npm audit split of the BFFs and bffs-lib
+        run: python3 -m unittest discover -s actions/dependencies/bffs/tests -v
+
       - name: Test the fronts' end-to-end gate (MAIR-602)
         run: python3 -m unittest discover -s actions/e2e/fronts/tests -v
 
