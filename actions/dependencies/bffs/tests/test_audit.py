@@ -1,4 +1,4 @@
-"""The npm audit of the BFFs and of bffs-lib blocks on production dependencies only (MAIR-682)."""
+"""The npm audit of the BFFs and of bffs-lib blocks on production dependencies only."""
 import re
 import unittest
 from pathlib import Path

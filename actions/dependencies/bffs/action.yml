@@ -33,7 +33,7 @@ runs:
         save: 'true'
 
     # [CHANGEMENT] Only production dependencies (what ships in the image / the published package)
-    # fail the job, like the fronts (MAIR-510) and front-libs (#161): picomatch GHSA-fc5q-39xc-vjpf
+    # fail the job, like the fronts and front-libs: picomatch GHSA-fc5q-39xc-vjpf
     # has no fixed version and only reaches the BFFs through jest and typescript-eslint.
     - name: Run npm audit on production dependencies (Block on High/Critical)
       if: inputs.audit == 'true'

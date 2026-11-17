@@ -17,7 +17,7 @@ runs:
       run: npm ci
 
     # [CHANGEMENT] Only production dependencies (what ships in the published package)
-    # fail the job, like the fronts (MAIR-510) and front-libs (#161): picomatch GHSA-fc5q-39xc-vjpf
+    # fail the job, like the fronts and front-libs: picomatch GHSA-fc5q-39xc-vjpf
     # has no fixed version and only reaches the BFFs through jest and typescript-eslint.
     - name: Check production dependencies vulnerabilities (npm audit --omit=dev)
       shell: bash
