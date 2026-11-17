@@ -1,0 +1,50 @@
+name: "Nightly gates check"
+description: >-
+  Decides whether a repo's nightly-gates.yml replays the promotion gates in dry run (MAIR-1008):
+  skipped when main's newest commit with a pipeline already passed them in the last green run of
+  the workflow; the Claude-backed reviews only run on the weekly day. The caller checks the repo
+  out with `fetch-depth: 0`.
+
+inputs:
+  workflow_file:
+    description: "File name of the calling workflow (its last green run is the reference)"
+    required: false
+    default: "nightly-gates.yml"
+  ai_weekday:
+    description: "ISO weekday (1 = Monday, UTC) of the run that also gets the Claude reviews"
+    required: false
+    default: "1"
+  ai:
+    description: "'true' on a manual run to include the Claude reviews"
+    required: false
+    default: "false"
+  github_token:
+    description: "Token reading the Actions runs (pass secrets.GITHUB_TOKEN, `actions: read`)"
+    required: true
+
+outputs:
+  run:
+    description: "'true' when the gates must run"
+    value: ${{ steps.check.outputs.run }}
+  sha:
+    description: "Commit the gates test (main's newest commit with a pipeline)"
+    value: ${{ steps.check.outputs.sha }}
+  ai:
+    description: "'true' when the Claude reviews run too"
+    value: ${{ steps.check.outputs.ai }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check whether main moved
+      id: check
+      shell: bash
+      env:
+        WORKFLOW_FILE: ${{ inputs.workflow_file }}
+        AI_WEEKDAY: ${{ inputs.ai_weekday }}
+        AI_INPUT: ${{ inputs.ai }}
+        EVENT_NAME: ${{ github.event_name }}
+        BRANCH: ${{ github.event.repository.default_branch }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        SCRIPT: ${{ github.action_path }}/check.py
+      run: python3 -I "$SCRIPT"

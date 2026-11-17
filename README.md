@@ -323,6 +323,119 @@ jobs:
 BFFs also pass `openapi_spec_path` (the committed contract, same value as in `cicd.yml`). Run it
 with `gh workflow run promote-staging.yml -R mairie360/<repo> [-f sha=<sha>]`.
 
+
+### Nightly rehearsal of the gates (`nightly-gates.yml`, MAIR-1008)
+
+The promotion gates only ran on release day, so a ZAP, k6, newman, GDPR, RGAA or e2e failure was
+found while promoting, and each fix cost another dev → staging → prod pass. Every service repo
+(Database, APIs, BFFs, fronts, and the templates) replays them on main every night, in dry run
+(`dry_run: true`, MAIR-1007: nothing is tagged, published or approved):
+
+- `check` (`actions/promote/nightly-check`): main's newest commit with a pipeline; skipped on a
+  scheduled run when the last green run of the workflow already tested it (journal commits do not
+  count). Mondays (UTC, input `ai_weekday`) the Claude-backed reviews run too (GDPR simulation
+  review, RGAA pre-audit, GDPR inventory proposals): the other nights the gates get no
+  `ANTHROPIC_API_KEY` and run without them. A manual run always runs, with the reviews if `ai`.
+- `staging`, then `prod`: `promote-staging.yml` and `promote-prod.yml` on that commit with
+  `dry_run: true` (prod accepts the `dev-<sha>` image, `verify-pins` only warns). A failure sends
+  the usual n8n notification (`notify-cicd-failure`), which opens a ticket.
+
+Crons are spread between repos (minute and hour differ) so they do not all start the same stacks
+at once. On the fronts, `security_tests` / `performance_tests` of `frontend-cicd.yml` keep their
+`pull_request` condition: main's image is now covered by the nightly ZAP / k6 run of
+promote-staging.
+
+Caller (`.github/workflows/nightly-gates.yml`; same CICD version as `promote-*.yml`, from the
+first release with `dry_run`; stack inputs as in the repo's `promote-*.yml`):
+
+```yaml
+name: Nightly gates
+
+on:
+  schedule:
+    - cron: "17 1 * * *"   # spread per repo
+  workflow_dispatch:
+    inputs:
+      ai:
+        description: "Also run the Claude-backed reviews"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-gates-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      sha: ${{ steps.check.outputs.sha }}
+      ai: ${{ steps.check.outputs.ai }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v7
+        with:
+          repository: mairie360/CICD
+          ref: vX.Y.Z
+          path: cicd-repo
+          sparse-checkout: actions
+      - id: check
+        uses: ./cicd-repo/actions/promote/nightly-check
+        with:
+          ai: ${{ inputs.ai || false }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  staging:
+    needs: check
+    if: needs.check.outputs.run == 'true'
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+    uses: mairie360/CICD/.github/workflows/promote-staging.yml@vX.Y.Z
+    with:
+      stack: bffs
+      package_name: bff-project
+      cicd_version: vX.Y.Z
+      sha: ${{ needs.check.outputs.sha }}
+      dry_run: true
+    secrets:
+      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
+
+  prod:
+    needs: [check, staging]
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    uses: mairie360/CICD/.github/workflows/promote-prod.yml@vX.Y.Z
+    with:
+      stack: bffs
+      package_name: bff-project
+      cicd_version: vX.Y.Z
+      sha: ${{ needs.check.outputs.sha }}
+      dry_run: true
+    secrets:
+      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
+      ANTHROPIC_API_KEY: ${{ needs.check.outputs.ai == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+      ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
+      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+      RELEASE_APP_PK: ${{ secrets.RELEASE_APP_PK }}
+```
+
+The permissions are those of the real promotions (a called workflow cannot request more than its
+caller grants, even for the skipped `promote` job). The release app secrets are required inputs of
+promote-prod even though a dry run never uses them.
+
 ### BFF integration gate (MAIR-262)
 
 The `integration_tests` job of `promote-staging.yml` runs for the APIs and the BFFs. A BFF repo
