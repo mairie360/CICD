@@ -230,7 +230,7 @@ workflow per environment, each calling a reusable workflow of this repo. No imag
 | | `promote-staging.yml` | `promote-prod.yml` |
 | --- | --- | --- |
 | Commit | `sha` input, else main's newest commit (release journal / `[skip ci]` commits left out) | `sha` input, else main's newest commit released on staging |
-| Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists |
+| Refused unless | `dev-<sha>` exists (both images for the database) and the main run of the commit has a green `release-dev` and no failed job | `staging-<sha>` exists, and every internal pin of the commit is a released `X.Y.Z` or the upstream's current prod artifact (`verify-pins`, MAIR-1005) |
 | Gates | integration tests (APIs; BFFs since MAIR-262, newman collection), ZAP and k6 (APIs, BFFs, fronts) on `<image>:dev-<sha>` | Liquibase release folder and GDPR inventory (database, MAIR-491, MAIR-285); end-to-end journeys (fronts, MAIR-602) on `<image>@<staging digest>`; RGPD / RGAA plug in here (MAIR-604, MAIR-317/319) |
 | Environment | `Staging` | `Prod` |
 | Publishes | `staging-<sha>` / `staging`, `@mairie360/<name>-openapi@0.0.0-staging.<sha>` (APIs: 7 chars, BFFs: 40) | git tag `v<version>` + GitHub release on the commit, `<version>` / `latest`, OpenAPI `<version>` |
@@ -242,6 +242,17 @@ semantic-release reads the tags and checks the branch there, and the release not
 repository links. The tag and the release are then created through the API on that commit. A run
 with nothing to release (only `chore` / `ci` / `docs` commits since the last tag) stops after
 `version`, with a notice.
+
+Prod only ships released internal artifacts (MAIR-1005): the `resolve` job of `promote-prod.yml`
+runs `actions/promote/verify-pins` on the promoted commit. Every `@mairie360/*` dependency of its
+`package.json` must be an exact published `X.Y.Z`, and every `ghcr.io/mairie360/*` image of its
+test stacks (`docker-compose-*.yml` at the root; the local `docker-compose.yml` and the repo's own
+images are left out) an existing `X.Y.Z` tag. A dev or staging pin passes only when it is the
+upstream's current prod release: the package has the same contents as the `latest` dist-tag
+(`version` aside, promotions republish the same tarball) or the image has the digest of `:latest`
+(MAIR-998). So a service can stay on `dev-<sha>` pins until prod as long as its upstreams were
+released to prod from those commits first. Any other pin fails the run before any gate, with one
+error per pin and a table in the job summary: release the upstream first, or bump the pin.
 
 The OpenAPI package of a promotion is not generated again (MAIR-999): `actions/release/promote-openapi`
 downloads the package of the previous environment (`0.0.0-dev-<sha7>` / `0.0.0-dev.<sha40>` for

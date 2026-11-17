@@ -1,0 +1,48 @@
+name: "Verify the internal pins"
+description: >-
+  Refuses a prod promotion whose commit pins an internal dependency that is not a release (MAIR-1005):
+  every `@<owner>/*` package of `package.json` must be an exact published `X.Y.Z`, and every
+  `ghcr.io/<owner>/*` image of the root test stacks `docker-compose-*.yml` an existing `X.Y.Z` tag (the
+  repo's own images left out). A dev / staging build is accepted when it is the upstream's current prod
+  release: same package contents as the `latest` dist-tag, or the digest of `:latest`. Reads the files at `sha`; the caller checks the repo out with
+  `fetch-depth: 0` and logs in to GHCR first (the resolve action does).
+
+inputs:
+  sha:
+    description: "Full sha of the promoted commit"
+    required: true
+  package_name:
+    description: "Base name of the repo's own image, left out"
+    required: true
+  extra_package_name:
+    description: "Second image of the repo (database `liquibase-migrations`), left out"
+    required: false
+    default: ""
+  mode:
+    description: "enforce (fails on a finding) | report (warnings only, dry runs)"
+    required: false
+    default: "enforce"
+  token:
+    description: "Token reading GitHub Packages (pass secrets.GITHUB_TOKEN, `packages: read`)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+        registry-url: https://npm.pkg.github.com
+        scope: "@${{ github.repository_owner }}"
+
+    - name: Verify the internal pins
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        EXTRA_PACKAGE_NAME: ${{ inputs.extra_package_name }}
+        MODE: ${{ inputs.mode }}
+        NODE_AUTH_TOKEN: ${{ inputs.token }}
+        SCRIPT: ${{ github.action_path }}/verify_pins.py
+      run: python3 -I "$SCRIPT"

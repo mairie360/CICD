@@ -4,7 +4,8 @@ name: Promote to Prod
 # `.github/workflows/promote-prod.yml`, `workflow_dispatch` on main). No rebuild: the digest of
 # `staging-<sha>` gets the semver tag and `latest`.
 #
-#   resolve       the commit (input, else main's newest one on staging) must have `staging-<sha>`
+#   resolve       the commit (input, else main's newest one on staging) must have `staging-<sha>`,
+#                 and its internal pins must be releases or the upstream's prod artifact (verify-pins, MAIR-1005)
 #   version       semantic-release dry run on that commit (it can be behind main's tip)
 #   release_folder  database only: the Liquibase release folder matches that version (MAIR-491)
 #   gdpr_inventory  database only: every column of the staging schema is in gdpr/inventory.yaml (MAIR-285)
@@ -141,6 +142,19 @@ jobs:
           package_name: ${{ inputs.package_name }}
           extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # [NOUVEAU] MAIR-1005: prod only ships released internal artifacts. Every @mairie360/* package
+      # of the commit's package.json and every ghcr.io/mairie360 image of its root compose files
+      # must be an existing X.Y.Z, or a dev / staging build that is the upstream's current prod
+      # release (same package contents / same digest as latest, MAIR-998); anything else fails here,
+      # before any gate, naming the pin.
+      - name: Verify the internal pins
+        uses: ./cicd-repo/actions/promote/verify-pins
+        with:
+          sha: ${{ steps.resolve.outputs.sha }}
+          package_name: ${{ inputs.package_name }}
+          extra_package_name: ${{ inputs.stack == 'database' && 'liquibase-migrations' || '' }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   version:
     name: Next version
