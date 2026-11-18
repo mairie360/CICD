@@ -102,6 +102,10 @@ jobs:
       - name: Test the wiring of the GDPR prod gates
         run: python3 -m unittest discover -s actions/promote/gdpr-gates/tests -v
 
+      # Accessibility section of the fronts' prod releases.
+      - name: Test the accessibility section of the release
+        run: python3 -m unittest discover -s actions/release/accessibility-section/tests -v
+
       # MAIR-677: range scanned when the push base is unknown, inline allow ignored.
       - name: Test the secret-scan range and flags
         run: python3 -m unittest discover -s actions/security/gitleaks/tests -v
