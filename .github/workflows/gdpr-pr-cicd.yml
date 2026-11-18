@@ -23,10 +23,15 @@ on:
         required: false
         type: string
         default: "claude-sonnet-5-5"
-        description: "Claude model of the AI review (never blocking); only used when ANTHROPIC_API_KEY is set"
+        description: "Claude model of the AI review (never blocking); only used when ANTHROPIC_REVIEW_API_KEY is set"
     secrets:
+      # [CHANGEMENT] Claude key of the AI reviews (low-quota org secret, the only Claude key a
+      # pull request run receives); without it the AI parts are skipped.
+      ANTHROPIC_REVIEW_API_KEY:
+        required: false
       ANTHROPIC_API_KEY:
         required: false
+        description: "Deprecated, unused: kept optional so that callers still passing it do not fail; pass nothing"
       ANTHROPIC_WORKSPACE_ID:
         required: false
 
@@ -63,5 +68,5 @@ jobs:
           inventory_path: ${{ inputs.inventory_path }}
           inventory_ref: ${{ inputs.gdpr_inventory_ref }}
           ai_model: ${{ inputs.gdpr_ai_model }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}

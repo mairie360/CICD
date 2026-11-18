@@ -33,13 +33,13 @@ on:
     secrets:
       ANTHROPIC_API_KEY:
         required: false
-        description: "Claude API key of the release journal (org secret); without it the journal keeps plain commit lists"
+        description: "Deprecated, unused: kept optional so that callers still passing it do not fail; pass nothing"
       RELEASE_APP_ID:
         required: false
-        description: "Release app (org secret) pushing the release journal on main"
+        description: "Deprecated, unused: kept optional so that callers still passing it do not fail; pass nothing"
       RELEASE_APP_PK:
         required: false
-        description: "Private key of the release app (org secret)"
+        description: "Deprecated, unused: kept optional so that callers still passing it do not fail; pass nothing"
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
@@ -257,17 +257,6 @@ jobs:
             node_auth_token=NODE_AUTH_TOKEN
           scan_fail_on_findings: ${{ inputs.image_scan_fail_on_findings }}
 
-      # [NOUVEAU] RELEASE_JOURNAL.md rewritten on main after this release (release/release-journal).
-      # A journal failure never fails the release.
-      - name: Release journal
-        continue-on-error: true
-        uses: ./cicd-repo/actions/release/release-journal
-        with:
-          stage: dev
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          app_id: ${{ secrets.RELEASE_APP_ID }}
-          app_private_key: ${{ secrets.RELEASE_APP_PK }}
 
   security_tests:
     name: Dynamic Security Tests (OWASP ZAP)

@@ -21,10 +21,14 @@ on:
         required: true
       CODECOV_TOKEN:
         required: true
+      # [CHANGEMENT] Secrets of the repo's `Release` environment (deployment branch: main), read by
+      # `publish_release` only. Callers must still pass both by name
+      # (`RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}`): an omitted secret resolves to an empty
+      # value without any error at call time, and the version bump then fails.
       RELEASE_APP_ID:
-        required: true
+        required: false
       RELEASE_APP_PK:
-        required: true
+        required: false
       N8N_WEBHOOK_SECRET:
         required: true
 

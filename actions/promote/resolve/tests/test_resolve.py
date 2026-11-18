@@ -219,18 +219,19 @@ class MainTest(unittest.TestCase):
 class PromotionCommitsSkipCiTest(unittest.TestCase):
     """MAIR-494: the commits a promotion creates must not start a pipeline."""
 
-    def test_promote_workflows_only_push_through_the_release_journal(self):
+    def test_promote_workflows_push_nothing(self):
         for name in ('promote-staging.yml', 'promote-prod.yml'):
             with self.subTest(workflow=name):
                 text = (ROOT / '.github' / 'workflows' / name).read_text(encoding='utf-8')
                 self.assertNotIn('git push', text)
                 self.assertNotIn('git commit', text)
 
-    def test_the_release_journal_commit_is_skip_ci(self):
+    def test_the_release_journal_pushes_nothing(self):
+        # The journal is the body of the prod release: no commit on main.
         text = (ROOT / 'actions' / 'release' / 'release-journal' / 'action.yml').read_text(encoding='utf-8')
-        commits = [line for line in text.splitlines() if 'git commit' in line]
-        self.assertEqual(len(commits), 1)
-        self.assertIn('[skip ci]', commits[0])
+        self.assertNotIn('git commit', text)
+        self.assertNotIn('git push', text)
+        self.assertNotIn('create-github-app-token', text)
 
     def test_the_prod_tag_is_pushed_with_the_runs_token(self):
         # The release is created with the run's GITHUB_TOKEN, and create-release pushes the

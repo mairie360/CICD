@@ -13,11 +13,46 @@ jobs:
     with:
       cicd_version: v2.3.0
       package_name: bff-user
-    secrets: inherit
+    secrets:
+      NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
+      ANTHROPIC_REVIEW_API_KEY: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
 ```
+
+Callers list their secrets: no `secrets: inherit`, which would hand every org secret to every run,
+pull requests included (see "Secrets" below).
 
 The jobs that need something from this repo check it out at that same `cicd_version` into
 `cicd-repo/` at the root of the consumer checkout.
+
+## Secrets
+
+The reusable workflows only receive the secrets their caller lists (never `secrets: inherit`):
+a pull request run must not hold a key it does not need.
+
+| Secret | Where it lives | Read by |
+|---|---|---|
+| `NODE_AUTH_TOKEN`, `CODECOV_TOKEN`, `N8N_WEBHOOK_SECRET`, `ANTHROPIC_WORKSPACE_ID` | org secrets, passed by the callers | the jobs that install, report or notify |
+| `ANTHROPIC_REVIEW_API_KEY` | org secret (low-quota Claude key), passed by the callers | the AI reviews: GDPR PR review, GDPR contract proposals, RGAA pre-audit, the GDPR gates of promote-prod |
+| `ANTHROPIC_API_KEY` | secret of the repo's `Prod` environment (deployment branch: `main`) | the release journal, in the `promote` job of `promote-prod.yml` only |
+| `RELEASE_APP_ID`, `RELEASE_APP_PK` | secrets of the repo's `Prod` environment (services) or `Release` environment (libraries), deployment branch `main` | the prod tag of `promote/create-release`; the version bump PR of `back-lib-cicd.yml` |
+
+The environment secrets are read by the job that names the environment, but a reusable workflow
+only sees a secret its caller passes: callers of `promote-prod.yml` (and of `back-lib-cicd.yml`)
+keep passing `RELEASE_APP_ID`, `RELEASE_APP_PK` and `ANTHROPIC_API_KEY` by name
+(`RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}`). An omitted one resolves to an empty value
+without any error at call time; the promotion then stops on the release app check (the journal
+falls back to the plain commit list). Check a prod dry run before deleting the org secrets. The old secrets
+(`ANTHROPIC_API_KEY`, `RELEASE_APP_*` on the stack and promote-staging workflows) stay declared,
+optional and unused, so that a caller still passing them does not fail.
+
+**Release journal** (`actions/release/release-journal`). Only the prod promotion writes
+it, as the body of the GitHub release `v<version>` (semantic-release's notes first, then
+`## Journal de la release`). Nothing is committed: `RELEASE_JOURNAL.md` is no longer written and
+can be deleted from the repos. Claude (`claude-haiku-5-5`) reads the commits since the previous
+prod tag, their pull requests and their diffs (the transfer is recorded in the GDPR register);
+its answer is sanitized: no raw HTML, no image, links only to the organization on GitHub.
 
 ## Terraform CI (`terraform_cicd.yml`, MAIR-617)
 
@@ -122,7 +157,9 @@ jobs:
       cicd_version: vX.Y.Z
       semgrep_fail_on_findings: false          # temporary opt-out while the findings are triaged
       semgrep_config: "p/rust p/secrets"       # optional, replaces the default list
-    secrets: inherit
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
 ```
 
 **Rollout.** Every stack that ships an image (APIs, BFFs, fronts, database) blocks on findings by
@@ -286,8 +323,9 @@ the image), and read by `gdpr_contract` and by the dev publication (`spec_file` 
 `publish-openapi-rust`).
 
 Both runs take a lock per repo and target (`concurrency: promote-<repo>-<target>`, in the caller),
-and only run on `main`. The commits a promotion creates (the release journal) carry `[skip ci]`;
-the tag and the release, created with the run's `GITHUB_TOKEN`, start no workflow
+and only run on `main`. A promotion creates no commit (the release journal
+is the body of the prod release; the `docs(release-journal): … [skip ci]` commits of
+older releases are still skipped by `resolve`); the tag and the release, created with the run's `GITHUB_TOKEN`, start no workflow
 (`actions/promote/resolve/tests` checks both).
 
 Caller (`.github/workflows/promote-staging.yml`; `promote-prod.yml` is the same with `prod`,
@@ -325,9 +363,6 @@ jobs:
       sha: ${{ inputs.sha }}
     secrets:
       N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
-      RELEASE_APP_PK: ${{ secrets.RELEASE_APP_PK }}
 ```
 
 BFFs also pass `openapi_spec_path` (the committed contract, same value as in `cicd.yml`). Run it
@@ -360,7 +395,7 @@ found while promoting, and each fix cost another dev → staging → prod pass. 
   scheduled run when the last green run of the workflow already tested it (journal commits do not
   count). Mondays (UTC, input `ai_weekday`) the Claude-backed reviews run too (GDPR simulation
   review, RGAA pre-audit, GDPR inventory proposals): the other nights the gates get no
-  `ANTHROPIC_API_KEY` and run without them. A manual run always runs, with the reviews if `ai`.
+  `ANTHROPIC_REVIEW_API_KEY` and run without them. A manual run always runs, with the reviews if `ai`.
 - `staging`, then `prod`: `promote-staging.yml` and `promote-prod.yml` on that commit with
   `dry_run: true` (prod accepts the `dev-<sha>` image, `verify-pins` only warns). A failure sends
   the usual n8n notification (`notify-cicd-failure`), which opens a ticket.
@@ -451,15 +486,13 @@ jobs:
       dry_run: true
     secrets:
       N8N_WEBHOOK_SECRET: ${{ secrets.N8N_WEBHOOK_SECRET }}
-      ANTHROPIC_API_KEY: ${{ needs.check.outputs.ai == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+      ANTHROPIC_REVIEW_API_KEY: ${{ needs.check.outputs.ai == 'true' && secrets.ANTHROPIC_REVIEW_API_KEY || '' }}
       ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
-      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
-      RELEASE_APP_PK: ${{ secrets.RELEASE_APP_PK }}
 ```
 
 The permissions are those of the real promotions (a called workflow cannot request more than its
-caller grants, even for the skipped `promote` job). The release app secrets are required inputs of
-promote-prod even though a dry run never uses them.
+caller grants, even for the skipped `promote` job). The release secrets are secrets of the `Prod`
+environment, which a dry run never requests.
 
 ### BFF integration gate (MAIR-262)
 
@@ -495,10 +528,10 @@ The job summary, shown before the Prod approval, holds:
 - the gaps, if any;
 - the inventory changes since the last release tag: **review them before approving Prod**;
 - for each unclassified column, a classification proposed by Claude (`gdpr_ai_model`, default
-  `claude-sonnet-5-5`, only with the `ANTHROPIC_API_KEY` secret), as YAML to review and paste into
+  `claude-sonnet-5-5`, only with the `ANTHROPIC_REVIEW_API_KEY` secret), as YAML to review and paste into
   the inventory in a PR. The proposals never decide the gate.
 
-The Database repo's `promote-prod.yml` already passes `ANTHROPIC_API_KEY` (optional: AI proposals);
+The Database repo's `promote-prod.yml` passes `ANTHROPIC_REVIEW_API_KEY` (optional: AI proposals);
 `ANTHROPIC_WORKSPACE_ID` is only needed for a key that is not scoped to a workspace.
 
 Run the check by hand on a migrated database:
@@ -642,7 +675,7 @@ mairie360/Database, input `gdpr_inventory_ref`, `main` by default) and walks eve
 of the spec (`$ref`, `allOf`/`oneOf`/`anyOf`, arrays, maps): a field that carries a `credentials`
 column (`users.password`, `sessions.token_hash`) fails the job. A field carries a column when it has
 its name, or when the repo maps it in its decision file. Claude (`gdpr_ai_model`, secret
-`ANTHROPIC_API_KEY`, optional) proposes a column for the other field names, cached by fingerprint
+`ANTHROPIC_REVIEW_API_KEY`, optional) proposes a column for the other field names, cached by fingerprint
 (field name, schemas, model) with `actions/cache`: the proposals fill the summary, a human writes
 the mapping. The job summary also lists the allowed exceptions; `report.json` (artifact
 `gdpr-contract`) adds, per operation, the personal columns its responses carry, the input of the
@@ -705,7 +738,7 @@ whether the PR touches personal data (`- [x] No` / `- [x] Yes` + an `Inventory:`
 workflow fails the PR check when no answer or both are ticked, or when "Yes" comes without the
 inventory: in Database, `gdpr/inventory.yaml` must change in the PR; elsewhere the `Inventory:`
 line links the Database PR that updates it, or says why it does not change. Claude
-(`gdpr_ai_model`, secret `ANTHROPIC_API_KEY`, optional) reads the diff (lock files and generated
+(`gdpr_ai_model`, secret `ANTHROPIC_REVIEW_API_KEY`, optional) reads the diff (lock files and generated
 contracts left out) with the inventory of mairie360/Database and, **without blocking**, warns in
 the job summary and as an annotation when a PR answered "No" seems to touch personal data, or when
 a "Yes" seems to need an inventory change. Reviews are cached by fingerprint (model, diff, answer)
@@ -727,7 +760,8 @@ jobs:
     with:
       cicd_version: vX.Y.Z
       # Database only: inventory_path: gdpr/inventory.yaml
-    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
+    secrets:
+      ANTHROPIC_REVIEW_API_KEY: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
 ```
 
 ## GDPR simulation (`actions/promote/gdpr-simulation`, MAIR-497)
@@ -755,7 +789,7 @@ The run (`tests/gdpr/simulation/`):
    above the maximum TTL or outside the prefixes of the inventory's `redis` section (MAIR-499). The erasure and retention checks are
    reported as expected failures until the erasure exists (MAIR-289); `GDPR_SIMULATION_ERASURE=enforce`
    makes them block. **AI review** (`gdpr_simulation_ai_model`, `claude-haiku-5-5` by default,
-   `ANTHROPIC_API_KEY`): the log lines grouped into templates (numbers, ids, dates, addresses
+   `ANTHROPIC_REVIEW_API_KEY`): the log lines grouped into templates (numbers, ids, dates, addresses
    replaced, persona values masked), the console, the storage and the database sample, each with a
    risk (`none` / `low` / `medium` / `high`), a justification and a fingerprint. Verdicts are cached
    by fingerprint and model (`actions/cache`), so two runs on the same code give the same verdicts.
@@ -1366,7 +1400,7 @@ criteria whose AI verdicts count in the gating rate. Until then no AI verdict re
 
 | Setting | Value |
 | --- | --- |
-| Secret `ANTHROPIC_API_KEY` | optional; without it the pre-audit is skipped and the run is unchanged |
+| Secret `ANTHROPIC_REVIEW_API_KEY` | optional; without it the pre-audit is skipped and the run is unchanged |
 | Secret `ANTHROPIC_WORKSPACE_ID` | only when the key is not scoped to a workspace (the API otherwise answers 400 "must include the anthropic-workspace-id header"); sent as the `anthropic-workspace-id` header |
 | Input `rgaa_ai_model` (`RGAA_AI_MODEL`) | default `claude-sonnet-5-5` |
 | `RGAA_AI=off` | disables the pre-audit |

@@ -26,15 +26,20 @@ on:
         required: false
         type: string
         default: "claude-sonnet-5-5"
-        description: "Claude model of the RGAA AI pre-audit (MAIR-320); the pre-audit only runs when the ANTHROPIC_API_KEY secret is set"
+        description: "Claude model of the RGAA AI pre-audit (MAIR-320); the pre-audit only runs when the ANTHROPIC_REVIEW_API_KEY secret is set"
     secrets:
       CODECOV_TOKEN:
         required: true
       N8N_WEBHOOK_SECRET:
         required: true
       # [NOUVEAU] MAIR-320: optional; without it the RGAA AI pre-audit is skipped.
+      # [CHANGEMENT] Claude key of the AI reviews (low-quota org secret, the only Claude key a
+      # pull request run receives); without it the AI parts are skipped.
+      ANTHROPIC_REVIEW_API_KEY:
+        required: false
       ANTHROPIC_API_KEY:
         required: false
+        description: "Deprecated, unused: kept optional so that callers still passing it do not fail; pass nothing"
       # [NOUVEAU] MAIR-320: only when the API key is not scoped to a workspace.
       ANTHROPIC_WORKSPACE_ID:
         required: false
@@ -224,7 +229,7 @@ jobs:
         timeout-minutes: 15
         env:
           RGAA_MIN_RATE: ${{ inputs.rgaa_min_rate }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
           ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}
           RGAA_AI_MODEL: ${{ inputs.rgaa_ai_model }}
         run: |
