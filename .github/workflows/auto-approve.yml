@@ -61,28 +61,51 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           SENDER: ${{ github.event.sender.login }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          # The head is read before the commits: a push in between leaves a last commit that is not
+          # the event head, which the script refuses.
+          current=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
           commits=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[] | tojson')
-          if printf '%s\n' "$commits" | python3 cicd-repo/actions/review/auto-approve/renovate_only.py --sender "$SENDER"; then
+          if printf '%s\n' "$commits" | python3 cicd-repo/actions/review/auto-approve/renovate_only.py \
+            --sender "$SENDER" --event-head "$EVENT_HEAD" --current-head "$current"; then
             echo "renovate_only=true" >> "$GITHUB_OUTPUT"
           else
             status=$?
-            [ "$status" -eq 1 ] || exit "$status"
-            echo "renovate_only=false" >> "$GITHUB_OUTPUT"
+            case "$status" in
+              1) echo "renovate_only=false" >> "$GITHUB_OUTPUT" ;;
+              # A later push moved the head: its own run approves or takes back, not this one.
+              3) echo "renovate_only=stale" >> "$GITHUB_OUTPUT" ;;
+              *) exit "$status" ;;
+            esac
           fi
 
-      - name: Approve
+      - name: Approve the checked revision
         if: steps.check.outputs.renovate_only == 'true'
-        # v4.0.0
-        uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
-        with:
-          github-token: ${{ github.token }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          approved=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" --jq ".[]
+            | select(.user.login == \"github-actions[bot]\" and .state == \"APPROVED\" and .commit_id == \"$EVENT_HEAD\") | .id")
+          if [ -n "$approved" ]; then
+            echo "Revision $EVENT_HEAD is already approved."
+            exit 0
+          fi
+          # `commit_id` binds the approval to the revision checked above: a push landing after the
+          # check is not approved with it, and its own run takes the approval back.
+          gh api -X POST "repos/$REPO/pulls/$PR/reviews" -f commit_id="$EVENT_HEAD" -f event=APPROVE \
+            -f body="Renovate alone wrote and pushed this revision." > /dev/null
+          echo "Approved revision $EVENT_HEAD."
 
       - name: Take back an earlier approval
         # Fail closed: a check that failed or gave no answer (API error, unreadable commits) takes the
         # approval back too, so an unknown branch never stays approved.
-        if: always() && steps.check.outputs.renovate_only != 'true'
+        if: always() && steps.check.outputs.renovate_only != 'true' && steps.check.outputs.renovate_only != 'stale'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
