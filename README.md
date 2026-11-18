@@ -768,6 +768,36 @@ jobs:
       ANTHROPIC_REVIEW_API_KEY: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
 ```
 
+## Renovate auto-approval (`auto-approve.yml`)
+
+Every repository approves its Renovate pull requests through this reusable workflow, never a copy
+of its own. It approves only while Renovate alone wrote and pushed the branch: each commit authored
+by `renovate[bot]`, committed by `web-flow` (Renovate commits through the API) or `renovate[bot]`,
+with a signature GitHub verified, and the push made by `renovate[bot]`. When anyone else pushes, the
+`synchronize` run dismisses the earlier approval and the pull request waits for a human review.
+The decision is `actions/review/auto-approve/renovate_only.py` (tests in `lint.yml`), read from this
+repository at `cicd_version`: the pull request's code is never checked out.
+
+`.github/workflows/auto-approve.yml` of a consumer:
+
+```yaml
+name: Auto Approve Renovate
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+permissions: {}
+jobs:
+  auto-approve:
+    permissions:
+      pull-requests: write
+    uses: mairie360/CICD/.github/workflows/auto-approve.yml@vX.Y.Z
+    with:
+      cicd_version: vX.Y.Z   # same release as the `uses:` ref
+```
+
+The approval is a signal for reviewers: the `main` rulesets require no approval, and Renovate
+merges on green checks according to `mairie360/renovate-config`.
+
 ## GDPR simulation (`actions/promote/gdpr-simulation`, MAIR-497)
 
 `promote-prod.yml` runs a `gdpr_simulation` job for the APIs, the BFFs and the fronts, between `version` and

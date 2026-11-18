@@ -56,6 +56,9 @@ jobs:
       - name: Test the release journal
         run: python3 -m unittest discover -s actions/release/release-journal/tests -v
 
+      - name: Test the Renovate auto-approval decision
+        run: python3 -m unittest discover -s actions/review/auto-approve/tests -v
+
       - name: Test the promotion commit resolution
         run: python3 -m unittest discover -s actions/promote/resolve/tests -v
 
