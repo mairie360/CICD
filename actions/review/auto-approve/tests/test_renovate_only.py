@@ -138,7 +138,8 @@ class WorkflowWiringTest(unittest.TestCase):
         take_back = next(step for step in steps if step.startswith("Take back"))
         self.assertIn("if: steps.check.outputs.renovate_only == 'true'", approve)
         self.assertIn(
-            "if: always() && steps.check.outputs.renovate_only != 'true' && steps.check.outputs.renovate_only != 'stale'",
+            "if: always() && steps.check.outputs.renovate_only != 'true' && steps.check.outputs.renovate_only != 'stale'"
+            " && steps.check.outputs.renovate_only != 'keep'",
             take_back,
         )
         check = next(step for step in steps if step.startswith("Check that"))
@@ -156,6 +157,9 @@ class WorkflowWiringTest(unittest.TestCase):
         self.assertIn('if [ "$ACTION" = reopened ]', check)
         self.assertIn('.commit_id == \\"$EVENT_HEAD\\"', check)
         self.assertIn('--action "$ACTION" "${approved_at_head[@]}"', check)
+        # A reopen by someone else only keeps the approval: the approve step runs for Renovate alone.
+        self.assertIn('if [ "$SENDER" = "renovate[bot]" ]; then\n              echo "renovate_only=true"', check)
+        self.assertIn('echo "renovate_only=keep"', check)
         self.assertLess(check.index("current=$("), check.index("commits=$("))
         # A head already known to have moved ends the step as stale before the commits are fetched.
         stale_exit = check.index('if [ "$current" != "$EVENT_HEAD" ]; then')
