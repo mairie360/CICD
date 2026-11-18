@@ -38,8 +38,12 @@ a pull request run must not hold a key it does not need.
 | `ANTHROPIC_API_KEY` | secret of the repo's `Prod` environment (deployment branch: `main`) | the release journal, in the `promote` job of `promote-prod.yml` only |
 | `RELEASE_APP_ID`, `RELEASE_APP_PK` | secrets of the repo's `Prod` environment (services) or `Release` environment (libraries), deployment branch `main` | the prod tag of `promote/create-release`; the version bump PR of `back-lib-cicd.yml` |
 
-A job that names an environment reads that environment's secrets, even in a reusable workflow,
-and a value passed by the caller under the same name is ignored there. The old secrets
+The environment secrets are read by the job that names the environment, but a reusable workflow
+only sees a secret its caller passes: callers of `promote-prod.yml` (and of `back-lib-cicd.yml`)
+keep passing `RELEASE_APP_ID`, `RELEASE_APP_PK` and `ANTHROPIC_API_KEY` by name
+(`RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}`). An omitted one resolves to an empty value
+without any error at call time; the promotion then stops on the release app check (the journal
+falls back to the plain commit list). Check a prod dry run before deleting the org secrets. The old secrets
 (`ANTHROPIC_API_KEY`, `RELEASE_APP_*` on the stack and promote-staging workflows) stay declared,
 optional and unused, so that a caller still passing them does not fail.
 

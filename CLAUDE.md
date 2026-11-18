@@ -26,9 +26,9 @@ A downstream repo references a reusable workflow and passes `cicd_version` (a re
 ```yaml
 jobs:
   ci:
-    uses: mairie360/CICD/.github/workflows/APIs_cicd.yml@v1.4.0
+    uses: mairie360/CICD/.github/workflows/APIs_cicd.yml@vX.Y.Z
     with:
-      cicd_version: v1.4.0
+      cicd_version: vX.Y.Z   # same release as the `uses:` ref
       package_name: my-api
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

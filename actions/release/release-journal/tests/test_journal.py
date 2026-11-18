@@ -100,6 +100,12 @@ class ReleaseJournalTests(unittest.TestCase):
         self.assertIn('_Changements depuis v1.0.0._', text)
         self.assertNotIn('Résumé Claude indisponible', text)
 
+    def test_MAIR_681_a_journal_empty_once_sanitized_falls_back_to_the_commit_list(self):
+        context = journal.build_context(self.feat, '1.1.0')
+        text = journal.render(context, '<!-- nothing to see -->', NOTES)
+        self.assertIn('fix: MAIR-2 Refuse revoked sessions (#2)', text)
+        self.assertIn('Résumé Claude indisponible', text)
+
     def test_plain_list_links_the_squash_pull_request_when_claude_is_unavailable(self):
         context = journal.build_context(self.feat, '1.1.0')
         text = journal.render(context, None, NOTES)
@@ -166,6 +172,7 @@ class SanitizeTests(unittest.TestCase):
     def test_MAIR_681_raw_html_and_comments_are_dropped(self):
         text = self.clean('- a <script>alert(1)</script> b <!-- hidden --> <img src=x onerror=y>')
         self.assertNotIn('<', text)
+        self.assertNotIn('&lt;', text)
         self.assertIn('- a alert(1) b', text)
 
     def test_MAIR_681_images_keep_their_alt_text_only(self):
@@ -184,6 +191,27 @@ class SanitizeTests(unittest.TestCase):
         self.assertEqual(self.clean(link), link)
         bare = 'https://github.com/mairie360/Project_API/pull/9'
         self.assertEqual(self.clean(bare), bare)
+
+    def test_MAIR_681_parenthesized_and_www_autolinks_lose_their_destination(self):
+        self.assertNotIn('evil.example', self.clean('see (https://evil.example/x)'))
+        self.assertNotIn('evil.example', self.clean('www.evil.example/x'))
+        self.assertNotIn('evil.example', self.clean('voir www.evil.example/x ici'))
+        self.assertEqual(self.clean('(https://github.com/mairie360/Core_API/pull/3)'),
+                         '(https://github.com/mairie360/Core_API/pull/3)')
+
+    def test_MAIR_681_parent_segments_cannot_leave_the_organization(self):
+        for url in ('https://github.com/mairie360/../attacker/repo', 'https://github.com/mairie360/%2e%2e/attacker/repo',
+                    'https://github.com/mairie360/%252e%252e/attacker', 'https://github.com/mairie360/./../x',
+                    'https://github.com.evil.example/mairie360/x', 'https://user@github.com/mairie360/x',
+                    'http://github.com/mairie360/x', 'https://github.com/mairie360'):
+            with self.subTest(url=url):
+                self.assertEqual(self.clean('[voir]({})'.format(url)), 'voir')
+
+    def test_MAIR_681_tag_removal_cannot_join_a_new_tag(self):
+        for text in ('<im<x>g src=//evil.example/pixel>', '<<x>img src=//evil.example/pixel>'):
+            with self.subTest(text=text):
+                self.assertNotIn('<img', self.clean(text))
+                self.assertNotIn('<', self.clean(text))
 
     def test_MAIR_681_commit_subjects_of_the_plain_list_are_sanitized(self):
         text = journal.plain_list([{'sha': 'a' * 40, 'subject': 'fix: x <img src=y> https://evil.example', 'pr': None}],

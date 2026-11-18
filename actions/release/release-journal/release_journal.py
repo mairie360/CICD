@@ -25,6 +25,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # Commits pushed by the journal before it became release notes: they say nothing about the code.
@@ -79,7 +80,8 @@ IMAGE_RE = re.compile(r'!\[([^\]]*)\]\([^)]*\)')
 # The URL may hold one level of balanced parentheses, like Markdown renderers accept.
 LINK_RE = re.compile(r'\[([^\]]*)\]\(\s*<?((?:[^()\s<>]|\([^()\s]*\))*)>?(?:\s+"[^"]*")?\s*\)')
 AUTOLINK_RE = re.compile(r'<(https?://[^>\s]+)>')
-BARE_URL_RE = re.compile(r'(?<![\w(/])(https?://[^\s)\]>]+)')
+# Bare URLs GFM turns into links: http(s)://… and www.… (after a space, a parenthesis or at the start).
+BARE_URL_RE = re.compile(r'(?<![\w/.@-])((?:https?://|www\.)[^\s)\]>]+)', re.IGNORECASE)
 REFERENCE_RE = re.compile(r'^\s*\[[^\]]+\]:\s*\S+.*$', re.MULTILINE)
 
 
@@ -225,7 +227,23 @@ def parse_response(response):
 
 
 def allowed(url, server_url, owner):
-    return url.startswith('{}/{}/'.format(server_url.rstrip('/'), owner))
+    """Only https links of the organization on GitHub, checked on the parsed URL: no `..` or encoded
+    variant that would leave the organization once resolved, no other host, user or port."""
+    if not owner:
+        return False
+    server = urllib.parse.urlsplit(server_url)
+    target = urllib.parse.urlsplit(url)
+    if (target.scheme, target.netloc.lower()) != (server.scheme, server.netloc.lower()):
+        return False
+    path = target.path
+    for _ in range(3):  # %2e, %252e...: decoded until stable
+        path = urllib.parse.unquote(path)
+    if '%' in path:
+        return False
+    segments = path.split('/')
+    if any(segment in ('.', '..') or '\\' in segment for segment in segments):
+        return False
+    return len(segments) > 2 and segments[0] == '' and segments[1] == owner and segments[2] != ''
 
 
 def sanitize(markdown, server_url, repository):
@@ -256,7 +274,8 @@ def sanitize(markdown, server_url, repository):
     text = LINK_RE.sub(keep, text)
     text = BARE_URL_RE.sub(bare, text)
     text = re.sub(r'\x00(\d+)\x00', lambda m: kept[int(m.group(1))], text)
-    return text.strip()
+    # No raw HTML can survive whatever the passes above joined: `<` is escaped (GFM shows it as is).
+    return text.replace('<', '&lt;').strip()
 
 
 def plain_list(items, server_url, repository):
@@ -270,12 +289,14 @@ def plain_list(items, server_url, repository):
 
 def render(context, journal, notes):
     server_url, repository = context['server_url'], context['repository']
+    # Checked once sanitized: a journal of HTML comments only would leave neither summary nor commit list.
+    summary = sanitize(journal, server_url, repository) if journal else ''
     since = context['base_tag'] or 'le premier commit'
     out = [notes.rstrip(), '', HEADING, '', '_Changements depuis {}._'.format(since), '']
     if not context['commits']:
         out.append('_Rien._')
-    elif journal and journal.strip():
-        out.append(sanitize(journal, server_url, repository))
+    elif summary:
+        out.append(summary)
     else:
         out += [plain_list(context['commits'], server_url, repository), '',
                 '> Résumé Claude indisponible pour cette release : liste brute des commits.']

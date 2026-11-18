@@ -87,8 +87,10 @@ on:
       ANTHROPIC_WORKSPACE_ID:
         required: false
       # [CHANGEMENT] The release secrets are secrets of the repo's `Prod` environment
-      # (deployment branch: main), read by the `promote` job only; a value passed by the caller is
-      # ignored there. Kept declared, optional, so that callers still passing them do not fail.
+      # (deployment branch: main), read by the `promote` job only. Callers must still pass each of
+      # them by name (`RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}`): an omitted secret resolves
+      # to an empty value without any error at call time, and the release app check then stops the
+      # promotion before any image is tagged.
       # ANTHROPIC_API_KEY: Claude key of the release journal. RELEASE_APP_*: the release app that
       # pushes the prod tag (actions/promote/create-release).
       ANTHROPIC_API_KEY:
@@ -549,6 +551,9 @@ jobs:
       - name: Release journal
         id: journal
         continue-on-error: true
+        # Bounded: a stalled git fetch or Claude call must leave the job the time to create the
+        # release; a timed-out step is not a success, so the plain notes are published.
+        timeout-minutes: 8
         uses: ./cicd-repo/actions/release/release-journal
         with:
           sha: ${{ needs.resolve.outputs.sha }}
