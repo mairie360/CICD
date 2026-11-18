@@ -1,10 +1,14 @@
 """nightly-check/check.py: when the nightly rehearsal of the promotion gates runs (MAIR-1008)."""
+import base64
 import datetime
+import io
+import json
 import importlib.util
 import os
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('check', Path(__file__).parents[1] / 'check.py')
@@ -118,6 +122,44 @@ class FingerprintTest(unittest.TestCase):
         self.assertNotEqual(first, check.fingerprint(['database'], 't', lambda n, t, _: digests[(n, t)]))
         self.assertIsNone(check.fingerprint(['database'], 't', lambda n, t, _: None))
         self.assertEqual(check.fingerprint([], 't', lambda n, t, _: None), '')
+
+
+class RegistryDigestTest(unittest.TestCase):
+    """GHCR reads Basic credentials on its token endpoint: a Bearer header is dropped and the
+    token it returns cannot read a private image, so the digest is unreadable every night."""
+
+    def digest_with(self, actor):
+        seen = []
+
+        def urlopen(request, timeout=None):
+            seen.append((request.full_url, request.get_method(), request.get_header('Authorization')))
+            if 'ghcr.io/token' in request.full_url:
+                return io.BytesIO(json.dumps({'token': 'registry-token'}).encode())
+            response = mock.MagicMock()
+            response.headers = {'Docker-Content-Digest': 'sha256:abc'}
+            response.__enter__.return_value = response
+            return response
+
+        env = {'GITHUB_ACTOR': actor} if actor else {}
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(check.urllib.request, 'urlopen', urlopen):
+            if not actor:
+                os.environ.pop('GITHUB_ACTOR', None)
+            digest = check.registry_digest('core-api', 'dev', 'the-token')
+        return digest, seen
+
+    def test_the_token_is_requested_with_basic_credentials_of_the_actor(self):
+        digest, seen = self.digest_with('octocat')
+        self.assertEqual(digest, 'sha256:abc')
+        expected = 'Basic ' + base64.b64encode(b'octocat:the-token').decode()
+        self.assertEqual(seen[0][2], expected)
+
+    def test_the_manifest_is_read_with_the_registry_token(self):
+        _, seen = self.digest_with('octocat')
+        self.assertEqual(seen[1][1:], ('HEAD', 'Bearer registry-token'))
+
+    def test_a_missing_actor_still_sends_basic_credentials(self):
+        _, seen = self.digest_with(None)
+        self.assertEqual(seen[0][2], 'Basic ' + base64.b64encode(b'github-actions:the-token').decode())
 
 
 if __name__ == '__main__':

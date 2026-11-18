@@ -18,9 +18,10 @@ in dry run (MAIR-1007), through this check:
 Standard library only; the caller checks the repo out with `fetch-depth: 0`.
 """
 
+import base64
 import datetime
-import importlib.util
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -79,8 +80,13 @@ def registry_digest(name, tag, token):
     """Manifest digest of ghcr.io/mairie360/<name>:<tag>, None when it cannot be read."""
     try:
         scope = urllib.parse.quote('repository:mairie360/{}:pull'.format(name), safe='')
+        # The token endpoint of GHCR reads HTTP Basic credentials (any user name works with a
+        # GITHUB_TOKEN); a Bearer header is ignored and yields an anonymous token, which cannot
+        # read a private image.
+        user = os.environ.get('GITHUB_ACTOR') or 'github-actions'
+        basic = base64.b64encode('{}:{}'.format(user, token).encode()).decode()
         auth = urllib.request.Request('https://ghcr.io/token?scope=' + scope,
-                                      headers={'Authorization': 'Bearer ' + token})
+                                      headers={'Authorization': 'Basic ' + basic})
         with urllib.request.urlopen(auth, timeout=60) as response:
             registry_token = json.load(response)['token']
         request = urllib.request.Request(
