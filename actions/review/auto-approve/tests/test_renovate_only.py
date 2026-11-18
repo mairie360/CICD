@@ -93,6 +93,13 @@ class WorkflowWiringTest(unittest.TestCase):
         self.assertNotIn("head.sha", self.text)
         self.assertNotIn("head.ref", self.text)
 
+    def test_mair_685_approval_taken_back_whenever_the_check_did_not_say_true(self):
+        steps = re.split(r"(?m)^      - name: ", self.text)
+        approve = next(step for step in steps if step.startswith("Approve"))
+        take_back = next(step for step in steps if step.startswith("Take back"))
+        self.assertIn("if: steps.check.outputs.renovate_only == 'true'", approve)
+        self.assertIn("if: always() && steps.check.outputs.renovate_only != 'true'", take_back)
+
     def test_mair_685_decision_comes_from_the_tested_script(self):
         self.assertIn("renovate_only.py", self.text)
 

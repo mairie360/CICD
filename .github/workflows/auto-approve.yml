@@ -80,7 +80,9 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Take back an earlier approval
-        if: steps.check.outputs.renovate_only == 'false'
+        # Fail closed: a check that failed or gave no answer (API error, unreadable commits) takes the
+        # approval back too, so an unknown branch never stays approved.
+        if: always() && steps.check.outputs.renovate_only != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
