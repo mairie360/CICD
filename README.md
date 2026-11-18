@@ -777,7 +777,8 @@ with a signature GitHub verified, and the push made by `renovate[bot]`. When any
 `synchronize` run dismisses the earlier approval and the pull request waits for a human review. The check
 is bound to the head of the event: an event whose head is no longer the pull request's approves
 nothing, and the approval names the checked revision (`commit_id`), so a push landing after the
-check is never approved with it.
+check is never approved with it. A reopen pushes nothing: when someone else reopens the pull
+request, an approval that already names its head is kept.
 The decision is `actions/review/auto-approve/renovate_only.py` (tests in `lint.yml`), read from this
 repository at `cicd_version`: the pull request's code is never checked out.
 

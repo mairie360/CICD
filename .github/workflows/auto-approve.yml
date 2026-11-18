@@ -62,6 +62,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           SENDER: ${{ github.event.sender.login }}
           EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
           # The head is read before the commits: a push in between leaves a last commit that is not
@@ -75,9 +76,23 @@ jobs:
             exit 0
           fi
           commits=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[] | tojson')
+          # A reopen pushes nothing: an approval that already names this head shows that no push came
+          # after it, so the reopen keeps it whoever reopened.
+          approved_at_head=()
+          if [ "$ACTION" = reopened ] && [ -n "$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" --jq ".[]
+            | select(.user.login == \"github-actions[bot]\" and .state == \"APPROVED\" and .commit_id == \"$EVENT_HEAD\") | .id")" ]; then
+            approved_at_head=(--approved-at-head)
+          fi
           if printf '%s\n' "$commits" | python3 cicd-repo/actions/review/auto-approve/renovate_only.py \
-            --sender "$SENDER" --event-head "$EVENT_HEAD" --current-head "$current"; then
-            echo "renovate_only=true" >> "$GITHUB_OUTPUT"
+            --sender "$SENDER" --event-head "$EVENT_HEAD" --current-head "$current" \
+            --action "$ACTION" "${approved_at_head[@]}"; then
+            if [ "$SENDER" = "renovate[bot]" ]; then
+              echo "renovate_only=true" >> "$GITHUB_OUTPUT"
+            else
+              # Reopened by someone else: keep the existing approval, never post a new one (a
+              # dismissal landing meanwhile stays dismissed).
+              echo "renovate_only=keep" >> "$GITHUB_OUTPUT"
+            fi
           else
             status=$?
             case "$status" in
@@ -112,7 +127,7 @@ jobs:
       - name: Take back an earlier approval
         # Fail closed: a check that failed or gave no answer (API error, unreadable commits) takes the
         # approval back too, so an unknown branch never stays approved.
-        if: always() && steps.check.outputs.renovate_only != 'true' && steps.check.outputs.renovate_only != 'stale'
+        if: always() && steps.check.outputs.renovate_only != 'true' && steps.check.outputs.renovate_only != 'stale' && steps.check.outputs.renovate_only != 'keep'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
