@@ -563,7 +563,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      # [NOUVEAU] MAIR-321: the RGAA result of the fronts goes into the release body (rate, failing
+      # [NOUVEAU] The RGAA result of the fronts goes into the release body (rate, failing
       # criteria with their pages and elements, changes since the previous release) and its
       # report.json is attached to the release (read by Deploiment's platform-wide RGAA gate).
       # Never blocks the release.

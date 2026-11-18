@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Accessibility (RGAA) section of a front's prod release (MAIR-321).
+"""Accessibility (RGAA) section of a front's prod release.
 
 Appends to the release notes a section built from the `report.json` the `rgaa` gate of
 promote-prod wrote (tests/a11y): CI rate, criteria to review, the invalidated criteria with the

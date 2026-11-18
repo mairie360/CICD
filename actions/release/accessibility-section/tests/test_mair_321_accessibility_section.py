@@ -1,4 +1,4 @@
-"""MAIR-321: the RGAA result of a front's prod promotion is published in its GitHub release."""
+"""The RGAA result of a front's prod promotion is published in its GitHub release."""
 import importlib.util
 import json
 import re

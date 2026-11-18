@@ -1,6 +1,6 @@
 name: "Accessibility section of the release"
 description: >
-  MAIR-321: appends the "Accessibilité (RGAA)" section to the notes of a front's prod release, from
+  Appends the "Accessibilité (RGAA)" section to the notes of a front's prod release, from
   the `report.json` of the `rgaa` gate of the same run, compared with the `rgaa-report.json` asset of
   the previous prod release. Rewrites `notes_file` in place. Never fails the release: the caller sets
   `continue-on-error`, and the script itself writes a warning line when the report is missing.
