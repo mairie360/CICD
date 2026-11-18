@@ -67,7 +67,7 @@ promote-prod.yml      resolve (staging-<sha> exists) → version (semantic-relea
                       → promote (environment: Prod) tag + GitHub release on the commit → RE-TAG digest of staging-<sha> → <semver> / latest
 ```
 
-Which checks run where (MAIR-604):
+Which checks run where:
 
 | When | Database | APIs / BFFs | Fronts |
 | --- | --- | --- | --- |
@@ -309,8 +309,8 @@ actions/
                          frontend-dev-exception (check_policy.py of frontend-dev-exception.yml)
   promote/               resolve (commit + checks), nightly-check (MAIR-1008), verify-pins (prod: internal pins are published and reproducible, MAIR-1005), next-version (dry run on a commit behind main), create-release; the prod gates of MAIR-492 go here:
                          gdpr-inventory (MAIR-285, database), gdpr-marker (MAIR-290, APIs / BFFs),
-                         gdpr-simulation (MAIR-497, APIs / BFFs / fronts), rgaa-front (MAIR-317, fronts);
-                         gdpr-gates/tests: wiring test of the GDPR gates (MAIR-604)
+                         gdpr-simulation (APIs / BFFs / fronts), rgaa-front (fronts);
+                         gdpr-gates/tests: wiring test of the GDPR gates
   notify/cicd-failure    n8n failure notification
 ```
 

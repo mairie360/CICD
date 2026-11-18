@@ -98,7 +98,7 @@ jobs:
       - name: Test the fronts' end-to-end gate (MAIR-602)
         run: python3 -m unittest discover -s actions/e2e/fronts/tests -v
 
-      # MAIR-604: the GDPR gates stay wired into promote-prod, and only there.
+      # The GDPR gates stay wired into promote-prod, and only there.
       - name: Test the wiring of the GDPR prod gates
         run: python3 -m unittest discover -s actions/promote/gdpr-gates/tests -v
 
