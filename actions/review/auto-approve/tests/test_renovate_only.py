@@ -23,12 +23,12 @@ def commit(sha="a" * 40, author="renovate[bot]", committer="web-flow", verified=
     }
 
 
-def run(sender, commits, event_head=None, current_head=None):
+def run(sender, commits, event_head=None, current_head=None, extra=()):
     lines = "".join(json.dumps(c) + "\n" for c in commits)
     head = commits[-1]["sha"] if commits else "f" * 40
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--sender", sender,
-         "--event-head", event_head or head, "--current-head", current_head or head],
+         "--event-head", event_head or head, "--current-head", current_head or head, *extra],
         input=lines, capture_output=True, text=True, check=False,
     )
 
@@ -54,6 +54,26 @@ class RenovateOnlyTest(unittest.TestCase):
         self.assertFalse(renovate_only.decide("renovate[bot]", [commit(committer="someone")])[0])
         self.assertFalse(renovate_only.decide("renovate[bot]", [commit(verified=False)])[0])
         self.assertFalse(renovate_only.decide("renovate[bot]", [commit(author=None)])[0])
+
+    def test_mair_685_a_reopen_keeps_the_approval_of_the_unchanged_head(self):
+        a = commit("a" * 40)
+        self.assertEqual(
+            renovate_only.decide("maintainer", [a], "a" * 40, "a" * 40, "reopened", approved_at_head=True), (True, [])
+        )
+        result = run("maintainer", [a], extra=["--action", "reopened", "--approved-at-head"])
+        self.assertEqual(result.returncode, 0)
+
+    def test_mair_685_a_reopen_without_an_approval_of_that_head_is_not_approved(self):
+        # Pushed while the pull request was closed: no approval names the new head.
+        a = commit("a" * 40)
+        self.assertEqual(
+            renovate_only.decide("maintainer", [a], "a" * 40, "a" * 40, "reopened"), (False, ["pushed by maintainer"])
+        )
+        # The approved head only spares the sender check of a reopen, never of a push.
+        self.assertFalse(renovate_only.decide("maintainer", [a], "a" * 40, "a" * 40, "synchronize", True)[0])
+        # Nor the commit checks.
+        human = commit("a" * 40, author="maintainer")
+        self.assertFalse(renovate_only.decide("maintainer", [human], "a" * 40, "a" * 40, "reopened", True)[0])
 
     def test_mair_685_a_stale_event_is_not_approved(self):
         # A later push moved the head: that push has its own run, this one approves nothing.
@@ -132,6 +152,10 @@ class WorkflowWiringTest(unittest.TestCase):
         self.assertNotIn("hmarr/", self.text)
         check = next(step for step in steps if step.startswith("Check that"))
         self.assertIn('--event-head "$EVENT_HEAD" --current-head "$current"', check)
+        # The reopen exemption reads an approval of this workflow naming the event head, on reopen only.
+        self.assertIn('if [ "$ACTION" = reopened ]', check)
+        self.assertIn('.commit_id == \\"$EVENT_HEAD\\"', check)
+        self.assertIn('--action "$ACTION" "${approved_at_head[@]}"', check)
         self.assertLess(check.index("current=$("), check.index("commits=$("))
         # A head already known to have moved ends the step as stale before the commits are fetched.
         stale_exit = check.index('if [ "$current" != "$EVENT_HEAD" ]; then')

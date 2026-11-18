@@ -7,10 +7,13 @@ by renovate[bot] (the event sender): a commit written or pushed by anyone else m
 changed the branch, and the change needs a human review. The decision is bound to one revision:
 the head of the event must still be the head of the pull request and the last commit read, or the
 event is stale (a later push has its own run) and nothing is approved; the approval names that
-revision (`commit_id`), so a push landing after the check is never approved with it.
+revision (`commit_id`), so a push landing after the check is never approved with it. Reopening
+does not push: a `reopened` event sent by someone else keeps the approval Renovate's revision
+already has, but only when that approval names the event head, so nothing was pushed since it.
 
 Usage: gh api --paginate repos/<repo>/pulls/<n>/commits --jq '.[] | tojson' \
-         | python3 renovate_only.py --sender <login> --event-head <sha> --current-head <sha>
+         | python3 renovate_only.py --sender <login> --event-head <sha> --current-head <sha> \
+             [--action <pull request event action>] [--approved-at-head]
 Reads one commit object per line (the REST API shape). Exit 0: Renovate's alone; 1: not; 2: the
 input could not be read; 3: stale event (neither approve nor take back: the run of the later push
 decides).
@@ -48,7 +51,7 @@ def is_stale(commits, event_head, current_head):
     return current_head != event_head or bool(commits) and commits[-1].get("sha") != event_head
 
 
-def decide(sender, commits, event_head=None, current_head=None):
+def decide(sender, commits, event_head=None, current_head=None, action=None, approved_at_head=False):
     """(approvable, reasons): approvable only for a push by Renovate of Renovate's commits, read at
     the revision of the event."""
     reasons = []
@@ -56,7 +59,9 @@ def decide(sender, commits, event_head=None, current_head=None):
         reasons.append(f"stale event: head {str(event_head)[:7]}, pull request now at {str(current_head)[:7]}")
     if event_head is not None and commits and commits[-1].get("sha") != event_head:
         reasons.append(f"commits read at {str(commits[-1].get('sha'))[:7]}, not at the event head {str(event_head)[:7]}")
-    if sender != RENOVATE:
+    # A reopen pushes nothing: the approval of this very revision stands, whoever reopened.
+    reopened_unchanged = action == "reopened" and approved_at_head
+    if sender != RENOVATE and not reopened_unchanged:
         reasons.append(f"pushed by {sender}")
     if not commits:
         reasons.append("no commit")
@@ -82,13 +87,18 @@ def main(argv=None):
     parser.add_argument("--sender", required=True)
     parser.add_argument("--event-head", required=True, help="head SHA of the event under review")
     parser.add_argument("--current-head", required=True, help="head SHA of the pull request, read before the commits")
+    parser.add_argument("--action", default=None, help="action of the pull_request_target event")
+    parser.add_argument("--approved-at-head", action="store_true",
+                        help="an approval of this workflow already names the event head")
     args = parser.parse_args(argv)
     try:
         commits = read_commits(sys.stdin)
     except ValueError as error:
         print(f"Unreadable commit list: {error}", file=sys.stderr)
         return 2
-    approvable, reasons = decide(args.sender, commits, args.event_head, args.current_head)
+    approvable, reasons = decide(
+        args.sender, commits, args.event_head, args.current_head, args.action, args.approved_at_head
+    )
     if is_stale(commits, args.event_head, args.current_head):
         print("Stale event, left to the run of the later push: " + "; ".join(reasons))
         return 3

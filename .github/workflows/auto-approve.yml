@@ -62,6 +62,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           SENDER: ${{ github.event.sender.login }}
           EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
           # The head is read before the commits: a push in between leaves a last commit that is not
@@ -75,8 +76,16 @@ jobs:
             exit 0
           fi
           commits=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[] | tojson')
+          # A reopen pushes nothing: an approval that already names this head shows that no push came
+          # after it, so the reopen keeps it whoever reopened.
+          approved_at_head=()
+          if [ "$ACTION" = reopened ] && [ -n "$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" --jq ".[]
+            | select(.user.login == \"github-actions[bot]\" and .state == \"APPROVED\" and .commit_id == \"$EVENT_HEAD\") | .id")" ]; then
+            approved_at_head=(--approved-at-head)
+          fi
           if printf '%s\n' "$commits" | python3 cicd-repo/actions/review/auto-approve/renovate_only.py \
-            --sender "$SENDER" --event-head "$EVENT_HEAD" --current-head "$current"; then
+            --sender "$SENDER" --event-head "$EVENT_HEAD" --current-head "$current" \
+            --action "$ACTION" "${approved_at_head[@]}"; then
             echo "renovate_only=true" >> "$GITHUB_OUTPUT"
           else
             status=$?
