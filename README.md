@@ -393,7 +393,10 @@ found while promoting, and each fix cost another dev → staging → prod pass. 
 
 - `check` (`actions/promote/nightly-check`): main's newest commit with a pipeline; skipped on a
   scheduled run when the last green run of the workflow already tested it (journal commits do not
-  count). Mondays (UTC, input `ai_weekday`) the Claude-backed reviews run too (GDPR simulation
+  count) and the upstream images of the stage tags (`ghcr.io/mairie360/<name>:${UPSTREAM_TAG…}`
+  of the compose files, MAIR-998) still have the digests that run recorded in its
+  `nightly-fingerprint` artifact: the tags move without a commit, and an unreadable digest means
+  the gates run (the job needs `packages: read` to read them). Mondays (UTC, input `ai_weekday`) the Claude-backed reviews run too (GDPR simulation
   review, RGAA pre-audit, GDPR inventory proposals): the other nights the gates get no
   `ANTHROPIC_REVIEW_API_KEY` and run without them. A manual run always runs, with the reviews if `ai`.
 - `staging`, then `prod`: `promote-staging.yml` and `promote-prod.yml` on that commit with
@@ -434,6 +437,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      packages: read   # digests of the upstream stage tags (MAIR-998)
     outputs:
       run: ${{ steps.check.outputs.run }}
       sha: ${{ steps.check.outputs.sha }}
