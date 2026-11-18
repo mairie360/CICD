@@ -72,15 +72,17 @@ Which checks run where:
 | When | Database | APIs / BFFs | Fronts |
 | --- | --- | --- | --- |
 | every event (stack workflow) | Semgrep GDPR rules | Semgrep GDPR rules, `gdpr_contract` (OpenAPI) | Semgrep GDPR rules |
-| promote-staging | — | integration (BFFs), ZAP, k6 | ZAP, k6 |
-| promote-prod | `release_folder`, `gdpr_inventory` | `gdpr_marker`, `gdpr_simulation` | `gdpr_simulation`, `rgaa`, `e2e_tests` |
+| promote-staging | — | integration (APIs, BFFs), ZAP, k6 | ZAP, k6 |
+| promote-prod | `release_folder`, `gdpr_inventory` | `gdpr_marker`, `gdpr_simulation` | `gdpr_simulation`, `rgaa`, `e2e_tests` (only when a version is released, or in a dry run) |
 
 A failed prod gate skips `promote` (each one is in its `needs` with `success || skipped`, `skipped`
 being a gate of another stack) and is notified. The GDPR gates of a stack without their file
 (`gdpr/inventory.yaml`, `gdpr-marker.yaml`, `gdpr-simulation.yaml`) are skipped with a warning.
 `actions/promote/gdpr-gates/tests` (in `lint.yml`) keeps this wiring, and keeps the promotion gates
-out of every other workflow; each gate's detection (a leaking service, an inventory gap, a credentials
-field in a contract) is tested in `tests/gdpr`.
+out of every other workflow. Each prod gate's detection is tested in `tests/gdpr` (`marker/marker.test.mjs`:
+a leaking service; `inventory.test.mjs`: an inventory gap; `simulation/simulation.test.mjs`); the
+OpenAPI check of the stack workflows has its own tests (`contract/contract.test.mjs`: a credentials
+field in a contract).
 
 Key invariants:
 

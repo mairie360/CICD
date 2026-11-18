@@ -1,13 +1,17 @@
 """The GDPR gates are wired into the prod promotion, and only there.
 
 Each gate has its own detection tests (tests/gdpr: a leaking service is caught, an inventory gap
-blocks, a forbidden contract field fails). These tests keep the gates connected to the promotion:
-a gate dropped from `promote.needs`, or its result left out of the `if`, would let a leaking
-image reach prod while every detection test stays green.
+blocks). These tests keep the gates connected to the promotion: a gate dropped from
+`promote.needs`, or its result left out of the `if`, would let a leaking image reach prod while
+every detection test stays green. The workflows are parsed and the job conditions evaluated, so a
+value left in a comment or a condition joined with the wrong operator does not pass.
 """
 import re
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+
+import yaml
 
 ROOT = Path(__file__).parents[4]
 WORKFLOWS = ROOT / '.github' / 'workflows'
@@ -19,79 +23,115 @@ GATES = {
     'gdpr_simulation': ({'apis', 'bffs', 'fronts'}, 'actions/promote/gdpr-simulation'),
 }
 STACKS = {'database', 'apis', 'bffs', 'fronts'}
+PROMOTED_SHA = '${{ needs.resolve.outputs.sha }}'
+STAGING_IMAGE = '${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}'
 
 
-def job_block(text, name):
-    """Text of the top-level job `name` of a workflow, up to the next top-level job."""
-    start = text.index(f'\n  {name}:\n')
-    nxt = re.search(r'\n  [a-z][a-z0-9_-]*:\n', text[start + 1:])
-    return text[start:start + 1 + nxt.start()] if nxt else text[start:]
+def load(path):
+    with open(path, encoding='utf-8') as f:
+        return yaml.safe_load(f)
 
 
-def needs_of(job):
-    line = next(l for l in job.splitlines() if l.strip().startswith('needs:'))
-    return [n.strip() for n in line.split('[', 1)[1].rstrip(']').split(',')]
+def evaluate(expression, inputs, needs, failure=False):
+    """Evaluates the subset of GitHub expressions the promotion conditions use."""
+    expr = str(expression).strip()
+    if expr.startswith('${{') and expr.endswith('}}'):
+        expr = expr[3:-2]
+    expr = expr.replace('&&', ' and ').replace('||', ' or ')
+    expr = re.sub(r'!(?!=)', ' not ', expr)
+    expr = expr.replace('always()', 'True').replace('failure()', repr(failure)).replace('!cancelled()', 'True')
+    ns = SimpleNamespace(inputs=SimpleNamespace(**inputs),
+                         needs=SimpleNamespace(**{k.replace('-', '_'): v for k, v in needs.items()}))
+    return bool(eval(expr, {'__builtins__': {}, 'True': True, 'False': False}, vars(ns)))  # noqa: S307
 
 
-def stacks_of(job):
-    line = next(l for l in job.splitlines() if l.strip().startswith('if:'))
-    return set(re.findall(r"inputs\.stack == '([a-z]+)'", line))
+def need(result='success', **outputs):
+    return SimpleNamespace(result=result, outputs=SimpleNamespace(**outputs))
+
+
+def needs_list(job):
+    value = job.get('needs', [])
+    return [value] if isinstance(value, str) else list(value)
+
+
+def step_using(job, action):
+    steps = [s for s in job.get('steps', []) if s.get('uses') == './cicd-repo/' + action]
+    return steps[0] if len(steps) == 1 else None
 
 
 class PromoteProdGdprGates(unittest.TestCase):
     def setUp(self):
-        self.text = (WORKFLOWS / 'promote-prod.yml').read_text(encoding='utf-8')
+        self.jobs = load(WORKFLOWS / 'promote-prod.yml')['jobs']
+
+    def context(self, **results):
+        needs = {name: need() for name in needs_list(self.jobs['promote'])}
+        needs['version'] = need(published='true')
+        for name, result in results.items():
+            needs[name] = need(result)
+        return needs
 
     def test_each_gate_runs_for_its_stacks_only(self):
         for gate, (stacks, _) in GATES.items():
-            with self.subTest(gate=gate):
-                self.assertEqual(stacks, stacks_of(job_block(self.text, gate)))
-                self.assertTrue(stacks <= STACKS)
+            for stack in sorted(STACKS):
+                with self.subTest(gate=gate, stack=stack):
+                    runs = evaluate(self.jobs[gate]['if'], {'stack': stack, 'dry_run': False}, {})
+                    self.assertEqual(runs, stack in stacks)
 
     def test_each_gate_calls_its_action_on_the_promoted_commit(self):
         for gate, (_, action) in GATES.items():
             with self.subTest(gate=gate):
-                job = job_block(self.text, gate)
-                self.assertIn(f'uses: ./cicd-repo/{action}', job)
-                self.assertIn('ref: ${{ needs.resolve.outputs.sha }}', job)
-                self.assertEqual({'resolve', 'version'}, set(needs_of(job)))
+                job = self.jobs[gate]
+                self.assertIsNotNone(step_using(job, action), 'one step must use ./cicd-repo/' + action)
+                repo_checkouts = [s for s in job['steps'] if str(s.get('uses', '')).startswith('actions/checkout@')
+                                  and 'repository' not in (s.get('with') or {})]
+                self.assertEqual(len(repo_checkouts), 1)
+                self.assertEqual(repo_checkouts[0]['with']['ref'], PROMOTED_SHA)
+                self.assertEqual(set(needs_list(job)), {'resolve', 'version'})
 
-    def test_the_image_gates_test_the_staging_digest(self):
-        # By digest, never the mobile staging-<sha> tag: the gate tests what prod will get.
+    def test_the_gates_test_the_staging_digest(self):
+        # By digest, never the moving staging-<sha> tag: the gate tests what prod will get.
         for gate in ('gdpr_marker', 'gdpr_simulation'):
             with self.subTest(gate=gate):
-                self.assertIn('image_ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}',
-                              job_block(self.text, gate))
-        inventory = job_block(self.text, 'gdpr_inventory')
-        self.assertIn('digest: ${{ needs.resolve.outputs.digest }}', inventory)
-        self.assertIn('migrations_digest: ${{ needs.resolve.outputs.extra_digest }}', inventory)
+                step = step_using(self.jobs[gate], GATES[gate][1])
+                self.assertEqual(step['with']['image_ref'], STAGING_IMAGE)
+        step = step_using(self.jobs['gdpr_inventory'], GATES['gdpr_inventory'][1])
+        self.assertEqual(step['with']['digest'], '${{ needs.resolve.outputs.digest }}')
+        self.assertEqual(step['with']['migrations_digest'], '${{ needs.resolve.outputs.extra_digest }}')
 
     def test_a_failed_gate_skips_the_release(self):
-        promote = job_block(self.text, 'promote')
+        condition = self.jobs['promote']['if']
+        inputs = {'stack': 'apis', 'dry_run': False}
+        self.assertTrue(evaluate(condition, inputs, self.context()))
         for gate in GATES:
-            with self.subTest(gate=gate):
-                self.assertIn(gate, needs_of(promote))
-                # `skipped` is the gate of another stack; `failure` / `cancelled` block.
-                self.assertIn(f"(needs.{gate}.result == 'success' || needs.{gate}.result == 'skipped')", promote)
+            self.assertIn(gate, needs_list(self.jobs['promote']))
+            for result, allowed in (('success', True), ('skipped', True), ('failure', False), ('cancelled', False)):
+                with self.subTest(gate=gate, result=result):
+                    self.assertEqual(evaluate(condition, inputs, self.context(**{gate: result})), allowed)
 
     def test_a_failed_gate_is_notified(self):
-        notify = job_block(self.text, 'notify-cicd-failure')
+        notify = self.jobs['notify-cicd-failure']
         for gate in GATES:
             with self.subTest(gate=gate):
-                self.assertIn(gate, needs_of(notify))
+                self.assertIn(gate, needs_list(notify))
+        # The notification runs when a needed job failed, and only then.
+        self.assertTrue(evaluate(notify['if'], {'stack': 'apis'}, {}, failure=True))
+        self.assertFalse(evaluate(notify['if'], {'stack': 'apis'}, {}, failure=False))
 
 
 class NoGdprGateOutsideThePromotion(unittest.TestCase):
     def test_promote_staging_and_the_stack_workflows_run_no_promotion_gate(self):
         # The dev pipelines keep their pre-dev GDPR checks (OpenAPI contract, Semgrep rules); the
         # gates on the staging image belong to promote-prod only.
-        for path in sorted(WORKFLOWS.glob('*.yml')):
+        paths = sorted(list(WORKFLOWS.glob('*.yml')) + list(WORKFLOWS.glob('*.yaml')))
+        self.assertTrue(paths)
+        for path in paths:
             if path.name == 'promote-prod.yml':
                 continue
-            text = path.read_text(encoding='utf-8')
+            uses = {str(step.get('uses', '')) for job in (load(path).get('jobs') or {}).values()
+                    for step in job.get('steps') or []}
             for _, action in GATES.values():
                 with self.subTest(workflow=path.name, action=action):
-                    self.assertNotIn(action, text)
+                    self.assertNotIn('./cicd-repo/' + action, uses)
 
 
 if __name__ == '__main__':
