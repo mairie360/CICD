@@ -59,9 +59,28 @@ dependencies → (lint, security_audit, security_sast) → build ∥ test   (uni
 
 promote-staging.yml   resolve (dev-<sha> exists, main run green) → integration (APIs, BFFs) ∥ ZAP ∥ k6 on <image>:dev-<sha>
                       → promote (environment: Staging) verify + RE-TAG digest of dev-<sha> → staging-<sha> / staging
-promote-prod.yml      resolve (staging-<sha> exists) → version (semantic-release dry run on the commit) → [release_folder, database] ∥ [e2e_tests, fronts: Playwright on <image>@<staging digest>]
+promote-prod.yml      resolve (staging-<sha> exists) → version (semantic-release dry run on the commit)
+                      → gates, all on the promoted commit / <image>@<staging digest>:
+                          database: release_folder ∥ gdpr_inventory
+                          apis, bffs: gdpr_marker ∥ gdpr_simulation
+                          fronts: gdpr_simulation ∥ rgaa ∥ e2e_tests
                       → promote (environment: Prod) tag + GitHub release on the commit → RE-TAG digest of staging-<sha> → <semver> / latest
 ```
+
+Which checks run where (MAIR-604):
+
+| When | Database | APIs / BFFs | Fronts |
+| --- | --- | --- | --- |
+| every event (stack workflow) | Semgrep GDPR rules | Semgrep GDPR rules, `gdpr_contract` (OpenAPI) | Semgrep GDPR rules |
+| promote-staging | — | integration (BFFs), ZAP, k6 | ZAP, k6 |
+| promote-prod | `release_folder`, `gdpr_inventory` | `gdpr_marker`, `gdpr_simulation` | `gdpr_simulation`, `rgaa`, `e2e_tests` |
+
+A failed prod gate skips `promote` (each one is in its `needs` with `success || skipped`, `skipped`
+being a gate of another stack) and is notified. The GDPR gates of a stack without their file
+(`gdpr/inventory.yaml`, `gdpr-marker.yaml`, `gdpr-simulation.yaml`) are skipped with a warning.
+`actions/promote/gdpr-gates/tests` (in `lint.yml`) keeps this wiring, and keeps the promotion gates
+out of every other workflow; each gate's detection (a leaking service, an inventory gap, a credentials
+field in a contract) is tested in `tests/gdpr`.
 
 Key invariants:
 
@@ -290,7 +309,8 @@ actions/
                          frontend-dev-exception (check_policy.py of frontend-dev-exception.yml)
   promote/               resolve (commit + checks), nightly-check (MAIR-1008), verify-pins (prod: internal pins are published and reproducible, MAIR-1005), next-version (dry run on a commit behind main), create-release; the prod gates of MAIR-492 go here:
                          gdpr-inventory (MAIR-285, database), gdpr-marker (MAIR-290, APIs / BFFs),
-                         gdpr-simulation (MAIR-497, APIs / BFFs), rgaa-front (MAIR-317, fronts)
+                         gdpr-simulation (MAIR-497, APIs / BFFs / fronts), rgaa-front (MAIR-317, fronts);
+                         gdpr-gates/tests: wiring test of the GDPR gates (MAIR-604)
   notify/cicd-failure    n8n failure notification
 ```
 
