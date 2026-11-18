@@ -563,6 +563,29 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
+      # [NOUVEAU] MAIR-321: the RGAA result of the fronts goes into the release body (rate, failing
+      # criteria with their pages and elements, changes since the previous release) and its
+      # report.json is attached to the release (read by Deploiment's platform-wide RGAA gate).
+      # Never blocks the release.
+      - name: Download the RGAA report
+        if: inputs.stack == 'fronts'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: rgaa-report
+          path: ${{ runner.temp }}/rgaa-report
+
+      - name: Accessibility section of the release
+        if: inputs.stack == 'fronts'
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: ./cicd-repo/actions/release/accessibility-section
+        with:
+          notes_file: ${{ steps.journal.outcome == 'success' && format('{0}/release-notes/release-notes-journal.md', runner.temp) || format('{0}/release-notes/release-notes.md', runner.temp) }}
+          report_file: ${{ runner.temp }}/rgaa-report/report.json
+          previous_tag: ${{ needs.version.outputs.last_tag }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
       # After the retag (idempotent): if anything fails before this step, a new run computes the
       # same version again. Neither the tag nor the release starts a workflow, and no commit is
       # pushed (same `v<version>` release @semantic-release/github made).
@@ -575,6 +598,21 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           app_id: ${{ secrets.RELEASE_APP_ID }}
           app_private_key: ${{ secrets.RELEASE_APP_PK }}
+
+      - name: Attach the RGAA report to the release
+        if: inputs.stack == 'fronts'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # hashFiles() only sees the workspace: the report is in the runner's temp folder.
+          if [ ! -f "$RUNNER_TEMP/rgaa-report/report.json" ]; then
+            echo "::warning title=RGAA::no RGAA report to attach to v$VERSION"
+            exit 0
+          fi
+          cp "$RUNNER_TEMP/rgaa-report/report.json" "$RUNNER_TEMP/rgaa-report.json"
+          gh release upload "v$VERSION" "$RUNNER_TEMP/rgaa-report.json" --repo "$GITHUB_REPOSITORY" --clobber
 
       # [CHANGEMENT] MAIR-999: the staging package of the commit is republished under the semver
       # (same files, new `version`) instead of being generated again (`cargo open_api` compiled the

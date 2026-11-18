@@ -1,0 +1,47 @@
+name: "Accessibility section of the release"
+description: >
+  MAIR-321: appends the "Accessibilité (RGAA)" section to the notes of a front's prod release, from
+  the `report.json` of the `rgaa` gate of the same run, compared with the `rgaa-report.json` asset of
+  the previous prod release. Rewrites `notes_file` in place. Never fails the release: the caller sets
+  `continue-on-error`, and the script itself writes a warning line when the report is missing.
+
+inputs:
+  notes_file:
+    description: "Release notes to complete (rewritten in place)"
+    required: true
+  report_file:
+    description: "report.json of the rgaa gate (rgaa-report artifact of the run)"
+    required: true
+  previous_tag:
+    description: "Tag of the previous prod release (empty for the first one)"
+    required: false
+    default: ""
+  github_token:
+    description: "Token that can read the releases of the repository"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Fetch the RGAA report of the previous release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PREVIOUS_TAG: ${{ inputs.previous_tag }}
+      run: |
+        rm -f "$RUNNER_TEMP/rgaa-previous.json"
+        if [ -n "$PREVIOUS_TAG" ] && ! gh release download "$PREVIOUS_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern rgaa-report.json --output "$RUNNER_TEMP/rgaa-previous.json" 2>/dev/null; then
+          echo "No rgaa-report.json on $PREVIOUS_TAG: first measure"
+          rm -f "$RUNNER_TEMP/rgaa-previous.json"
+        fi
+
+    - name: Write the accessibility section
+      shell: bash
+      env:
+        NOTES: ${{ inputs.notes_file }}
+        REPORT: ${{ inputs.report_file }}
+        PREVIOUS_TAG: ${{ inputs.previous_tag }}
+      run: |
+        python3 -I "$GITHUB_ACTION_PATH/accessibility_section.py" --notes "$NOTES" --report "$REPORT" \
+          --previous "$RUNNER_TEMP/rgaa-previous.json" --previous-tag "$PREVIOUS_TAG"
