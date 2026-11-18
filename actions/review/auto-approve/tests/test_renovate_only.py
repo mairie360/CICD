@@ -133,6 +133,11 @@ class WorkflowWiringTest(unittest.TestCase):
         check = next(step for step in steps if step.startswith("Check that"))
         self.assertIn('--event-head "$EVENT_HEAD" --current-head "$current"', check)
         self.assertLess(check.index("current=$("), check.index("commits=$("))
+        # A head already known to have moved ends the step as stale before the commits are fetched.
+        stale_exit = check.index('if [ "$current" != "$EVENT_HEAD" ]; then')
+        self.assertLess(check.index("current=$("), stale_exit)
+        self.assertLess(stale_exit, check.index("commits=$("))
+        self.assertIn('echo "renovate_only=stale" >> "$GITHUB_OUTPUT"\n            exit 0', check)
 
     def test_mair_685_decision_comes_from_the_tested_script(self):
         self.assertIn("renovate_only.py", self.text)

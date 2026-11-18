@@ -67,6 +67,13 @@ jobs:
           # The head is read before the commits: a push in between leaves a last commit that is not
           # the event head, which the script refuses.
           current=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
+          if [ "$current" != "$EVENT_HEAD" ]; then
+            # Known stale before any other call: a later failure must not take back the newer
+            # revision's approval.
+            echo "Stale event: head $EVENT_HEAD, pull request now at $current."
+            echo "renovate_only=stale" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           commits=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[] | tojson')
           if printf '%s\n' "$commits" | python3 cicd-repo/actions/review/auto-approve/renovate_only.py \
             --sender "$SENDER" --event-head "$EVENT_HEAD" --current-head "$current"; then
