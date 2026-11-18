@@ -774,7 +774,10 @@ Every repository approves its Renovate pull requests through this reusable workf
 of its own. It approves only while Renovate alone wrote and pushed the branch: each commit authored
 by `renovate[bot]`, committed by `web-flow` (Renovate commits through the API) or `renovate[bot]`,
 with a signature GitHub verified, and the push made by `renovate[bot]`. When anyone else pushes, the
-`synchronize` run dismisses the earlier approval and the pull request waits for a human review.
+`synchronize` run dismisses the earlier approval and the pull request waits for a human review. The check
+is bound to the head of the event: an event whose head is no longer the pull request's approves
+nothing, and the approval names the checked revision (`commit_id`), so a push landing after the
+check is never approved with it.
 The decision is `actions/review/auto-approve/renovate_only.py` (tests in `lint.yml`), read from this
 repository at `cicd_version`: the pull request's code is never checked out.
 

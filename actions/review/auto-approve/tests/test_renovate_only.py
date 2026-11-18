@@ -23,10 +23,12 @@ def commit(sha="a" * 40, author="renovate[bot]", committer="web-flow", verified=
     }
 
 
-def run(sender, commits):
+def run(sender, commits, event_head=None, current_head=None):
     lines = "".join(json.dumps(c) + "\n" for c in commits)
+    head = commits[-1]["sha"] if commits else "f" * 40
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--sender", sender],
+        [sys.executable, str(SCRIPT), "--sender", sender,
+         "--event-head", event_head or head, "--current-head", current_head or head],
         input=lines, capture_output=True, text=True, check=False,
     )
 
@@ -53,12 +55,29 @@ class RenovateOnlyTest(unittest.TestCase):
         self.assertFalse(renovate_only.decide("renovate[bot]", [commit(verified=False)])[0])
         self.assertFalse(renovate_only.decide("renovate[bot]", [commit(author=None)])[0])
 
+    def test_mair_685_a_stale_event_is_not_approved(self):
+        # A later push moved the head: that push has its own run, this one approves nothing.
+        a, b = commit("a" * 40), commit("b" * 40)
+        approvable, reasons = renovate_only.decide("renovate[bot]", [a], "a" * 40, "b" * 40)
+        self.assertFalse(approvable)
+        self.assertEqual(reasons, ["stale event: head aaaaaaa, pull request now at bbbbbbb"])
+        self.assertEqual(run("renovate[bot]", [a], current_head="b" * 40).returncode, 3)
+        self.assertEqual(run("someone", [a], current_head="b" * 40).returncode, 3)
+        # Head reset to an earlier Renovate commit after a later event: still refused.
+        self.assertFalse(renovate_only.decide("renovate[bot]", [a], "b" * 40, "a" * 40)[0])
+        # The commits were read after another push: their last one is not the event head.
+        self.assertFalse(renovate_only.decide("renovate[bot]", [a, b], "a" * 40, "a" * 40)[0])
+
+    def test_mair_685_the_event_head_read_with_its_commits_is_approved(self):
+        a, b = commit("a" * 40), commit("b" * 40)
+        self.assertEqual(renovate_only.decide("renovate[bot]", [a, b], "b" * 40, "b" * 40), (True, []))
+
     def test_mair_685_no_commit_is_not_approved(self):
         self.assertEqual(renovate_only.decide("renovate[bot]", []), (False, ["no commit"]))
 
     def test_mair_685_unreadable_input_exits_2(self):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--sender", "renovate[bot]"],
+            [sys.executable, str(SCRIPT), "--sender", "renovate[bot]", "--event-head", "a", "--current-head", "a"],
             input="not json\n", capture_output=True, text=True, check=False,
         )
         self.assertEqual(result.returncode, 2)
@@ -90,15 +109,35 @@ class WorkflowWiringTest(unittest.TestCase):
     def test_mair_685_never_checks_out_the_pull_request(self):
         for block in re.findall(r"actions/checkout@[^\n]*\n((?:\s{8,}.*\n)*)", self.text):
             self.assertIn("repository: mairie360/CICD", block)
-        self.assertNotIn("head.sha", self.text)
-        self.assertNotIn("head.ref", self.text)
+        refs = re.findall(r"(?m)^\s+ref: (.*)$", self.text)
+        self.assertEqual(refs, ["${{ inputs.cicd_version || github.event.pull_request.base.sha }}"])
 
     def test_mair_685_approval_taken_back_whenever_the_check_did_not_say_true(self):
         steps = re.split(r"(?m)^      - name: ", self.text)
         approve = next(step for step in steps if step.startswith("Approve"))
         take_back = next(step for step in steps if step.startswith("Take back"))
         self.assertIn("if: steps.check.outputs.renovate_only == 'true'", approve)
-        self.assertIn("if: always() && steps.check.outputs.renovate_only != 'true'", take_back)
+        self.assertIn(
+            "if: always() && steps.check.outputs.renovate_only != 'true' && steps.check.outputs.renovate_only != 'stale'",
+            take_back,
+        )
+        check = next(step for step in steps if step.startswith("Check that"))
+        self.assertIn('3) echo "renovate_only=stale"', check)
+
+    def test_mair_685_approval_names_the_checked_revision(self):
+        steps = re.split(r"(?m)^      - name: ", self.text)
+        approve = next(step for step in steps if step.startswith("Approve"))
+        self.assertIn('-f commit_id="$EVENT_HEAD"', approve)
+        self.assertIn("EVENT_HEAD: ${{ github.event.pull_request.head.sha }}", approve)
+        self.assertNotIn("hmarr/", self.text)
+        check = next(step for step in steps if step.startswith("Check that"))
+        self.assertIn('--event-head "$EVENT_HEAD" --current-head "$current"', check)
+        self.assertLess(check.index("current=$("), check.index("commits=$("))
+        # A head already known to have moved ends the step as stale before the commits are fetched.
+        stale_exit = check.index('if [ "$current" != "$EVENT_HEAD" ]; then')
+        self.assertLess(check.index("current=$("), stale_exit)
+        self.assertLess(stale_exit, check.index("commits=$("))
+        self.assertIn('echo "renovate_only=stale" >> "$GITHUB_OUTPUT"\n            exit 0', check)
 
     def test_mair_685_decision_comes_from_the_tested_script(self):
         self.assertIn("renovate_only.py", self.text)
