@@ -1,16 +1,103 @@
 name: Auto Approve Renovate
-on: pull_request_target
+# Approves a Renovate pull request only while Renovate alone wrote and pushed its branch, and takes
+# the approval back as soon as anyone else pushes to it, so no change reaches main unreviewed.
+# Serves this repository's pull requests and, through `workflow_call`, every mairie360 repository:
+#
+#   on:
+#     pull_request_target:
+#       types: [opened, reopened, synchronize]
+#   permissions: {}
+#   jobs:
+#     auto-approve:
+#       permissions:
+#         pull-requests: write
+#       uses: mairie360/CICD/.github/workflows/auto-approve.yml@vX.Y.Z
+#       with:
+#         cicd_version: vX.Y.Z   # same release as the `uses:` ref
+#
+# The caller's event is the one read here. `pull_request_target` runs with a token of the base
+# branch, so the pull request's code is never checked out: only the decision script of this
+# repository, at `cicd_version` (actions/review/auto-approve/renovate_only.py, tested in lint.yml).
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+  workflow_call:
+    inputs:
+      cicd_version:
+        description: Ref of mairie360/CICD holding the decision script (same release as the `uses:` ref)
+        type: string
+        required: true
 
 permissions: {}
 
 jobs:
   auto-approve:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: write
-    # Trust the PR author (immutable for the PR's lifetime), not the actor that triggered the event.
-    if: github.event.pull_request.user.login == 'renovate[bot]'
+    # The author of a pull request never changes: other pull requests are never touched.
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'renovate[bot]'
+    # One run at a time per pull request, in order, so an approval never lands after a later dismissal.
+    concurrency:
+      group: auto-approve-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     steps:
-      - uses: hmarr/auto-approve-action@v4
+      - name: Check out the decision script
+        # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: mairie360/CICD
+          # This repository's own runs read the base branch: never the pull request's version.
+          ref: ${{ inputs.cicd_version || github.event.pull_request.base.sha }}
+          path: cicd-repo
+          sparse-checkout: actions/review/auto-approve
+          persist-credentials: false
+
+      - name: Check that Renovate alone wrote and pushed the branch
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+          commits=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[] | tojson')
+          if printf '%s\n' "$commits" | python3 cicd-repo/actions/review/auto-approve/renovate_only.py --sender "$SENDER"; then
+            echo "renovate_only=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            [ "$status" -eq 1 ] || exit "$status"
+            echo "renovate_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Approve
+        if: steps.check.outputs.renovate_only == 'true'
+        # v4.0.0
+        uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Take back an earlier approval
+        # Fail closed: a check that failed or gave no answer (API error, unreadable commits) takes the
+        # approval back too, so an unknown branch never stays approved.
+        if: always() && steps.check.outputs.renovate_only != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          reviews=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and .state == "APPROVED") | .id')
+          for review in $reviews; do
+            if gh api -X PUT "repos/$REPO/pulls/$PR/reviews/$review/dismissals" \
+              -f message="A commit or a push that is not Renovate's reached this branch: a human review is required." \
+              -f event=DISMISS > /dev/null; then
+              echo "Dismissed approval $review."
+            else
+              echo "::error::Could not dismiss approval $review: dismiss it by hand before merging."
+              exit 1
+            fi
+          done
