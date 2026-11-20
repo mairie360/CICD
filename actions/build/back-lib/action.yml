@@ -7,12 +7,12 @@ runs:
   using: "composite"
   steps:
     - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
     # MAIR-1002: only `main` writes the cache. A pull request cache (refs/pull/<n>/merge) cannot be read by
     # any other run but counts against the 10 GB quota, so each pull request evicted the `main` caches.
     - name: Rust Cache
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -21,7 +21,7 @@ runs:
       run: cargo build --release
 
     - name: Upload Build Artifact
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: build-artifact
         path: target/release/

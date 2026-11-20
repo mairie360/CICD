@@ -4,7 +4,7 @@ description: "`npm run lint` of the npm library shared by the BFFs (`lint` job o
 runs:
   using: "composite"
   steps:
-    - uses: actions/setup-node@v7
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version: 24
         cache: npm

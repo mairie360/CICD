@@ -34,7 +34,7 @@ runs:
 
     - name: Upload Coverage to Codecov
       if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
-      uses: codecov/codecov-action@v7
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
       with:
         token: ${{ inputs.codecov_token }}
         files: coverage/lcov.info
