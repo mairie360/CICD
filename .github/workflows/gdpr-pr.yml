@@ -13,7 +13,12 @@ permissions:
 
 jobs:
   gdpr:
-    uses: mairie360/CICD/.github/workflows/gdpr-pr-cicd.yml@v4.12.0
+    # A release that skips the bot pull requests (Renovate's carry no "Personal data" section):
+    # Renovate moves `uses:` and `cicd_version` together.
+    uses: mairie360/CICD/.github/workflows/gdpr-pr-cicd.yml@v5.14.2
     with:
-      cicd_version: v4.12.0
-    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
+      cicd_version: v5.14.2
+    # Only the secrets of the AI review: a pull request job gets nothing else.
+    secrets:
+      ANTHROPIC_REVIEW_API_KEY: ${{ secrets.ANTHROPIC_REVIEW_API_KEY }}
+      ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID }}

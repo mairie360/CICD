@@ -59,6 +59,9 @@ jobs:
       - name: Test the Renovate auto-approval decision
         run: python3 -m unittest discover -s actions/review/auto-approve/tests -v
 
+      - name: Test the pins of this repository's workflows
+        run: python3 -m unittest discover -s tests/pins -v
+
       - name: Test the promotion commit resolution
         run: python3 -m unittest discover -s actions/promote/resolve/tests -v
 
