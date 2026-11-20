@@ -42,7 +42,7 @@ runs:
     # install vendored backports (`vendor/`), part of the key.
     - name: Restore node_modules
       id: restore
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: node_modules
         key: node-modules-${{ runner.os }}-node${{ inputs.node_version }}-${{ hashFiles('package-lock.json', 'vendor/**') }}
@@ -63,7 +63,7 @@ runs:
 
     - name: Save node_modules
       if: inputs.save == 'true' && steps.restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: node_modules
         key: ${{ steps.restore.outputs.cache-primary-key }}
