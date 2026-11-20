@@ -21,6 +21,29 @@ class UniqueKeyLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
+def uses_references(text):
+    """Every `uses:` reference of a workflow or composite action, with the comment that follows it."""
+    return re.findall(r"^\s*-?\s*uses:\s*(\S+)[ \t]*(#[^\n]*)?$", text, flags=re.MULTILINE)
+
+
+def unpinned_third_party(text):
+    """Third-party references that are not a commit SHA followed by a `# <ref>` comment on the same line.
+
+    The comment is the tag Renovate keeps up to date (`# v7`), or the branch or tool it follows
+    (`# stable`, `# cargo-llvm-cov`); on another line Renovate does not read it.
+
+    Local actions (`./`) and our own `mairie360/` references are not third-party: the latter stay on
+    their release tags and move with `cicd_version`.
+    """
+    problems = []
+    for reference, comment in uses_references(text):
+        if reference.startswith("./") or reference.startswith("mairie360/") or reference.startswith("docker://"):
+            continue
+        if not re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", reference) or not re.fullmatch(r"#\s*[\w.+-]+", comment or ""):
+            problems.append(reference)
+    return problems
+
+
 def version(tag):
     return tuple(int(part) for part in tag.lstrip("v").split("."))
 
@@ -49,6 +72,38 @@ class GdprCallerTest(unittest.TestCase):
     def test_mair_686_a_duplicated_key_is_refused(self):
         with self.assertRaises(yaml.constructor.ConstructorError):
             yaml.load("a: 1\na: 2\n", Loader=UniqueKeyLoader)
+
+class ThirdPartyActionsPinnedTest(unittest.TestCase):
+    """MAIR-686: a moved tag must not change what runs with the CI secrets."""
+
+    def test_mair_686_every_third_party_action_is_pinned_by_sha_with_its_tag_in_a_comment(self):
+        files = sorted(list(WORKFLOWS.glob("*.y*ml")) + list((ROOT / "actions").rglob("action.y*ml")) + list((ROOT / ".github" / "actions").rglob("action.y*ml")))
+        self.assertGreater(len(files), 50)
+        references = 0
+        problems = {}
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            references += len(uses_references(text))
+            found = unpinned_third_party(text)
+            if found:
+                problems[str(path.relative_to(ROOT))] = found
+        self.assertGreater(references, 100)
+        self.assertEqual(problems, {})
+
+    def test_mair_686_a_moving_tag_a_missing_comment_and_an_abbreviated_sha_are_refused(self):
+        sha = "3d3c42e" + "0" * 33
+        self.assertEqual(unpinned_third_party(f"      - uses: actions/checkout@{sha} # v7\n"), [])
+        self.assertEqual(unpinned_third_party("      - uses: actions/checkout@v7\n"), ["actions/checkout@v7"])
+        self.assertEqual(unpinned_third_party("      - uses: actions/checkout@main # v7\n"), ["actions/checkout@main"])
+        self.assertEqual(unpinned_third_party(f"      - uses: actions/checkout@{sha}\n"), [f"actions/checkout@{sha}"])
+        self.assertEqual(unpinned_third_party(f"      # v7\n      - uses: actions/checkout@{sha}\n"), [f"actions/checkout@{sha}"])
+        self.assertEqual(unpinned_third_party(f"      - uses: actions/checkout@{sha[:7]} # v7\n"), [f"actions/checkout@{sha[:7]}"])
+        self.assertEqual(unpinned_third_party(f"      - uses: actions/cache/save@{sha} # v5.0.1\n"), [])
+
+    def test_mair_686_local_and_own_references_are_not_third_party(self):
+        text = "uses: ./actions/promote/resolve\nuses: mairie360/CICD/.github/workflows/x.yml@v5.14.2\nuses: docker://alpine:3\n"
+        self.assertEqual(unpinned_third_party(text), [])
+
 
 if __name__ == "__main__":
     unittest.main()

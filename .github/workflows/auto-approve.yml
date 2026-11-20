@@ -44,8 +44,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Check out the decision script
-        # v7
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mairie360/CICD
           # This repository's own runs read the base branch: never the pull request's version.
