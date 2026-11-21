@@ -24,7 +24,7 @@ runs:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@5b56535d0239d0a46e7d74f64d83712fad4564d3 # cargo-llvm-cov
+      uses: taiki-e/install-action@41e135bca37b18b5a9cc134855b5b3bccbedbf26 # cargo-llvm-cov
 
     # [CHANGEMENT] MAIR-467: the tests run once. `cargo llvm-cov` runs them and writes
     # `codecov.json` in the same pass (it used to be `cargo test --release`, then a second
