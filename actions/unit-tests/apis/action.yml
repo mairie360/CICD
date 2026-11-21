@@ -26,7 +26,7 @@ runs:
     # [CHANGEMENT] Installation via taiki-e/install-action (plus rapide que `cargo install`),
     # aligné sur back-lib-cicd.yml.
     - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@5b56535d0239d0a46e7d74f64d83712fad4564d3 # cargo-llvm-cov
+      uses: taiki-e/install-action@a138c079db095d22c78af31fc3e0890136adf687 # cargo-llvm-cov
 
     # [CHANGEMENT] Passe par l'alias cargo `cov` défini par le repo consommateur
     # (aligné sur la convention `cargo lint_check`). L'alias doit exécuter les tests,
