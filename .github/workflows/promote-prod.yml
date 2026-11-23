@@ -217,9 +217,13 @@ jobs:
 
       - name: Keep the release notes
         if: steps.next.outputs.new_release_published == 'true'
-        env:
-          NOTES: ${{ steps.next.outputs.new_release_notes }}
-        run: printf '%s\n' "$NOTES" > "$RUNNER_TEMP/release-notes.md"
+        # Not through `env`: one environment string is capped at 128 KiB (MAX_ARG_STRLEN), which the notes of a
+        # long major release exceed ("Argument list too long", Messages_Web_Service 1.0.0). The notes reach the
+        # script file as a JSON string: one line, no raw newline, so it can never close the quoted heredoc.
+        run: |
+          jq -r . > "$RUNNER_TEMP/release-notes.md" <<'NOTES_JSON'
+          ${{ toJSON(steps.next.outputs.new_release_notes) }}
+          NOTES_JSON
 
       - name: Upload the release notes
         if: steps.next.outputs.new_release_published == 'true'
