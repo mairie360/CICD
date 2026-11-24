@@ -3,9 +3,10 @@
 version: 1
 target: http://projects-front:5000
 
-# Same JWT_SECRET / JWT_TIMEOUT as the services of the test stack.
+# Same JWT_TIMEOUT as the services of the test stack. The runner service of the stack gets
+# JWT_PRIVATE_KEY (the run's Ed25519 key, the one Core API signs with): the engine signs its
+# sessions with it (MAIR-680). `jwt_secret` is only for a stack that still accepts HS256.
 session:
-  jwt_secret: b"secret"
   jwt_timeout: 3600
 
 # Ids from the seed (init-test.sql).

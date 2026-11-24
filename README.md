@@ -1119,7 +1119,7 @@ test engine that plays the scope (MAIR-317 to MAIR-319); no front-specific file 
 | `version` | `1` |
 | `target` | URL of the front in the test stack (`http://settings-front:5000`), or of the Storybook for `lib-components` |
 | `criteria` | applicable criteria, transverse ones (12.1 to 12.5) included. A criterion that is not listed is not applicable: give the reason in a YAML comment |
-| `session` | `jwt_secret` and `jwt_timeout` (default 3600): the `JWT_SECRET` / `JWT_TIMEOUT` of the test stack. The engine signs an HS256 JWT `{sub, role, exp}` per user, like the static token of the ZAP stacks, and sets it as `cookie` (default `accessToken`) on the target origin |
+| `session` | `jwt_timeout` (default 3600, the `JWT_TIMEOUT` of the test stack) and `cookie` (default `accessToken`). The engine signs one JWT per user and sets it as that cookie on the target origin. With `JWT_PRIVATE_KEY` in the runner's environment (the run's Ed25519 key, the one the stack gives Core API, MAIR-680) it is an EdDSA token signed like Core (`kid` thumbprint, `iss`, `aud`); without it, an HS256 JWT `{sub, role, exp}` signed with `jwt_secret`, for a stack that still accepts HS256 |
 | `users` | seed users by name (`admin`, `agent`…), one per role that changes what the page shows: `id` (must exist in the seed, the APIs check it) and `role` |
 | `states` | renderings to capture: `id`, then either `route` (+ optional `as: <user>`) for a front, or `story` (Storybook id) for `lib-components`, optional `viewport: { width, height }` (default 1280 × 800, e.g. a mobile layout; the 320 px reflow check comes back to it) and optional `steps` |
 
@@ -1131,7 +1131,7 @@ of `role` (+ `name`), `label`, `text`, `test_id` or `selector`, in that order of
 version: 1
 target: http://projects-front:5000
 session:
-  jwt_secret: b"secret"            # JWT_SECRET of the test stack, test-only
+  jwt_timeout: 3600                # the runner service gets JWT_PRIVATE_KEY, the run's Ed25519 key
 users:
   agent: { id: 2, role: user }      # id from init-test.sql
 criteria:
