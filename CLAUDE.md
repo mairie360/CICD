@@ -214,7 +214,8 @@ only holds the engine. `marker.mjs` (`generateMarker`: unique values that pass t
 validations; `needles`: raw, URL-encoded, JSON-escaped, base64 at the three alignments, national
 phone number, sensitive captures), `journey.mjs` (`loadJourney`: format check with readable
 errors, unknown placeholders included; `play`: steps in order, stops at the first unexpected
-status, captures from `body.` / `header.` / `cookie.`), `run.mjs` (runner, inside the stack
+status, captures from `body.` / `header.` / `cookie.`; a step may name another base URL of the stack with `target: <name>` from the
+top-level `targets` map), `run.mjs` (runner, inside the stack
 through `run.sh`, like `tests/a11y`: copies `/engine` out of the read-only mount before `npm ci`;
 writes `marker.json`, never prints a value), `scan.mjs` (no dependency, runs on a plain
 `node:24` image after `docker compose logs --no-color > containers.log`: attributes each line to

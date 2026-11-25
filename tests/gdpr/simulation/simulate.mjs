@@ -76,7 +76,7 @@ export async function main(argv, { env = process.env, fetchImpl = fetch, log = c
     return 2;
   }
   try {
-    assertTestStack([simulation.journey.target, ...(simulation.browser ? [simulation.browser.target] : [])], env);
+    assertTestStack([simulation.journey.target, ...Object.values(simulation.journey.targets), ...(simulation.browser ? [simulation.browser.target] : [])], env);
   } catch (error) {
     console.error(error.message);
     return 3;

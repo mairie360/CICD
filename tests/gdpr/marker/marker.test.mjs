@@ -104,6 +104,37 @@ test("a journey file is validated with readable errors", () => {
   assert.deepEqual(loadJourney("version: 2").errors, ["the file must be a mapping with `version: 1`"]);
 });
 
+test("a step can call another service of the stack through a named target", async () => {
+  const text = `version: 1
+target: http://front:5000
+targets:
+  bff: http://bff-user:4000
+steps:
+  - name: create the account through the BFF
+    target: bff
+    request: {method: POST, path: /admin/users, json: {email: "{{marker.email}}"}}
+    expect: [201]
+  - name: sign in through the front
+    request: {method: POST, path: /api/auth/login, json: {email: "{{marker.email}}"}}
+`;
+  const { errors, journey } = loadJourney(text);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(journey.targets, { bff: "http://bff-user:4000" });
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return new Response(url.endsWith("/admin/users") ? "{}" : "", { status: url.endsWith("/admin/users") ? 201 : 200 });
+  };
+  const { results } = await play(journey, { marker: generateMarker(), fetchImpl });
+  assert.deepEqual(urls, ["http://bff-user:4000/admin/users", "http://front:5000/api/auth/login"]);
+  assert.ok(results.every((r) => r.ok), JSON.stringify(results));
+
+  assert.deepEqual(loadJourney(text.replace("    target: bff\n", "    target: core\n")).errors, ["step 1 (create the account through the BFF): target must name an entry of `targets`"]);
+  assert.deepEqual(loadJourney(text.replace("bff: http://bff-user:4000", "bff: http://bff-user:4000/api")).errors, [
+    "`targets` must map lower-case names to base URLs without path (e.g. bff: http://bff-user:4000)",
+  ]);
+});
+
 test("placeholders are rendered in nested values", () => {
   assert.deepEqual(render({ a: ["{{marker.email}}", 3], b: "x{{id}}y" }, { marker: { email: "e@x.fr" }, id: 7 }), { a: ["e@x.fr", 3], b: "x7y" });
   assert.throws(() => render("{{missing}}", {}), /\{\{missing\}\} has no value/);

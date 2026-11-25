@@ -576,6 +576,11 @@ is also searched for the JWT alone). Put the values in query strings and in bodi
 type too: a request logger that prints the URL, or an error that quotes the refused value, leaks
 them. The journey stops at the first step that does not
 answer as expected (the logs then prove nothing).
+A step may call another service of the stack than `target`: declare it under `targets` (lower-case
+name → base URL) and set `target: <name>` on the step, e.g. a front whose same-origin proxy does not
+relay the administration routes creates its personas through the BFF directly
+(`targets: {bff: http://bff-user:4000}`, `target: bff` and a Bearer header on those steps). The
+`erase` steps of `gdpr-simulation.yaml` accept it too, and the simulation guard checks every target.
 
 ```yaml
 version: 1
