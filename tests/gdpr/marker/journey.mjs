@@ -4,8 +4,9 @@ import { parse } from "yaml";
 
 export const MARKER_FIELDS = ["email", "first_name", "last_name", "phone", "password"];
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
-const TOP_KEYS = new Set(["version", "target", "wait", "env", "ignore", "steps"]);
-const STEP_KEYS = new Set(["name", "request", "expect", "capture"]);
+const TOP_KEYS = new Set(["version", "target", "targets", "wait", "env", "ignore", "steps"]);
+const STEP_KEYS = new Set(["name", "target", "request", "expect", "capture"]);
+const BASE_URL = /^https?:\/\/[^/]+$/;
 const REQUEST_KEYS = new Set(["method", "path", "headers", "json"]);
 const PLACEHOLDER = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g;
 
@@ -30,8 +31,14 @@ export function loadJourney(text) {
   const errors = [];
   if (!isMapping(doc) || doc.version !== 1) return { errors: ["the file must be a mapping with `version: 1`"], journey: null };
   for (const key of Object.keys(doc).filter((k) => !TOP_KEYS.has(k)).sort()) errors.push(`unknown key \`${key}\``);
-  if (typeof doc.target !== "string" || !/^https?:\/\/[^/]+$/.test(doc.target)) {
+  if (typeof doc.target !== "string" || !BASE_URL.test(doc.target)) {
     errors.push("`target` must be the base URL of the service under test, without path (e.g. http://core:3000)");
+  }
+  // Other services of the stack a step may call instead of `target` (`target: <name>` on the step),
+  // e.g. the BFF behind a front that does not relay the administration routes.
+  const targets = doc.targets ?? {};
+  if (!isMapping(targets) || Object.entries(targets).some(([name, url]) => !/^[a-z][a-z0-9_-]*$/.test(name) || typeof url !== "string" || !BASE_URL.test(url))) {
+    errors.push("`targets` must map lower-case names to base URLs without path (e.g. bff: http://bff-user:4000)");
   }
   if (doc.wait !== undefined && (typeof doc.wait !== "string" || !doc.wait.startsWith("/"))) errors.push("`wait` must be a path starting with /");
   const env = doc.env ?? [];
@@ -56,6 +63,9 @@ export function loadJourney(text) {
     }
     for (const key of Object.keys(step).filter((k) => !STEP_KEYS.has(k)).sort()) errors.push(`${label}: unknown key \`${key}\``);
     if (typeof step.name !== "string" || !step.name.trim()) errors.push(`${label}: \`name\` is required`);
+    if (step.target !== undefined && (typeof step.target !== "string" || !isMapping(targets) || !Object.hasOwn(targets, step.target))) {
+      errors.push(`${label}: target must name an entry of \`targets\``);
+    }
     const request = step.request;
     if (!isMapping(request)) {
       errors.push(`${label}: \`request\` is required`);
@@ -89,12 +99,12 @@ export function loadJourney(text) {
         }
       }
     }
-    return { name: step.name, request: { method, path: request.path, headers: request.headers ?? {}, json: request.json }, expect, capture };
+    return { name: step.name, target: step.target ?? null, request: { method, path: request.path, headers: request.headers ?? {}, json: request.json }, expect, capture };
   });
   if (errors.length > 0) return { errors, journey: null };
   return {
     errors,
-    journey: { target: doc.target, wait: doc.wait ?? null, env, ignore, steps },
+    journey: { target: doc.target, targets, wait: doc.wait ?? null, env, ignore, steps },
   };
 }
 
@@ -172,7 +182,8 @@ export async function play(journey, { marker, env = {}, captures = {}, fetchImpl
         init.body = JSON.stringify(render(step.request.json, context));
         init.headers["content-type"] ??= "application/json";
       }
-      const response = await fetchImpl(`${journey.target}${render(step.request.path, context)}`, init);
+      const base = step.target ? journey.targets[step.target] : journey.target;
+      const response = await fetchImpl(`${base}${render(step.request.path, context)}`, init);
       result.status = response.status;
       const text = await response.text();
       let body = null;
