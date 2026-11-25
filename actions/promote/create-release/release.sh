@@ -27,5 +27,6 @@ fi
 if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
   echo "release $tag already exists"
 else
+  python3 -I "$(dirname "$0")/fit_notes.py" "$NOTES" "$tag" "$GITHUB_REPOSITORY"
   gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$tag" --notes-file "$NOTES"
 fi
