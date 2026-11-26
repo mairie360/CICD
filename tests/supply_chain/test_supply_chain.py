@@ -121,20 +121,39 @@ class ImageSigning(unittest.TestCase):
             self.assertIn(needle, DOCKER_RELEASE, needle)
 
     def test_mair_1193_unsigned_digest_is_refused(self):
-        # cosign verify exits non-zero on a digest with no matching signature, and the step runs with
-        # `set -e` (the verify is not swallowed): an unsigned image cannot be promoted.
-        verify_block = DOCKER_RELEASE[DOCKER_RELEASE.index("cosign verify"):]
-        self.assertNotIn("|| true", verify_block.split("cosign verify")[0][-200:])
-        self.assertIn("set -euo pipefail", DOCKER_RELEASE)
+        # The promotion's verify step must let cosign's failure propagate: an unsigned digest cannot
+        # be promoted. Isolate that step and check its failure is not suppressed.
+        doc = load(ACTIONS / "release" / "docker-release" / "action.yml")
+        steps = doc["runs"]["steps"]
+        verify = next(s for s in steps if "Verify signature" in s.get("name", ""))
+        run = verify["run"]
+        self.assertIn("cosign verify", run)
+        self.assertNotEqual(verify.get("continue-on-error"), True)
+        self.assertTrue(run.lstrip().startswith("set -euo pipefail"), "verify must run under set -e")
+        # No failure suppression on the verification itself (the verify helper, or its calls).
+        for line in run.splitlines():
+            if "cosign verify" in line or line.strip().startswith("verify "):
+                self.assertNotIn("|| true", line)
+                self.assertNotIn("|| :", line)
 
 
 # --------------------------------------------------------------------------- zizmor is blocking
 
 class ZizmorBlocking(unittest.TestCase):
     def test_mair_1193_zizmor_blocks_at_high(self):
-        lint = (WORKFLOWS / "lint.yml").read_text()
-        self.assertIn("--min-severity=high", lint)
-        self.assertNotIn("zizmor workflow audit (non-blocking)", lint)
+        doc = load(WORKFLOWS / "lint.yml")
+        job = doc["jobs"]["zizmor"]
+        self.assertNotEqual(job.get("continue-on-error"), True)
+        blocking = [s for s in job["steps"] if "--min-severity=high" in s.get("run", "")]
+        self.assertEqual(len(blocking), 1, "exactly one blocking zizmor step at the High severity")
+        step = blocking[0]
+        # The blocking step must not swallow a failure, nor be marked continue-on-error.
+        self.assertNotEqual(step.get("continue-on-error"), True)
+        for token in ("|| true", "|| :", "|| echo", "exit 0"):
+            self.assertNotIn(token, step["run"], f"blocking zizmor step suppresses failure with {token}")
+        # The separate non-blocking reporting step is allowed to swallow (it does not gate).
+        reporting = [s for s in job["steps"] if "--min-severity" not in s.get("run", "") and "zizmor" in s.get("run", "")]
+        self.assertTrue(reporting, "a non-blocking reporting step still runs")
 
     def test_mair_1193_zizmor_config_justifies_each_ignore(self):
         config = load(ROOT / ".github" / "zizmor.yml")
