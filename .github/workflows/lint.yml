@@ -62,6 +62,9 @@ jobs:
       - name: Test the pins of this repository's workflows
         run: python3 -m unittest discover -s tests/pins -v
 
+      - name: Test the supply-chain guards
+        run: python3 -m unittest discover -s tests/supply_chain -v
+
       - name: Test the promotion commit resolution
         run: python3 -m unittest discover -s actions/promote/resolve/tests -v
 
@@ -116,10 +119,12 @@ jobs:
       - name: Test the secret-scan range and flags
         run: python3 -m unittest discover -s actions/security/gitleaks/tests -v
 
-  # MAIR-542: audit of the workflows (unpinned actions, template injection, excessive permissions).
-  # Non-blocking for now: findings are reported in the log until the existing ones are triaged.
+  # MAIR-542 / MAIR-1193 (control C-07): audit of the workflows (unpinned actions, template
+  # injection, excessive permissions). Blocking at the High severity: a new High finding fails the
+  # PR. The reviewed High findings are justified in `.github/zizmor.yml`; Medium / Low stay reported
+  # (persona=regular, below) and are triaged over time, without hiding a new High.
   zizmor:
-    name: zizmor workflow audit (non-blocking)
+    name: zizmor workflow audit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -127,13 +132,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Audit workflows and composite actions
-        run: |
-          # Neither an install failure nor the findings fail the job until the existing ones are triaged: a red check would hide real failures.
-          {
-            pip install --user --quiet zizmor==1.5.2 \
-              && "$HOME/.local/bin/zizmor" --no-progress --persona=regular .github/workflows actions
-          } || echo "::warning::zizmor could not run or reported findings (non-blocking, see the log above)"
+      - name: Install zizmor
+        run: pip install --user --quiet zizmor==1.5.2
+
+      - name: Audit workflows and composite actions (blocking at High)
+        run: '"$HOME/.local/bin/zizmor" --no-progress --persona=regular --min-severity=high .github/workflows actions'
+
+      - name: Report the Medium / Low findings (non-blocking)
+        if: always()
+        run: '"$HOME/.local/bin/zizmor" --no-progress --persona=regular .github/workflows actions || true'
 
   frontend-exception-security:
     name: frontend dev exception source scans

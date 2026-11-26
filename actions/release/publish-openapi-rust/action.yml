@@ -35,13 +35,20 @@ runs:
     - shell: bash
       env:
         SPEC_FILE: ${{ inputs.spec_file }}
+        # [CHANGEMENT] Les entrées passent par l'environnement, jamais interpolées dans le script
+        # (injection de template : une valeur attaquante s'exécuterait comme du shell).
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        PACKAGE_VERSION: ${{ inputs.version }}
+        NPM_TOKEN: ${{ inputs.token }}
+        DIST_TAG: ${{ inputs.dist_tag }}
+        REPO_OWNER: ${{ github.repository_owner }}
       run: |
         # [CHANGEMENT] Ajout de 'set -e' pour faire échouer le workflow immédiatement
         # en cas d'erreur dans le script bash (évite les publications partielles).
         set -e
 
-        ORG=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        SAFE_NAME=$(echo "${{ inputs.package_name }}" | tr '[:upper:]' '[:lower:]')
+        ORG=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
+        SAFE_NAME=$(echo "$PACKAGE_NAME" | tr '[:upper:]' '[:lower:]')
 
         # 1. Nettoyer tout ancien build pour éviter les résidus
         rm -rf ./generated
@@ -71,7 +78,7 @@ runs:
         cat <<EOF > generated/package.json
         {
           "name": "@${ORG}/${SAFE_NAME}-openapi",
-          "version": "${{ inputs.version }}",
+          "version": "${PACKAGE_VERSION}",
           "main": "./index.ts",
           "types": "./index.ts",
           "dependencies": {
@@ -85,8 +92,8 @@ runs:
 
         # 6. Configuration NPM locale au dossier de publication
         echo "@${ORG}:registry=https://npm.pkg.github.com" > generated/.npmrc
-        echo "//npm.pkg.github.com/:_authToken=${{ inputs.token }}" >> generated/.npmrc
+        echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" >> generated/.npmrc
 
         # 7. PUBLICATION : L'étape cruciale
         cd generated
-        npm publish --access restricted --tag ${{ inputs.dist_tag }}
+        npm publish --access restricted --tag "$DIST_TAG"

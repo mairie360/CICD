@@ -1,0 +1,21 @@
+# zizmor configuration (MAIR control C-07). The lint.yml job runs zizmor blocking at the High
+# severity: a new High finding fails the PR. The findings below are reviewed and justified; each is
+# either the documented, guarded design or a low-confidence false positive on a controlled value.
+# Medium/Low findings stay reported (non-blocking) and are triaged over time.
+rules:
+  dangerous-triggers:
+    ignore:
+      # auto-approve.yml uses pull_request_target by design: it needs the base token to approve a PR
+      # and NEVER checks out the PR's code. renovate_only.py approves only a PR Renovate alone wrote
+      # and pushed, read at the event head; permissions are pull-requests: write only.
+      - auto-approve.yml:21:1
+  cache-poisoning:
+    ignore:
+      # frontend-dev-exception.yml builds an immutable candidate tag, scanned before it becomes dev;
+      # the off-main manual build is the whole point of this workflow (release/frontend-dev-exception).
+      - frontend-dev-exception.yml:204:9
+  github-env:
+    ignore:
+      # The value written to GITHUB_ENV is a mktemp path under RUNNER_TEMP (the hash-locked scanner's
+      # venv), never attacker input; it only names the Python interpreter for the next step.
+      - action.yml:45:7
